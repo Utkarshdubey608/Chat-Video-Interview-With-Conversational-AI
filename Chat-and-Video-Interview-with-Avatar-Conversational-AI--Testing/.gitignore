@@ -1,0 +1,13 @@
+node_modules/
+.DS_Store
+*.log
+dist/
+.vite/
+
+# Local env files with secrets (keys live here, never commit)
+.env
+.env.local
+.env*.local
+
+# Local editor / tooling config
+.claude/

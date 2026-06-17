@@ -1,0 +1,206 @@
+/* Inter must be first */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   BASE
+───────────────────────────────────────────────────────────────────────────── */
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { font-size: 16px; scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #eff5f0;   /* green-tinted — matches screenshot */
+    color: #0f172a;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+  }
+
+  /* Typography */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #0f172a;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
+  /* Selection */
+  ::selection { background: #dcf5e8; color: #0d5c3a; }
+
+  /* Focus */
+  :focus-visible {
+    outline: 2px solid #0d5c3a;
+    outline-offset: 2px;
+  }
+
+  /* Range slider */
+  input[type='range'] { -webkit-appearance: none; cursor: pointer; background: transparent; }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: #e2e8f0;
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #0d5c3a;
+    margin-top: -6px;
+    box-shadow: 0 1px 3px rgba(13,92,58,0.3);
+    transition: box-shadow 0.15s;
+  }
+  input[type='range']::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px rgba(13,92,58,0.12); }
+  input[type='range']::-moz-range-thumb {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #0d5c3a;
+    border: none;
+    box-shadow: 0 1px 3px rgba(13,92,58,0.3);
+  }
+
+  /* Checkbox / radio */
+  input[type='checkbox'], input[type='radio'] { accent-color: #0d5c3a; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   COMPONENTS
+───────────────────────────────────────────────────────────────────────────── */
+@layer components {
+  /* ── Form input ─────────────────────────────────────────────────────────── */
+  .input-base {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    font-size: 0.9rem;
+    font-family: 'Inter', sans-serif;
+    color: #0f172a;
+    background: #ffffff;
+    border: 1.5px solid #dde8e0;
+    border-radius: 10px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .input-base::placeholder { color: #94a3b8; }
+  .input-base:hover  { border-color: #b3e9cd; }
+  .input-base:focus  { border-color: #0d5c3a; box-shadow: 0 0 0 3px rgba(13,92,58,0.1); }
+
+  .textarea-base {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.875rem;
+    font-family: 'Inter', sans-serif;
+    color: #0f172a;
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    outline: none;
+    resize: vertical;
+    min-height: 96px;
+    line-height: 1.6;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .textarea-base::placeholder { color: #94a3b8; }
+  .textarea-base:hover  { border-color: #cbd5e1; }
+  .textarea-base:focus  { border-color: #0d5c3a; box-shadow: 0 0 0 3px rgba(13,92,58,0.1); }
+
+  /* ── Label ──────────────────────────────────────────────────────────────── */
+  .field-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #475569;
+    letter-spacing: 0.025em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  /* ── Card ───────────────────────────────────────────────────────────────── */
+  .card {
+    background: #ffffff;
+    border: 1px solid #dde8e0;
+    border-radius: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .card-hover {
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .card-hover:hover {
+    box-shadow: 0 4px 12px -2px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.05);
+    transform: translateY(-1px);
+  }
+
+  /* ── Section header ─────────────────────────────────────────────────────── */
+  .section-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #0d5c3a;   /* green — matches screenshot */
+  }
+
+  /* ── Pill / kicker ──────────────────────────────────────────────────────── */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: #f0faf5;
+    color: #0d5c3a;
+    border: 1px solid #b3e9cd;
+    padding: 4px 10px;
+    border-radius: 9999px;
+  }
+
+  /* ── Live dot ───────────────────────────────────────────────────────────── */
+  .live-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #16a34a;
+    animation: pulse 2.5s ease-in-out infinite;
+  }
+
+  /* ── Status badge ───────────────────────────────────────────────────────── */
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 0.6875rem; font-weight: 600; }
+  .badge-success { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+  .badge-warning { background: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
+  .badge-danger  { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+  .badge-neutral { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+  .badge-info    { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+
+  /* ── Divider ────────────────────────────────────────────────────────────── */
+  .divider { width: 100%; height: 1px; background: #e2e8f0; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   UTILITIES
+───────────────────────────────────────────────────────────────────────────── */
+@layer utilities {
+  .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+  .text-balance { text-wrap: balance; }
+
+  /* Subtle grid background for hero sections */
+  .bg-grid {
+    background-image: radial-gradient(circle, #e2e8f0 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+}
