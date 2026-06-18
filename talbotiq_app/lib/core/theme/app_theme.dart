@@ -11,162 +11,277 @@ class AppTheme {
       fontFamily: 'Inter',
       colorScheme: const ColorScheme.dark(
         primary: AppColors.primary,
+        onPrimary: AppColors.backgroundBlack,
+        primaryContainer: AppColors.primaryLight,
+        onPrimaryContainer: AppColors.textLight,
         secondary: AppColors.accent,
+        onSecondary: AppColors.backgroundBlack,
         background: AppColors.background,
-        surface: AppColors.cardBg,
+        onBackground: AppColors.textLight,
+        surface: AppColors.backgroundDarker,
+        onSurface: AppColors.textLight,
+        surfaceVariant: AppColors.cardBg,
+        onSurfaceVariant: AppColors.textMuted,
+        outline: AppColors.border,
         error: AppColors.danger,
+        onError: AppColors.dangerBg,
       ),
       cardTheme: CardThemeData(
         color: AppColors.cardBg,
+        elevation: 0,
+        margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16.0),
+          borderRadius: BorderRadius.circular(12.0),
           side: const BorderSide(color: AppColors.border, width: 1.0),
         ),
-        elevation: 0,
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
           fontSize: 32,
-          fontWeight: FontWeight.w300,
-          color: Colors.white,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textLight,
           letterSpacing: -0.5,
         ),
         headlineMedium: TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textLight,
           letterSpacing: -0.5,
+        ),
+        titleLarge: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textLight,
         ),
         titleMedium: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: Colors.white,
+          color: AppColors.textLight,
+        ),
+        titleSmall: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textLight,
         ),
         bodyLarge: TextStyle(
-          fontSize: 15,
+          fontSize: 16,
+          fontWeight: FontWeight.normal,
           color: AppColors.textLight,
           height: 1.5,
         ),
         bodyMedium: TextStyle(
-          fontSize: 13,
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
           color: AppColors.textMuted,
-          height: 1.4,
+          height: 1.5,
+        ),
+        labelLarge: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: AppColors.primary,
+          letterSpacing: 0.1,
         ),
         labelSmall: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
           color: AppColors.accent,
-          letterSpacing: 1.5,
+          letterSpacing: 0.5,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0x1AFFFFFF),
-        hintStyle: const TextStyle(color: Color(0x4DFFFFFF), fontSize: 13),
-        labelStyle: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        fillColor: AppColors.backgroundDarker,
+        hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+        labelStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.accent, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: AppColors.primary, width: 2.0),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.danger),
         ),
       ),
       buttonTheme: ButtonThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
         buttonColor: AppColors.primary,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: AppColors.cardBg,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(28.0),
+          side: const BorderSide(color: AppColors.border),
+        ),
+        titleTextStyle: const TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textLight,
+        ),
+        contentTextStyle: const TextStyle(
+          fontSize: 14,
+          color: AppColors.textMuted,
+        ),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: AppColors.border,
+        thickness: 1.0,
+        space: 1.0,
       ),
     );
   }
 
   static ThemeData get lightTheme {
+    const Color lightBackground = Color(0xFFF9FBF7);
+    const Color lightSurface = Color(0xFFFFFFFF);
+    const Color lightSurfaceVariant = Color(0xFFEDF1EC);
+    const Color lightBorder = Color(0xFFC0C5BF);
+    const Color lightPrimary = Color(0xFF006D44);
+    const Color lightOnPrimary = Colors.white;
+    const Color lightSecondary = Color(0xFF4F6354);
+    const Color lightText = Color(0xFF191C19);
+    const Color lightTextMuted = Color(0xFF707971);
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
-      scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+      scaffoldBackgroundColor: lightBackground,
       fontFamily: 'Inter',
       colorScheme: const ColorScheme.light(
-        primary: AppColors.primary,
-        secondary: AppColors.accent,
-        background: Color(0xFFF8FAFC),
-        surface: Colors.white,
-        error: AppColors.danger,
+        primary: lightPrimary,
+        onPrimary: lightOnPrimary,
+        primaryContainer: lightSurfaceVariant,
+        onPrimaryContainer: lightText,
+        secondary: lightSecondary,
+        onSecondary: Colors.white,
+        background: lightBackground,
+        onBackground: lightText,
+        surface: lightSurface,
+        onSurface: lightText,
+        surfaceVariant: lightSurfaceVariant,
+        onSurfaceVariant: lightTextMuted,
+        outline: lightBorder,
+        error: Colors.red,
       ),
       cardTheme: CardThemeData(
-        color: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16.0),
-          side: const BorderSide(color: Color(0xFFE2E8F0), width: 1.0),
-        ),
+        color: lightSurface,
         elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          side: const BorderSide(color: lightBorder, width: 1.0),
+        ),
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
           fontSize: 32,
-          fontWeight: FontWeight.w300,
-          color: AppColors.textDark,
+          fontWeight: FontWeight.w600,
+          color: lightText,
           letterSpacing: -0.5,
         ),
         headlineMedium: TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.bold,
-          color: AppColors.textDark,
+          fontWeight: FontWeight.w600,
+          color: lightText,
           letterSpacing: -0.5,
+        ),
+        titleLarge: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: lightText,
         ),
         titleMedium: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: AppColors.textDark,
+          color: lightText,
+        ),
+        titleSmall: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: lightText,
         ),
         bodyLarge: TextStyle(
-          fontSize: 15,
-          color: AppColors.textDark,
+          fontSize: 16,
+          fontWeight: FontWeight.normal,
+          color: lightText,
           height: 1.5,
         ),
         bodyMedium: TextStyle(
-          fontSize: 13,
-          color: Color(0xFF64748B),
-          height: 1.4,
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          color: lightTextMuted,
+          height: 1.5,
+        ),
+        labelLarge: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          color: lightPrimary,
+          letterSpacing: 0.1,
         ),
         labelSmall: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-          color: AppColors.primary,
-          letterSpacing: 1.5,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: lightSecondary,
+          letterSpacing: 0.5,
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFFF1F5F9),
-        hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-        labelStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        fillColor: lightSurfaceVariant,
+        hintStyle: const TextStyle(color: lightTextMuted, fontSize: 14),
+        labelStyle: const TextStyle(color: lightTextMuted, fontSize: 14),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: lightBorder),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: lightBorder),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: lightPrimary, width: 2.0),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.danger),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.red),
         ),
+      ),
+      buttonTheme: ButtonThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+        buttonColor: lightPrimary,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: lightSurface,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(28.0),
+          side: const BorderSide(color: lightBorder),
+        ),
+        titleTextStyle: const TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.w600,
+          color: lightText,
+        ),
+        contentTextStyle: const TextStyle(
+          fontSize: 14,
+          color: lightTextMuted,
+        ),
+      ),
+      dividerTheme: const DividerThemeData(
+        color: lightBorder,
+        thickness: 1.0,
+        space: 1.0,
       ),
     );
   }

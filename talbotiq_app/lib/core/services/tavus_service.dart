@@ -18,17 +18,12 @@ class TavusService {
   // endpoints. That preflight failure is why replicas/personas silently fail
   // to load on Flutter web (the JS web app never sends Content-Type on GET).
   Map<String, String> _authHeaders() {
-    return {
-      'x-api-key': _apiKey,
-    };
+    return {'x-api-key': _apiKey};
   }
 
   // Headers for requests that carry a JSON body (POST).
   Map<String, String> _headers() {
-    return {
-      'x-api-key': _apiKey,
-      'Content-Type': 'application/json',
-    };
+    return {'x-api-key': _apiKey, 'Content-Type': 'application/json'};
   }
 
   // Merges custom and stock replicas
@@ -37,11 +32,17 @@ class TavusService {
 
     try {
       final customUrl = Uri.parse('https://tavusapi.com/v2/replicas');
-      final stockUrl = Uri.parse('https://tavusapi.com/v2/replicas?replica_type=stock');
+      final stockUrl = Uri.parse(
+        'https://tavusapi.com/v2/replicas?replica_type=stock',
+      );
 
       final results = await Future.wait([
-        http.get(customUrl, headers: _authHeaders()).catchError((e) => http.Response('{"data":[]}', 500)),
-        http.get(stockUrl, headers: _authHeaders()).catchError((e) => http.Response('{"data":[]}', 500)),
+        http
+            .get(customUrl, headers: _authHeaders())
+            .catchError((e) => http.Response('{"data":[]}', 500)),
+        http
+            .get(stockUrl, headers: _authHeaders())
+            .catchError((e) => http.Response('{"data":[]}', 500)),
       ]);
 
       final List<TavusReplica> replicas = [];
@@ -71,7 +72,10 @@ class TavusService {
       } else {
         try {
           final errBody = jsonDecode(results[0].body);
-          customError = errBody?['message'] ?? errBody?['error'] ?? 'HTTP ${results[0].statusCode}';
+          customError =
+              errBody?['message'] ??
+              errBody?['error'] ??
+              'HTTP ${results[0].statusCode}';
         } catch (_) {
           customError = 'HTTP ${results[0].statusCode}';
         }
@@ -101,7 +105,10 @@ class TavusService {
       } else {
         try {
           final errBody = jsonDecode(results[1].body);
-          stockError = errBody?['message'] ?? errBody?['error'] ?? 'HTTP ${results[1].statusCode}';
+          stockError =
+              errBody?['message'] ??
+              errBody?['error'] ??
+              'HTTP ${results[1].statusCode}';
         } catch (_) {
           stockError = 'HTTP ${results[1].statusCode}';
         }
@@ -109,7 +116,9 @@ class TavusService {
 
       // If both endpoints failed, throw the relevant errors
       if (!customSuccess && !stockSuccess) {
-        throw Exception('Custom replicas: $customError | Stock replicas: $stockError');
+        throw Exception(
+          'Custom replicas: $customError | Stock replicas: $stockError',
+        );
       }
 
       return replicas;
@@ -133,11 +142,17 @@ class TavusService {
       return [];
     } else {
       final errBody = jsonDecode(response.body);
-      throw Exception(errBody?['message'] ?? errBody?['error'] ?? 'HTTP ${response.statusCode}');
+      throw Exception(
+        errBody?['message'] ??
+            errBody?['error'] ??
+            'HTTP ${response.statusCode}',
+      );
     }
   }
 
-  Future<TavusConversation> createConversation(Map<String, dynamic> payload) async {
+  Future<TavusConversation> createConversation(
+    Map<String, dynamic> payload,
+  ) async {
     final url = Uri.parse('https://tavusapi.com/v2/conversations');
 
     print("debug: Creating conversation with payload:");
@@ -162,7 +177,11 @@ class TavusService {
       try {
         errBody = jsonDecode(response.body) as Map?;
       } catch (_) {}
-      final msg = errBody?['message'] ?? errBody?['error'] ?? errBody?['detail'] ?? 'HTTP ${response.statusCode}';
+      final msg =
+          errBody?['message'] ??
+          errBody?['error'] ??
+          errBody?['detail'] ??
+          'HTTP ${response.statusCode}';
       throw Exception(msg);
     }
   }
@@ -175,127 +194,141 @@ class TavusService {
       final body = jsonDecode(response.body);
       return TavusConversation.fromJson(body);
     } else {
-      throw Exception('Failed to load conversation: HTTP ${response.statusCode}');
+      throw Exception(
+        'Failed to load conversation: HTTP ${response.statusCode}',
+      );
     }
   }
 
   Future<List<TranscriptEntry>> getConversationTranscript(String id) async {
-    final url = Uri.parse('https://tavusapi.com/v2/conversations/$id?verbose=true');
+    final url = Uri.parse(
+      'https://tavusapi.com/v2/conversations/$id/transcript',
+    );
     final response = await http.get(url, headers: _authHeaders());
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body);
-      final List<TranscriptEntry> entries = [];
-
-      // Extract events array/object
-      final events = body['events'] ?? (body['data'] != null ? body['data']['events'] : null);
-      
-      if (events is List) {
-        for (var event in events) {
-          final type = event['event_type'] ?? '';
-          
-          if (type == 'application.transcription_ready') {
-            final props = event['properties'] ?? event;
-            final list = props['transcript'] as List?;
-            if (list != null) {
-              for (var item in list) {
-                final String rawRole = (item['role'] ?? 'user').toString().toLowerCase();
-                final String role = (rawRole == 'user' || rawRole == 'candidate' || rawRole == 'participant') ? 'candidate' : 'avatar';
-                final String text = item['content'] ?? item['text'] ?? '';
-                final int timestamp = item['timestamp'] != null
-                    ? (item['timestamp'] is num 
-                        ? (item['timestamp'] * 1000).round()
-                        : (DateTime.tryParse(item['timestamp'].toString())?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch))
-                    : DateTime.now().millisecondsSinceEpoch;
-
-                entries.add(TranscriptEntry(
-                  role: role,
-                  text: text,
-                  timestamp: timestamp,
-                  questionIdx: 0,
-                ));
-              }
-            }
-          } else if (type == 'conversation.utterance' || type == 'conversation.utterance.streaming') {
-            final props = event['properties'] ?? event;
-            final String rawRole = (props['role'] ?? 'user').toString().toLowerCase();
-            final String role = (rawRole == 'user' || rawRole == 'candidate' || rawRole == 'participant') ? 'candidate' : 'avatar';
-            final String text = props['text'] ?? props['content'] ?? '';
-            final int timestamp = props['timestamp'] != null
-                ? (props['timestamp'] is num
-                    ? (props['timestamp'] * 1000).round()
-                    : (DateTime.tryParse(props['timestamp'].toString())?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch))
-                : DateTime.now().millisecondsSinceEpoch;
-
-            entries.add(TranscriptEntry(
-              role: role,
-              text: text,
-              timestamp: timestamp,
-              questionIdx: 0,
-            ));
-          }
-        }
-      } else if (events is Map) {
-        final transcriptionReady = events['application.transcription_ready'];
-        if (transcriptionReady != null) {
-          final list = transcriptionReady['transcript'] as List?;
-          if (list != null) {
-            for (var item in list) {
-              final String rawRole = (item['role'] ?? 'user').toString().toLowerCase();
-              final String role = (rawRole == 'user' || rawRole == 'candidate' || rawRole == 'participant') ? 'candidate' : 'avatar';
-              final String text = item['content'] ?? item['text'] ?? '';
-              final int timestamp = item['timestamp'] != null
-                  ? (item['timestamp'] is num 
-                      ? (item['timestamp'] * 1000).round()
-                      : (DateTime.tryParse(item['timestamp'].toString())?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch))
-                  : DateTime.now().millisecondsSinceEpoch;
-
-              entries.add(TranscriptEntry(
-                role: role,
-                text: text,
-                timestamp: timestamp,
-                questionIdx: 0,
-              ));
-            }
-          }
-        }
-      }
-      
-      // Fallback: check if there is a direct transcript field
-      final directList = body['transcript'] ?? (body['data'] != null ? body['data']['transcript'] : null);
-      if (directList is List && entries.isEmpty) {
-        for (var item in directList) {
-          final String rawRole = (item['role'] ?? 'user').toString().toLowerCase();
-          final String role = (rawRole == 'user' || rawRole == 'candidate' || rawRole == 'participant') ? 'candidate' : 'avatar';
-          final String text = item['content'] ?? item['text'] ?? '';
-          final int timestamp = item['timestamp'] != null
-              ? (item['timestamp'] is num 
-                  ? (item['timestamp'] * 1000).round()
-                  : (DateTime.tryParse(item['timestamp'].toString())?.millisecondsSinceEpoch ?? DateTime.now().millisecondsSinceEpoch))
-              : DateTime.now().millisecondsSinceEpoch;
-
-          entries.add(TranscriptEntry(
-            role: role,
-            text: text,
-            timestamp: timestamp,
-            questionIdx: 0,
-          ));
-        }
-      }
-
-      return entries;
+      return _parseTranscriptResponse(body);
     } else {
       throw Exception('Failed to load transcript: HTTP ${response.statusCode}');
     }
   }
 
+  List<TranscriptEntry> _parseTranscriptResponse(dynamic body) {
+    final List<TranscriptEntry> entries = [];
+    final dynamic data = body is Map ? body['data'] : null;
+    final dynamic directList = body is List
+        ? body
+        : body is Map
+        ? body['transcript'] ?? (data is Map ? data['transcript'] : null)
+        : null;
+
+    if (directList is List) {
+      for (final item in directList) {
+        final entry = _transcriptEntryFromItem(item);
+        if (entry != null) entries.add(entry);
+      }
+    }
+
+    if (entries.isNotEmpty || body is! Map) return entries;
+
+    final events = body['events'] ?? (data is Map ? data['events'] : null);
+    if (events is List) {
+      for (final event in events) {
+        final props = event is Map ? (event['properties'] ?? event) : null;
+        final type = event is Map
+            ? (event['event_type'] ?? event['type'] ?? '')
+            : '';
+
+        if (type == 'application.transcription_ready' &&
+            props is Map &&
+            props['transcript'] is List) {
+          for (final item in props['transcript']) {
+            final entry = _transcriptEntryFromItem(item);
+            if (entry != null) entries.add(entry);
+          }
+        } else if (type == 'conversation.utterance' ||
+            type == 'conversation.utterance.streaming') {
+          final entry = _transcriptEntryFromItem(props);
+          if (entry != null) entries.add(entry);
+        }
+      }
+    } else if (events is Map) {
+      final transcriptionReady = events['application.transcription_ready'];
+      final list = transcriptionReady is Map
+          ? transcriptionReady['transcript']
+          : null;
+      if (list is List) {
+        for (final item in list) {
+          final entry = _transcriptEntryFromItem(item);
+          if (entry != null) entries.add(entry);
+        }
+      }
+    }
+
+    return entries;
+  }
+
+  TranscriptEntry? _transcriptEntryFromItem(dynamic item) {
+    if (item is! Map) return null;
+
+    final String text =
+        (item['content'] ?? item['text'] ?? item['message'] ?? '')
+            .toString()
+            .trim();
+    if (text.isEmpty) return null;
+
+    final String rawRole =
+        (item['role'] ?? item['speaker'] ?? item['participant_type'] ?? 'user')
+            .toString()
+            .toLowerCase();
+    final String role =
+        (rawRole == 'user' ||
+            rawRole == 'candidate' ||
+            rawRole == 'participant' ||
+            rawRole == 'human')
+        ? 'candidate'
+        : 'avatar';
+
+    return TranscriptEntry(
+      role: role,
+      text: text,
+      timestamp: _parseTranscriptTimestamp(
+        item['timestamp'] ?? item['created_at'] ?? item['start_time'],
+      ),
+      questionIdx: 0,
+    );
+  }
+
+  int _parseTranscriptTimestamp(dynamic value) {
+    if (value is num) {
+      // Tavus transcript timestamps are usually ISO strings, but some event
+      // streams use seconds. Millisecond epochs are already much larger.
+      return value > 100000000000 ? value.round() : (value * 1000).round();
+    }
+
+    if (value is String && value.trim().isNotEmpty) {
+      final numeric = num.tryParse(value);
+      if (numeric != null) return _parseTranscriptTimestamp(numeric);
+
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) return parsed.millisecondsSinceEpoch;
+    }
+
+    return DateTime.now().millisecondsSinceEpoch;
+  }
+
   Future<String?> getConversationRecordingUri(String id) async {
-    final url = Uri.parse('https://tavusapi.com/v2/conversations/$id?verbose=true');
+    final url = Uri.parse(
+      'https://tavusapi.com/v2/conversations/$id?verbose=true',
+    );
     final response = await http.get(url, headers: _authHeaders());
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body);
-      final events = body['events'] ?? (body['data'] != null ? body['data']['events'] : null);
+      final events =
+          body['events'] ??
+          (body['data'] != null ? body['data']['events'] : null);
       if (events is List) {
         for (var event in events) {
           if (event['event_type'] == 'application.recording_ready') {
@@ -315,7 +348,9 @@ class TavusService {
     final response = await http.delete(url, headers: _authHeaders());
 
     if (response.statusCode != 200 && response.statusCode != 204) {
-      throw Exception('Failed to end conversation: HTTP ${response.statusCode}');
+      throw Exception(
+        'Failed to end conversation: HTTP ${response.statusCode}',
+      );
     }
   }
 }

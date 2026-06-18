@@ -11,6 +11,27 @@ class DeepgramService {
 
   String getKey() => _apiKey;
 
+  // The API key trimmed — used as the Deepgram WebSocket subprotocol token.
+  String getTrimmedKey() => _apiKey.trim();
+
+  // Streaming endpoint for real-time transcription. Audio is streamed as
+  // WebM/Opus from a MediaRecorder (NOT raw PCM), so we do NOT declare
+  // encoding/sample_rate — Deepgram auto-detects the Opus container.
+  String buildWsUrl() {
+    final params = {
+      'model': 'nova-3',
+      'language': 'en-US',
+      'punctuate': 'true',
+      'smart_format': 'true',
+      'interim_results': 'true', // emit words before the silence — maximum capture
+      'utterance_end_ms': '1000', // flush after 1s of silence
+      'vad_events': 'true', // voice-activity events
+      'filler_words': 'true', // um, uh, like, you know — critical for an ATS
+    };
+    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
+    return 'wss://api.deepgram.com/v1/listen?$query';
+  }
+
   static final Set<String> fillerWords = {
     'um', 'uh', 'hmm', 'er', 'erm', 'ah', 'like', 'basically', 'literally',
     'actually', 'right', 'okay', 'so', 'you know', 'i mean', 'kind of', 'sort of',

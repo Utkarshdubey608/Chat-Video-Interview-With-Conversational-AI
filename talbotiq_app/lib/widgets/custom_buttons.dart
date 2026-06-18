@@ -20,7 +20,7 @@ class CustomButton extends StatelessWidget {
     this.isLoading = false,
     this.variant = ButtonVariant.primary,
     this.width,
-    this.height = 42,
+    this.height = 48, // Standardised M3 touch target height
     this.icon,
   });
 
@@ -33,26 +33,26 @@ class CustomButton extends StatelessWidget {
     switch (variant) {
       case ButtonVariant.primary:
         bg = AppColors.primary;
-        textCol = Colors.white;
+        textCol = AppColors.backgroundBlack; // High contrast dark text on light primary
         break;
       case ButtonVariant.secondary:
-        bg = const Color(0x1AFFFFFF);
-        textCol = Colors.white;
+        bg = AppColors.backgroundDarker;
+        textCol = AppColors.textLight;
         border = const BorderSide(color: AppColors.border, width: 1);
         break;
       case ButtonVariant.outline:
         bg = Colors.transparent;
-        textCol = Colors.white;
-        border = const BorderSide(color: Color(0x33FFFFFF), width: 1);
+        textCol = AppColors.textLight;
+        border = const BorderSide(color: AppColors.border, width: 1);
         break;
       case ButtonVariant.ghost:
         bg = Colors.transparent;
         textCol = AppColors.textMuted;
         break;
       case ButtonVariant.danger:
-        bg = const Color(0x1ADB2626);
+        bg = AppColors.dangerBg;
         textCol = AppColors.danger;
-        border = const BorderSide(color: Color(0x40DB2626), width: 1);
+        border = const BorderSide(color: AppColors.dangerBorder, width: 1);
         break;
     }
 
@@ -61,12 +61,12 @@ class CustomButton extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (isLoading) ...[
-          const SizedBox(
-            width: 14,
-            height: 14,
+          SizedBox(
+            width: 16,
+            height: 16,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              valueColor: AlwaysStoppedAnimation<Color>(textCol),
             ),
           ),
           const SizedBox(width: 8),
@@ -78,8 +78,8 @@ class CustomButton extends StatelessWidget {
           text,
           style: TextStyle(
             color: textCol,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            fontWeight: FontWeight.w500, // M3 label font weight
             fontFamily: 'Inter',
           ),
         ),
@@ -89,15 +89,15 @@ class CustomButton extends StatelessWidget {
     return SizedBox(
       width: width,
       height: height,
-      child: OutlinedButton(
+      child: TextButton(
         onPressed: isLoading ? null : onPressed,
-        style: OutlinedButton.styleFrom(
+        style: TextButton.styleFrom(
           backgroundColor: bg,
           side: border,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(100), // M3 stadium pill shape
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         ),
         child: childWidget,
       ),

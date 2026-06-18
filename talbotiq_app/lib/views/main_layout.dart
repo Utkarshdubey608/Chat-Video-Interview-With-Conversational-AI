@@ -1,43 +1,87 @@
 // lib/views/main_layout.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../core/constants/colors.dart';
 import '../providers/app_store.dart';
+import '../widgets/custom_buttons.dart';
+import '../core/services/tavus_service.dart';
+import 'setup_page.dart';
+import 'interview_page.dart';
+import 'results_page.dart';
+import 'settings_page.dart';
 
 class MainLayout extends StatelessWidget {
-  final Widget child;
-  final String currentRoute;
+  const MainLayout({super.key});
 
-  const MainLayout({
-    super.key,
-    required this.child,
-    required this.currentRoute,
-  });
+  void _handleNavigate(BuildContext context, String targetRoute, AppStore store) {
+    if (store.interviewActive && store.currentRoute == '/interview' && targetRoute != '/interview') {
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          final theme = Theme.of(context);
+          return AlertDialog(
+            title: const Text('Leave Interview?'),
+            content: const Text(
+              'Leaving this page will disconnect the active video session. '
+              'Are you sure you want to leave and end the interview?'
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+              ),
+              CustomButton(
+                text: 'Leave & End',
+                variant: ButtonVariant.danger,
+                onPressed: () async {
+                  Navigator.pop(context);
+                  store.setInterviewActive(false);
+                  if (store.currentConversation != null && store.currentConversation!.conversationUrl.isNotEmpty) {
+                    try {
+                      await tavusService.endConversation(store.currentConversation!.conversationId);
+                    } catch (e) {
+                      debugPrint('Tavus end conversation error: $e');
+                    }
+                  }
+                  store.navigateTo(targetRoute);
+                },
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      store.navigateTo(targetRoute);
+    }
+  }
 
-  Widget _buildNavLink(BuildContext context, String label, String route) {
+  Widget _buildNavLink(BuildContext context, String label, String route, AppStore store) {
+    final theme = Theme.of(context);
+    final String currentRoute = store.currentRoute;
     final bool isActive = currentRoute == route;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
+      height: 48, // Standardised touch target height
+      alignment: Alignment.center,
       child: InkWell(
         onTap: () {
           if (!isActive) {
-            Navigator.pushReplacementNamed(context, route);
+            _handleNavigate(context, route, store);
           }
         },
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           decoration: BoxDecoration(
-            color: isActive ? AppColors.primary : Colors.transparent,
-            borderRadius: BorderRadius.circular(20),
+            color: isActive ? theme.colorScheme.primary.withOpacity(0.12) : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
           ),
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: isActive ? Colors.white : AppColors.textMuted,
+              fontSize: 14,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+              color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -62,18 +106,25 @@ class MainLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
+    final String currentRoute = store.currentRoute;
     final double width = MediaQuery.of(context).size.width;
     final bool isMobile = width < 800;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       appBar: PreferredSize(
         preferredSize: Size.fromHeight(isMobile ? 64 : 80),
         child: Container(
-          decoration: const BoxDecoration(
-            color: AppColors.backgroundDarker,
-            border: Border(bottom: BorderSide(color: Color(0x1AFFFFFF), width: 1.0)),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: Border(
+              bottom: BorderSide(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+                width: 1.0,
+              ),
+            ),
           ),
           padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 24),
           alignment: Alignment.center,
@@ -83,30 +134,29 @@ class MainLayout extends StatelessWidget {
               children: [
                 // Brand Logo wordmark
                 InkWell(
-                  onTap: () => Navigator.pushReplacementNamed(context, '/setup'),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: const BoxDecoration(
-                          color: AppColors.primary,
-                          shape: BoxShape.circle,
+                  onTap: () => _handleNavigate(context, '/setup', store),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4.0),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: Colors.transparent,
+                          backgroundImage: const AssetImage('assets/logo.jpg'),
                         ),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.eco, color: Colors.white, size: 18),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'TalbotIQ',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: -0.5,
+                        const SizedBox(width: 10),
+                        Text(
+                          'TalbotIQ',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onSurface,
+                            letterSpacing: -0.3,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
 
@@ -116,10 +166,10 @@ class MainLayout extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _buildNavLink(context, 'Setup', '/setup'),
-                        _buildNavLink(context, 'Interview', '/interview'),
-                        _buildNavLink(context, 'Results', '/results'),
-                        _buildNavLink(context, 'Settings', '/settings'),
+                        _buildNavLink(context, 'Setup', '/setup', store),
+                        _buildNavLink(context, 'Interview', '/interview', store),
+                        _buildNavLink(context, 'Results', '/results', store),
+                        _buildNavLink(context, 'Settings', '/settings', store),
                       ],
                     ),
                   )
@@ -131,26 +181,31 @@ class MainLayout extends StatelessWidget {
                   children: [
                     if (store.interviewActive) ...[
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: AppColors.success.withOpacity(0.1),
-                          border: Border.all(color: AppColors.success.withOpacity(0.3)),
+                          color: theme.colorScheme.error.withOpacity(0.1),
+                          border: Border.all(
+                            color: theme.colorScheme.error.withOpacity(0.3),
+                          ),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
-                              width: 6,
-                              height: 6,
-                              decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle),
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.error,
+                                shape: BoxShape.circle,
+                              ),
                             ),
                             const SizedBox(width: 6),
-                            const Text(
+                            Text(
                               'LIVE',
                               style: TextStyle(
-                                color: AppColors.success,
-                                fontSize: 10,
+                                color: theme.colorScheme.error,
+                                fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 0.5,
                               ),
@@ -158,40 +213,46 @@ class MainLayout extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 16),
                     ],
 
                     if (store.tavusKey.isEmpty) ...[
                       OutlinedButton(
-                        onPressed: () => Navigator.pushReplacementNamed(context, '/settings'),
+                        onPressed: () => _handleNavigate(context, '/settings', store),
                         style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.amber.shade900.withOpacity(0.1),
+                          backgroundColor: Colors.amber.shade900.withOpacity(0.08),
                           side: BorderSide(color: Colors.amber.shade700.withOpacity(0.3)),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                         ),
                         child: Text(
                           isMobile ? 'Key Required' : 'Add API Key →',
-                          style: TextStyle(color: Colors.amber.shade400, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                            color: theme.brightness == Brightness.dark 
+                                ? Colors.amber.shade300 
+                                : Colors.amber.shade900, 
+                            fontSize: 12, 
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 16),
                     ],
 
                     // Profile avatar initial circle
                     Container(
-                      width: 36,
-                      height: 36,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withOpacity(0.12),
                         shape: BoxShape.circle,
                       ),
                       alignment: Alignment.center,
-                      child: const Text(
+                      child: Text(
                         'SN',
                         style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                          color: theme.colorScheme.primary,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -204,27 +265,29 @@ class MainLayout extends StatelessWidget {
         ),
       ),
       bottomNavigationBar: isMobile
-          ? BottomNavigationBar(
-              backgroundColor: AppColors.backgroundDarker,
-              selectedItemColor: AppColors.accent,
-              unselectedItemColor: AppColors.textMuted,
-              selectedFontSize: 11,
-              unselectedFontSize: 11,
-              type: BottomNavigationBarType.fixed,
-              currentIndex: _getCurrentIndex(currentRoute),
-              onTap: (index) {
+          ? NavigationBar(
+              selectedIndex: _getCurrentIndex(currentRoute),
+              onDestinationSelected: (index) {
                 final routes = ['/setup', '/interview', '/results', '/settings'];
-                Navigator.pushReplacementNamed(context, routes[index]);
+                _handleNavigate(context, routes[index], store);
               },
-              items: const [
-                BottomNavigationBarItem(icon: Icon(Icons.tune), label: 'Setup'),
-                BottomNavigationBarItem(icon: Icon(Icons.video_call), label: 'Interview'),
-                BottomNavigationBarItem(icon: Icon(Icons.analytics), label: 'Results'),
-                BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+              destinations: const [
+                NavigationDestination(icon: Icon(Icons.tune), label: 'Setup'),
+                NavigationDestination(icon: Icon(Icons.video_call), label: 'Interview'),
+                NavigationDestination(icon: Icon(Icons.analytics), label: 'Results'),
+                NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
               ],
             )
           : null,
-      body: child,
+      body: IndexedStack(
+        index: _getCurrentIndex(currentRoute),
+        children: const [
+          SetupPage(),
+          InterviewPage(),
+          ResultsPage(),
+          SettingsPage(),
+        ],
+      ),
     );
   }
 }

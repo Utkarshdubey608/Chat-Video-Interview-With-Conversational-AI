@@ -148,17 +148,11 @@ class GeminiService {
     }
 
     if (response == null) {
-      throw Exception('Gemini request failed — no response after retries');
+      throw Exception('Failed to generate content: No response received from Gemini.');
     }
 
     if (response.statusCode != 200) {
-      String msg = 'Gemini API error ${response.statusCode}';
-      try {
-        final err = jsonDecode(response.body);
-        final errDetails = err['error']?['message'];
-        if (errDetails != null) msg += ': $errDetails';
-      } catch (_) {}
-      throw Exception(msg);
+      throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
     }
 
     final data = jsonDecode(response.body);

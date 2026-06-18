@@ -30,23 +30,18 @@ class CustomInputField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textMuted,
-              ),
-            ),
-          ],
+        Text(
+          label,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8), // M3 consistent 8dp spacing
         TextField(
           controller: controller,
           onChanged: onChanged,
@@ -54,20 +49,23 @@ class CustomInputField extends StatelessWidget {
           keyboardType: keyboardType,
           maxLines: maxLines,
           autofocus: autofocus,
-          style: const TextStyle(fontSize: 13, color: Colors.white, fontFamily: 'Inter'),
+          style: TextStyle(
+            fontSize: 14,
+            color: theme.colorScheme.onSurface,
+            fontFamily: 'Inter',
+          ),
           decoration: InputDecoration(
             hintText: placeholder,
             suffixIcon: suffix,
           ),
         ),
         if (hint != null) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             hint!,
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.textMuted,
-              height: 1.3,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
             ),
           ),
         ],
@@ -82,6 +80,7 @@ class CustomSelectDropdown<T> extends StatelessWidget {
   final T value;
   final List<DropdownMenuItem<T>> items;
   final ValueChanged<T?> onChanged;
+  final String? hintText;
 
   const CustomSelectDropdown({
     super.key,
@@ -90,52 +89,77 @@ class CustomSelectDropdown<T> extends StatelessWidget {
     required this.value,
     required this.items,
     required this.onChanged,
+    this.hintText,
   });
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textMuted,
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: const Color(0x1AFFFFFF),
-            border: Border.all(color: AppColors.border),
-            borderRadius: BorderRadius.circular(10),
-          ),
+        const SizedBox(height: 8), // M3 consistent 8dp spacing
+        InputButtonDecorator(
           child: DropdownButtonHideUnderline(
             child: DropdownButton<T>(
               value: value,
               items: items,
               onChanged: onChanged,
-              dropdownColor: AppColors.cardBg,
-              icon: const Icon(Icons.arrow_drop_down, color: AppColors.textMuted),
-              style: const TextStyle(fontSize: 13, color: Colors.white, fontFamily: 'Inter'),
+              dropdownColor: theme.colorScheme.surfaceVariant,
+              icon: Icon(Icons.arrow_drop_down, color: theme.colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                fontSize: 14,
+                color: theme.colorScheme.onSurface,
+                fontFamily: 'Inter',
+              ),
               isExpanded: true,
             ),
           ),
         ),
         if (hint != null) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             hint!,
-            style: const TextStyle(
-              fontSize: 11,
-              color: AppColors.textMuted,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
             ),
           ),
         ],
       ],
+    );
+  }
+}
+
+// Wraps dropdown in identical style as text fields to align height and borders
+class InputButtonDecorator extends StatelessWidget {
+  final Widget child;
+
+  const InputButtonDecorator({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      height: 56, // Matches standard M3 text field height with vertical padding
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surfaceVariant,
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.2),
+          width: 1,
+        ),
+        borderRadius: BorderRadius.circular(12), // Matches input borders
+      ),
+      alignment: Alignment.center,
+      child: child,
     );
   }
 }
@@ -162,6 +186,7 @@ class CustomSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -170,30 +195,29 @@ class CustomSlider extends StatelessWidget {
           children: [
             Text(
               label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textMuted,
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
               ),
             ),
             Text(
               formatValue != null ? formatValue!(value) : value.toStringAsFixed(0),
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: AppColors.accent,
+                color: theme.colorScheme.secondary,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8), // M3 consistent 8dp spacing
         SliderTheme(
           data: SliderTheme.of(context).copyWith(
-            activeTrackColor: AppColors.primary,
-            inactiveTrackColor: AppColors.border,
-            thumbColor: AppColors.accent,
-            overlayColor: AppColors.accentLight,
-            valueIndicatorColor: AppColors.cardBg,
+            activeTrackColor: theme.colorScheme.primary,
+            inactiveTrackColor: theme.colorScheme.outline.withOpacity(0.2),
+            thumbColor: theme.colorScheme.primary,
+            overlayColor: theme.colorScheme.primary.withOpacity(0.12),
+            valueIndicatorColor: theme.colorScheme.surfaceVariant,
             trackHeight: 4,
           ),
           child: Slider(
@@ -225,10 +249,11 @@ class CustomToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 12.0), // Better target size
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: Column(
@@ -236,31 +261,30 @@ class CustomToggle extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
                   description,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.textMuted,
-                    height: 1.3,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(width: 16),
           Switch(
             value: checked,
             onChanged: onChanged,
-            activeThumbColor: AppColors.success,
-            activeTrackColor: const Color(0x333DB36B),
-            inactiveThumbColor: AppColors.textMuted,
-            inactiveTrackColor: AppColors.border,
+            activeColor: theme.colorScheme.primary,
+            activeTrackColor: theme.colorScheme.primary.withOpacity(0.24),
+            inactiveThumbColor: theme.colorScheme.onSurfaceVariant,
+            inactiveTrackColor: theme.colorScheme.outline.withOpacity(0.12),
           ),
         ],
       ),

@@ -6,6 +6,8 @@
 	<string>TalbotIQ needs camera access so the AI interviewer can see you during the video interview.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>TalbotIQ needs microphone access so the AI interviewer can hear your answers during the interview.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>TalbotIQ uses speech recognition to transcribe your interview answers for the results report.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

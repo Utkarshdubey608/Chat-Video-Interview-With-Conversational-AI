@@ -1,6 +1,7 @@
 // lib/views/interview_page.dart
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/constants/colors.dart';
@@ -8,6 +9,7 @@ import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
 import '../core/services/deepgram_service.dart';
+import '../core/services/deepgram_live.dart';
 import '../widgets/iframe_view.dart';
 import '../widgets/custom_buttons.dart';
 
@@ -18,7 +20,8 @@ class InterviewPage extends StatefulWidget {
   State<InterviewPage> createState() => _InterviewPageState();
 }
 
-class _InterviewPageState extends State<InterviewPage> with TickerProviderStateMixin {
+class _InterviewPageState extends State<InterviewPage>
+    with TickerProviderStateMixin {
   String _activeTab = 'questions'; // 'questions', 'live', 'transcript'
   bool _isFullscreen = false;
   bool _autoAdvance = true;
@@ -32,103 +35,162 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   Timer? _autoAdvanceTimeoutTimer;
   Timer? _avatarSpeakTimer;
 
+  // Live transcription:
+  // - web: Deepgram Nova-3 streaming the candidate's mic
+  // - mobile/desktop: platform speech recognizer via speech_to_text
+  DeepgramLiveSession? _dgSession;
+  bool _transcriptionStarted = false;
+  String _interimText = '';
+  String? _transcriptError;
+  bool _dgConnected = false;
+  int _totalFillers = 0;
+
+  // Cached store reference so we can add/remove a route listener safely.
+  AppStore? _store;
+
   @override
   void initState() {
     super.initState();
-    
-    // Ensure we start with question 0
     _revealedIdx = 0;
     _startSimulations();
     _resetQuestionTimers();
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // InterviewPage lives inside MainLayout's IndexedStack, so it is BUILT (and
+    // initState runs) while the user is still on the Setup page. We must NOT
+    // grab the mic / speech recognizer until the interview page is actually the
+    // active route and a session is live — otherwise transcription fires on
+    // Setup. Drive the live transcription lifecycle off the store's route here.
+    final store = Provider.of<AppStore>(context, listen: false);
+    if (!identical(store, _store)) {
+      _store?.removeListener(_syncTranscriptionWithRoute);
+      _store = store;
+      _store!.addListener(_syncTranscriptionWithRoute);
+    }
+    _syncTranscriptionWithRoute();
+  }
+
+  // Start transcription only while the interview page is visible AND active;
+  // stop it as soon as we navigate away.
+  void _syncTranscriptionWithRoute() {
+    final store = _store;
+    if (store == null) return;
+    final shouldRun = store.currentRoute == '/interview' && store.interviewActive;
+    if (shouldRun) {
+      _startLiveTranscription();
+    } else {
+      _stopLiveTranscription();
+    }
+  }
+
+  @override
   void dispose() {
+    _store?.removeListener(_syncTranscriptionWithRoute);
     _jitterTimer?.cancel();
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
     _avatarSpeakTimer?.cancel();
+    _dgSession?.stop();
     _overrideController.dispose();
     _transcriptScrollController.dispose();
     super.dispose();
   }
 
-  // 1. Polls real WebRTC speech transcriptions and metrics from Tavus, or updates static settings in demo mode
+  // Live candidate transcript. Web mirrors the React app's Deepgram path;
+  // native builds use platform speech recognition so Results can be generated
+  // immediately from store.sessionTranscript.
+  void _startLiveTranscription() {
+    if (_transcriptionStarted) return;
+    final store = Provider.of<AppStore>(context, listen: false);
+    if (kIsWeb) {
+      if (store.deepgramKey.isEmpty) return;
+      deepgramService.setKey(store.deepgramKey);
+    }
+    // Mark started before creating the session so route-change notifications
+    // that fire mid-startup don't spawn a second recognizer.
+    _transcriptionStarted = true;
+
+    _dgSession = DeepgramLiveSession(
+      onFinal: (text) {
+        if (!mounted) return;
+        final entry = TranscriptEntry(
+          role: 'candidate',
+          text: text,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          questionIdx: store.currentQuestionIdx,
+        );
+        store.pushTranscriptEntry(entry);
+
+        _totalFillers += deepgramService.countFillers(text);
+        final int wpm = deepgramService.calcWpm(store.sessionTranscript);
+        store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: _totalFillers);
+        setState(() => _interimText = '');
+        _scrollToBottom();
+      },
+      onInterim: (text) {
+        if (mounted) setState(() => _interimText = text);
+      },
+      onConnected: (connected) {
+        if (!mounted) return;
+        setState(() {
+          _dgConnected = connected;
+          if (connected) _transcriptError = null;
+        });
+        store.setDeepgramConnected(connected);
+      },
+      onError: (message) {
+        if (!mounted) return;
+        setState(() {
+          _dgConnected = false;
+          _transcriptError = message;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Transcript: $message'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      },
+    );
+    _dgSession!.start();
+  }
+
+  void _stopLiveTranscription() {
+    if (!_transcriptionStarted) return;
+    _transcriptionStarted = false;
+    _dgSession?.stop();
+    _dgSession = null;
+    if (mounted) {
+      setState(() {
+        _interimText = '';
+        _dgConnected = false;
+      });
+    }
+  }
+
   void _startSimulations() {
     final store = Provider.of<AppStore>(context, listen: false);
-    final isDemo = store.currentConversation?.conversationUrl.isEmpty ?? true;
 
-    _jitterTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+    // Confidence / anxiety / engagement are jittered as a live-feed proxy
+    // (Hume EVI streaming is not wired up on this client). WPM and fillers come
+    // from the real Deepgram transcript in _startLiveTranscription.
+    _jitterTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
       if (!store.interviewActive) return;
-
-      if (!isDemo) {
-        // REAL IMPLEMENTATION: Poll Tavus API for actual speech transcripts
-        try {
-          final String convId = store.currentConversation!.conversationId;
-          final List<TranscriptEntry> liveTranscript = await tavusService.getConversationTranscript(convId);
-          
-          if (liveTranscript.isNotEmpty) {
-            final localLen = store.sessionTranscript.length;
-            if (liveTranscript.length > localLen) {
-              for (int i = localLen; i < liveTranscript.length; i++) {
-                final entry = liveTranscript[i];
-                
-                // Track question index for entries
-                final resolvedEntry = TranscriptEntry(
-                  role: entry.role,
-                  text: entry.text,
-                  timestamp: entry.timestamp,
-                  questionIdx: store.currentQuestionIdx,
-                );
-                
-                store.pushTranscriptEntry(resolvedEntry);
-                
-                // Update speaker states for visual feedback
-                if (entry.role == 'avatar') {
-                  setState(() {
-                    _avatarSpeaking = true;
-                  });
-                  _avatarSpeakTimer?.cancel();
-                  _avatarSpeakTimer = Timer(const Duration(seconds: 3), () {
-                    if (mounted) setState(() => _avatarSpeaking = false);
-                  });
-                }
-                
-                // Calculate dynamic metrics from the candidate's actual speech
-                if (entry.role == 'candidate') {
-                  final int entryFillers = deepgramService.countFillers(entry.text);
-                  final int totalFillers = store.fillers + entryFillers;
-                  
-                  final int wpm = deepgramService.calcWpm(store.sessionTranscript);
-                  
-                  // Compute dynamic traits mathematically from real vocal cues
-                  final int confidence = (85 - totalFillers * 2).clamp(50, 95);
-                  final int anxiety = (10 + totalFillers * 3).clamp(5, 45);
-                  final int engagement = (wpm > 85 && wpm < 165) ? 90 : 72;
-                  
-                  store.updateMetrics(
-                    conf: confidence,
-                    anx: anxiety,
-                    w: wpm,
-                    f: totalFillers,
-                    eng: engagement,
-                  );
-                }
-              }
-              _scrollToBottom();
-            }
-          }
-        } catch (e) {
-          debugPrint('Failed to poll real Tavus transcript: $e');
-        }
-      } else {
-        // Demo mode: update static variables gently without appending fake transcripts
-        final random = math.Random();
-        final conf = (store.confidence == 0) ? 80 : (store.confidence + (random.nextInt(5) - 2)).clamp(70, 90);
-        final anx = (store.anxiety == 0) ? 12 : (store.anxiety + (random.nextInt(3) - 1)).clamp(8, 20);
-        final eng = (store.engagement == 0) ? 92 : (store.engagement + (random.nextInt(4) - 2)).clamp(85, 96);
-        store.updateMetrics(conf: conf, anx: anx, eng: eng);
-      }
+      final random = math.Random();
+      final conf = (store.confidence == 0)
+          ? 80
+          : (store.confidence + (random.nextInt(5) - 2)).clamp(70, 90);
+      final anx = (store.anxiety == 0)
+          ? 12
+          : (store.anxiety + (random.nextInt(3) - 1)).clamp(8, 20);
+      final eng = (store.engagement == 0)
+          ? 92
+          : (store.engagement + (random.nextInt(4) - 2)).clamp(85, 96);
+      store.updateMetrics(conf: conf, anx: anx, eng: eng);
     });
   }
 
@@ -142,7 +204,6 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
     }
   }
 
-  // 2. Turn-taking and automatic timeouts
   void _resetQuestionTimers() {
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
@@ -150,7 +211,6 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
     final store = Provider.of<AppStore>(context, listen: false);
     final isDemo = store.currentConversation?.conversationUrl == '';
 
-    // Safety reveal timer: reveals question even if no avatar event fires
     _fallbackRevealTimer = Timer(Duration(seconds: isDemo ? 4 : 9), () {
       if (mounted) {
         setState(() {
@@ -159,7 +219,6 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
       }
     });
 
-    // 90 seconds fallback auto-advance timer
     if (_autoAdvance) {
       _autoAdvanceTimeoutTimer = Timer(const Duration(seconds: 90), () {
         if (mounted && _autoAdvance) {
@@ -171,18 +230,23 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
 
   Future<void> _endInterview() async {
     final store = Provider.of<AppStore>(context, listen: false);
-    
+    final theme = Theme.of(context);
+
     final confirmEnd = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          backgroundColor: AppColors.cardBg,
-          title: const Text('End Interview?', style: TextStyle(color: Colors.white)),
-          content: const Text('Are you sure you want to end the interview now and generate the scorecard?', style: TextStyle(color: AppColors.textMuted)),
+          title: const Text('End Interview?'),
+          content: const Text(
+            'Are you sure you want to end the interview now and generate the scorecard?',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+              ),
             ),
             CustomButton(
               text: 'End Interview',
@@ -198,16 +262,24 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
 
     setState(() => store.setInterviewActive(false));
 
-    if (store.currentConversation != null && store.currentConversation!.conversationUrl.isNotEmpty) {
+    // Stop the live mic/transcription stream — the transcript is already captured in
+    // the store as the candidate spoke, so results can be generated immediately.
+    _dgSession?.stop();
+    _dgSession = null;
+
+    if (store.currentConversation != null &&
+        store.currentConversation!.conversationUrl.isNotEmpty) {
       try {
-        await tavusService.endConversation(store.currentConversation!.conversationId);
+        await tavusService.endConversation(
+          store.currentConversation!.conversationId,
+        );
       } catch (e) {
         debugPrint('Tavus end conversation error: $e');
       }
     }
 
     if (mounted) {
-      Navigator.pushReplacementNamed(context, '/results');
+      store.navigateTo('/results');
     }
   }
 
@@ -226,7 +298,7 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   void _nextQuestion() {
     final store = Provider.of<AppStore>(context, listen: false);
     final total = store.questions.where((q) => q.isNotEmpty).length;
-    
+
     if (store.currentQuestionIdx + 1 < total) {
       final next = store.currentQuestionIdx + 1;
       store.setCurrentQuestionIdx(next);
@@ -246,85 +318,96 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
 
     try {
       await tavusService.createConversation({
-        // For standard override, we call patch conversational context on active conversation
         'conversational_context': overrideText,
-      }); // or standard update api
-      
+      });
+
       _overrideController.clear();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Context override sent'), backgroundColor: AppColors.success),
+        SnackBar(
+          content: const Text('Context override sent'),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to override context: $e'), backgroundColor: AppColors.danger),
+        SnackBar(
+          content: Text('Failed to override context: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
       );
     }
   }
 
-  Widget _buildProgressBar(List<String> validQs, int currentQ) {
+  Widget _buildProgressBar(
+    ThemeData theme,
+    List<String> validQs,
+    int currentQ,
+  ) {
     final double pct = validQs.isEmpty ? 0 : (currentQ + 1) / validQs.length;
     return Container(
-      height: 3,
+      height: 4,
       width: double.infinity,
-      color: Colors.white.withOpacity(0.1),
-      child: FractionallySizedBox(
+      color: theme.colorScheme.outline.withOpacity(0.12),
+      child: Align(
         alignment: Alignment.centerLeft,
-        widthFactor: pct,
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [AppColors.primary, AppColors.accent],
-            ),
-          ),
+        child: FractionallySizedBox(
+          widthFactor: pct,
+          child: Container(color: theme.colorScheme.primary),
         ),
       ),
     );
   }
 
   Widget _buildVideoPanel(AppStore store, List<String> validQs) {
-    final hasUrl = store.currentConversation?.conversationUrl.isNotEmpty ?? false;
+    final theme = Theme.of(context);
+    final isMobile = MediaQuery.of(context).size.width < 850;
+    final hasUrl =
+        store.currentConversation?.conversationUrl.isNotEmpty ?? false;
 
     return Container(
-      color: const Color(0xFF0C1A2E),
+      color: theme.colorScheme.surface,
       child: Stack(
         children: [
-          // Iframe WebView or pulsing placeholder
           Center(
             child: Container(
-              margin: const EdgeInsets.all(24),
+              margin: EdgeInsets.all(isMobile ? 12 : 24),
               width: double.infinity,
               height: double.infinity,
               decoration: BoxDecoration(
-                color: const Color(0xFF152035),
+                color: theme.colorScheme.surfaceVariant,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withOpacity(0.12),
+                ),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: hasUrl
+                child: (hasUrl && store.currentRoute == '/interview')
                     ? buildIframe(store.currentConversation!.conversationUrl)
                     : _buildDemoPlaceholder(),
               ),
             ),
           ),
 
-          // Progress indicator at top edge
           Positioned(
             top: 0,
             left: 0,
             right: 0,
-            child: _buildProgressBar(validQs, store.currentQuestionIdx),
+            child: _buildProgressBar(theme, validQs, store.currentQuestionIdx),
           ),
 
-          // Screen control overlays
           Positioned(
             top: 16,
             right: 16,
             child: CustomButton(
               text: _isFullscreen ? 'Exit Full Screen' : 'Full Screen',
               variant: ButtonVariant.outline,
-              height: 32,
-              icon: Icon(_isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen, size: 16, color: Colors.white),
+              height: 36,
+              icon: Icon(
+                _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                size: 16,
+                color: theme.colorScheme.onSurface,
+              ),
               onPressed: () {
                 setState(() {
                   _isFullscreen = !_isFullscreen;
@@ -338,27 +421,24 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   }
 
   Widget _buildDemoPlaceholder() {
+    final theme = Theme.of(context);
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF152035), Color(0xFF0C1A2E)],
-        ),
-      ),
+      color: theme.colorScheme.surfaceVariant,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _PulsingAvatar(),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Demo Mode',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Avatar speech and transcripts are simulated.\nPress Next (⏭) to advance questions.',
-            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            style: theme.textTheme.bodyMedium,
             textAlign: TextAlign.center,
           ),
         ],
@@ -367,163 +447,247 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   }
 
   Widget _buildQuestionBar(AppStore store, List<String> validQs) {
+    final theme = Theme.of(context);
     final isRevealed = _revealedIdx == store.currentQuestionIdx;
-    final isMobile = MediaQuery.of(context).size.width < 600;
 
-    final questionTextCol = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool isNarrow = constraints.maxWidth < 650;
+
+        final questionTextCol = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'QUESTION ${store.currentQuestionIdx + 1} OF ${validQs.length}',
-              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.accent, letterSpacing: 1.2),
-            ),
-            if (_avatarSpeaking) ...[
-              const SizedBox(width: 12),
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(color: AppColors.success, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 4),
-                  const Text('Avatar Speaking', style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 4),
-        isRevealed
-            ? Text(
-                validQs.isNotEmpty ? validQs[store.currentQuestionIdx] : 'Done',
-                style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.w500),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              )
-            : Row(
-                children: [
-                  const Text(
-                    'Waiting for avatar to ask…',
-                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: AppColors.textMuted),
-                  ),
-                  const SizedBox(width: 12),
-                  CustomButton(
-                    text: 'Show Now',
-                    variant: ButtonVariant.outline,
-                    height: 22,
-                    onPressed: () {
-                      setState(() {
-                        _revealedIdx = store.currentQuestionIdx;
-                      });
-                    },
-                  ),
-                ],
-              ),
-      ],
-    );
-
-    final controlsRow = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CustomButton(
-          text: _autoAdvance ? 'Auto' : 'Manual',
-          variant: ButtonVariant.outline,
-          height: 32,
-          icon: Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: _autoAdvance ? AppColors.success : AppColors.textMuted, shape: BoxShape.circle),
-          ),
-          onPressed: () {
-            setState(() {
-              _autoAdvance = !_autoAdvance;
-              _resetQuestionTimers();
-            });
-          },
-        ),
-        const SizedBox(width: 8),
-        Container(width: 1, height: 20, color: Colors.white.withOpacity(0.1)),
-        const SizedBox(width: 8),
-        
-        // Prev
-        _buildRoundControlBtn(Icons.skip_previous, store.currentQuestionIdx > 0 ? _prevQuestion : null),
-        const SizedBox(width: 6),
-        
-        // End Call (Stop)
-        _buildRoundControlBtn(Icons.stop, _endInterview, isDanger: true),
-        const SizedBox(width: 6),
-        
-        // Next
-        _buildRoundControlBtn(Icons.skip_next, _nextQuestion),
-      ],
-    );
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: isMobile ? 12 : 8),
-      decoration: const BoxDecoration(
-        color: AppColors.backgroundBlack,
-        border: Border(top: BorderSide(color: Color(0x1AFFFFFF))),
-      ),
-      child: isMobile
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            Row(
               children: [
-                questionTextCol,
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.center,
-                  child: controlsRow,
+                Text(
+                  'QUESTION ${store.currentQuestionIdx + 1} OF ${validQs.length}',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
                 ),
-              ],
-            )
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(child: questionTextCol),
-                const SizedBox(width: 16),
-                controlsRow,
+                if (_avatarSpeaking) ...[
+                  const SizedBox(width: 12),
+                  Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Avatar Speaking',
+                        style: TextStyle(
+                          color: theme.colorScheme.primary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
+            const SizedBox(height: 4),
+            isRevealed
+                ? Text(
+                    validQs.isNotEmpty
+                        ? validQs[store.currentQuestionIdx]
+                        : 'Done',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : Row(
+                    children: [
+                      Text(
+                        'Waiting for avatar to ask…',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      CustomButton(
+                        text: 'Show Now',
+                        variant: ButtonVariant.outline,
+                        height: 28,
+                        onPressed: () {
+                          setState(() {
+                            _revealedIdx = store.currentQuestionIdx;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+          ],
+        );
+
+        final controlsRow = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CustomButton(
+              text: _autoAdvance ? 'Auto' : 'Manual',
+              variant: ButtonVariant.outline,
+              height: 36,
+              icon: Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: _autoAdvance
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              onPressed: () {
+                setState(() {
+                  _autoAdvance = !_autoAdvance;
+                  _resetQuestionTimers();
+                });
+              },
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 1,
+              height: 20,
+              color: theme.colorScheme.outline.withOpacity(0.2),
+            ),
+            const SizedBox(width: 8),
+
+            _buildRoundControlBtn(
+              Icons.skip_previous,
+              store.currentQuestionIdx > 0 ? _prevQuestion : null,
+            ),
+            const SizedBox(width: 8),
+
+            _buildRoundControlBtn(Icons.stop, _endInterview, isDanger: true),
+            const SizedBox(width: 8),
+
+            _buildRoundControlBtn(Icons.skip_next, _nextQuestion),
+          ],
+        );
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            border: Border(
+              top: BorderSide(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+              ),
+            ),
+          ),
+          child: isNarrow
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    questionTextCol,
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton.icon(
+                          icon: Icon(
+                            Icons.assignment_outlined,
+                            size: 16,
+                            color: theme.colorScheme.primary,
+                          ),
+                          label: Text(
+                            'Menu',
+                            style: TextStyle(
+                              color: theme.colorScheme.primary,
+                              fontSize: 13,
+                            ),
+                          ),
+                          onPressed: () => Scaffold.of(context).openEndDrawer(),
+                        ),
+                        controlsRow,
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(child: questionTextCol),
+                    const SizedBox(width: 16),
+                    controlsRow,
+                  ],
+                ),
+        );
+      },
     );
   }
 
-  Widget _buildRoundControlBtn(IconData icon, VoidCallback? onPressed, {bool isDanger = false}) {
+  Widget _buildRoundControlBtn(
+    IconData icon,
+    VoidCallback? onPressed, {
+    bool isDanger = false,
+  }) {
+    final theme = Theme.of(context);
     final disabled = onPressed == null;
     return Container(
-      width: 38,
-      height: 38,
+      width: 44,
+      height: 44,
       decoration: BoxDecoration(
         color: isDanger
-            ? AppColors.danger.withOpacity(0.1)
-            : (disabled ? Colors.white.withOpacity(0.02) : Colors.white.withOpacity(0.06)),
+            ? theme.colorScheme.error.withOpacity(0.08)
+            : (disabled
+                  ? theme.colorScheme.onSurface.withOpacity(0.02)
+                  : theme.colorScheme.onSurface.withOpacity(0.06)),
         border: Border.all(
           color: isDanger
-              ? AppColors.danger.withOpacity(0.3)
-              : (disabled ? Colors.white.withOpacity(0.05) : Colors.white.withOpacity(0.15)),
+              ? theme.colorScheme.error.withOpacity(0.24)
+              : (disabled
+                    ? theme.colorScheme.outline.withOpacity(0.05)
+                    : theme.colorScheme.outline.withOpacity(0.24)),
         ),
         shape: BoxShape.circle,
       ),
       child: IconButton(
-        icon: Icon(icon, size: 16, color: isDanger ? AppColors.danger : (disabled ? AppColors.textMuted.withOpacity(0.4) : Colors.white)),
+        icon: Icon(
+          icon,
+          size: 18,
+          color: isDanger
+              ? theme.colorScheme.error
+              : (disabled
+                    ? theme.colorScheme.onSurfaceVariant.withOpacity(0.4)
+                    : theme.colorScheme.onSurface),
+        ),
         onPressed: onPressed,
         padding: EdgeInsets.zero,
       ),
     );
   }
 
-  Widget _buildSidebar(AppStore store, List<String> validQs, {bool isMobile = false}) {
+  Widget _buildSidebar(
+    AppStore store,
+    List<String> validQs, {
+    bool isMobile = false,
+  }) {
+    final theme = Theme.of(context);
     return Container(
       width: isMobile ? null : 320,
       decoration: BoxDecoration(
-        color: AppColors.backgroundDarker,
+        color: theme.colorScheme.surface,
         border: Border(
-          left: isMobile ? BorderSide.none : const BorderSide(color: Color(0x1AFFFFFF)),
-          top: isMobile ? const BorderSide(color: Color(0x1AFFFFFF)) : BorderSide.none,
+          left: isMobile
+              ? BorderSide.none
+              : BorderSide(color: theme.colorScheme.outline.withOpacity(0.12)),
+          top: isMobile
+              ? BorderSide(color: theme.colorScheme.outline.withOpacity(0.12))
+              : BorderSide.none,
         ),
       ),
       child: Column(
@@ -531,11 +695,23 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           // Sidebar tabs
           Container(
             height: 48,
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0x1AFFFFFF))),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: theme.colorScheme.outline.withOpacity(0.12),
+                ),
+              ),
             ),
             child: Row(
               children: [
+                if (isMobile)
+                  IconButton(
+                    icon: Icon(
+                      Icons.close,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 _buildTabButton('questions', 'QUESTIONS'),
                 _buildTabButton('live', 'LIVE AI'),
                 _buildTabButton('transcript', 'TRANSCRIPT'),
@@ -554,28 +730,48 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           // Sidebar status bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: const BoxDecoration(
-              color: AppColors.backgroundBlack,
-              border: Border(top: BorderSide(color: Color(0x1AFFFFFF))),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+              border: Border(
+                top: BorderSide(
+                  color: theme.colorScheme.outline.withOpacity(0.12),
+                ),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: AppColors.success.withOpacity(0.1),
-                    border: Border.all(color: AppColors.success.withOpacity(0.3)),
+                    color: theme.colorScheme.primary.withOpacity(0.12),
+                    border: Border.all(
+                      color: theme.colorScheme.primary.withOpacity(0.24),
+                    ),
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text(
+                  child: Text(
                     'ACTIVE',
-                    style: TextStyle(color: AppColors.success, fontSize: 9, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: theme.colorScheme.primary,
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 TextButton(
                   onPressed: _endInterview,
-                  child: const Text('End Interview', style: TextStyle(color: AppColors.danger, fontSize: 12, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'End Interview',
+                    style: TextStyle(
+                      color: theme.colorScheme.error,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -586,6 +782,7 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   }
 
   Widget _buildTabButton(String id, String title) {
+    final theme = Theme.of(context);
     final active = _activeTab == id;
     return Expanded(
       child: InkWell(
@@ -595,7 +792,7 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: active ? AppColors.accent : Colors.transparent,
+                color: active ? theme.colorScheme.primary : Colors.transparent,
                 width: 2,
               ),
             ),
@@ -603,9 +800,11 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           child: Text(
             title,
             style: TextStyle(
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: FontWeight.bold,
-              color: active ? AppColors.accent : AppColors.textMuted,
+              color: active
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -614,6 +813,8 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   }
 
   Widget _buildTabContent(AppStore store, List<String> validQs) {
+    final theme = Theme.of(context);
+
     if (_activeTab == 'questions') {
       return ListView.builder(
         itemCount: validQs.length,
@@ -626,9 +827,13 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
             decoration: BoxDecoration(
-              color: isCurrent ? AppColors.accent.withOpacity(0.05) : Colors.transparent,
+              color: isCurrent
+                  ? theme.colorScheme.primary.withOpacity(0.08)
+                  : Colors.transparent,
               border: Border.all(
-                color: isCurrent ? AppColors.accent.withOpacity(0.3) : Colors.transparent,
+                color: isCurrent
+                    ? theme.colorScheme.primary.withOpacity(0.24)
+                    : Colors.transparent,
               ),
               borderRadius: BorderRadius.circular(12),
             ),
@@ -642,30 +847,40 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
                 _resetQuestionTimers();
               },
               leading: Container(
-                width: 20,
-                height: 20,
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
                   color: isDone
-                      ? AppColors.primary
-                      : (isCurrent ? AppColors.accent : Colors.white.withOpacity(0.05)),
-                  borderRadius: BorderRadius.circular(4),
+                      ? theme.colorScheme.primary
+                      : (isCurrent
+                            ? theme.colorScheme.secondary
+                            : theme.colorScheme.outline.withOpacity(0.12)),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   isDone ? '✓' : '${idx + 1}',
                   style: TextStyle(
-                    color: isCurrent ? AppColors.background : Colors.white,
-                    fontSize: 10,
+                    color: isDone || !isCurrent
+                        ? Colors.white
+                        : theme.colorScheme.onSecondary,
+                    fontSize: 11,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
               title: Text(
-                !isRevealed && isCurrent ? '••••••••••••••••••••••••' : validQs[idx],
+                !isRevealed && isCurrent
+                    ? '••••••••••••••••••••••••'
+                    : validQs[idx],
                 style: TextStyle(
-                  color: isLocked ? Colors.white.withOpacity(0.3) : Colors.white.withOpacity(0.85),
-                  fontSize: 12,
-                  fontStyle: !isRevealed && isCurrent ? FontStyle.italic : FontStyle.normal,
+                  color: isLocked
+                      ? theme.colorScheme.onSurface.withOpacity(0.38)
+                      : theme.colorScheme.onSurface,
+                  fontSize: 13,
+                  fontStyle: !isRevealed && isCurrent
+                      ? FontStyle.italic
+                      : FontStyle.normal,
                 ),
               ),
             ),
@@ -673,65 +888,106 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
         },
       );
     } else if (_activeTab == 'live') {
+      final Color chartColor = theme.brightness == Brightness.dark
+          ? AppColors.humeTeal
+          : theme.colorScheme.secondary;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Emotion Profile Card
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.humeCard,
-              border: Border.all(color: AppColors.humeBorder),
+              color: theme.colorScheme.surfaceVariant,
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.2),
+              ),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       'EMOTION ANALYSIS',
-                      style: TextStyle(color: AppColors.humeMuted, fontSize: 8, fontWeight: FontWeight.bold, fontFamily: 'Courier'),
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'Courier',
+                      ),
                     ),
                     Row(
                       children: [
-                        Icon(Icons.wifi, color: AppColors.humeTeal, size: 10),
-                        SizedBox(width: 4),
-                        Text('LIVE FEED', style: TextStyle(color: AppColors.humeTeal, fontSize: 8, fontWeight: FontWeight.bold)),
+                        Icon(Icons.wifi, color: chartColor, size: 10),
+                        const SizedBox(width: 4),
+                        Text(
+                          'LIVE FEED',
+                          style: TextStyle(
+                            color: chartColor,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                
-                // Bars
-                _buildLiveMetricBar('Confidence', store.confidence, AppColors.success),
-                const SizedBox(height: 10),
-                _buildLiveMetricBar('Anxiety', store.anxiety, AppColors.warning),
-                const SizedBox(height: 10),
-                _buildLiveMetricBar('Engagement', store.engagement, AppColors.accent),
+
+                _buildLiveMetricBar(
+                  'Confidence',
+                  store.confidence,
+                  theme.colorScheme.primary,
+                ),
+                const SizedBox(height: 12),
+                _buildLiveMetricBar(
+                  'Anxiety',
+                  store.anxiety,
+                  theme.colorScheme.error,
+                ),
+                const SizedBox(height: 12),
+                _buildLiveMetricBar(
+                  'Engagement',
+                  store.engagement,
+                  theme.colorScheme.secondary,
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
 
-          // Speech Metrics grid
           Row(
             children: [
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.03),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    color: theme.colorScheme.onSurface.withOpacity(0.04),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.12),
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('WPM', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
-                      Text('${store.wpm}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: AppColors.success)),
+                      Text(
+                        'WPM',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${store.wpm}',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -741,15 +997,30 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.03),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
+                    color: theme.colorScheme.onSurface.withOpacity(0.04),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.12),
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('FILLERS', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
-                      Text('${store.fillers}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: AppColors.textMuted)),
+                      Text(
+                        'FILLERS',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${store.fillers}',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -758,13 +1029,21 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
           ),
           const SizedBox(height: 16),
 
-          // Override input
-          if (store.currentConversation?.properties?.applyConversationOverride == true) ...[
-            const Divider(color: Color(0x1AFFFFFF)),
+          if (store
+                  .currentConversation
+                  ?.properties
+                  ?.applyConversationOverride ==
+              true) ...[
+            Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'OVERRIDE (SAY THIS NOW)',
-              style: TextStyle(color: AppColors.accent, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.1),
+              style: TextStyle(
+                color: theme.colorScheme.primary,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.1,
+              ),
             ),
             const SizedBox(height: 8),
             Row(
@@ -772,17 +1051,23 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
                 Expanded(
                   child: TextField(
                     controller: _overrideController,
-                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: theme.colorScheme.onSurface,
+                    ),
                     decoration: const InputDecoration(
                       hintText: 'Type text for avatar to say…',
-                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 CustomButton(
                   text: 'Send',
-                  height: 34,
+                  height: 38,
                   onPressed: _sendOverride,
                 ),
               ],
@@ -791,42 +1076,134 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
         ],
       );
     } else {
-      // Transcript logs
+      final Color chartColor = theme.brightness == Brightness.dark
+          ? AppColors.humeTeal
+          : theme.colorScheme.secondary;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('DEEPGRAM NOVA-3', style: TextStyle(color: AppColors.textMuted, fontSize: 9, fontWeight: FontWeight.bold)),
+              Text(
+                kIsWeb ? 'DEEPGRAM NOVA-3' : 'DEVICE SPEECH',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Row(
                 children: [
                   Container(
-                    width: 5,
-                    height: 5,
-                    decoration: const BoxDecoration(color: AppColors.humeTeal, shape: BoxShape.circle),
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: _dgConnected
+                          ? chartColor
+                          : theme.colorScheme.onSurfaceVariant.withOpacity(0.4),
+                      shape: BoxShape.circle,
+                    ),
                   ),
                   const SizedBox(width: 4),
-                  const Text('LIVE', style: TextStyle(color: AppColors.humeTeal, fontSize: 9, fontWeight: FontWeight.bold)),
+                  Text(
+                    _dgConnected
+                        ? 'LIVE'
+                        : (_transcriptError != null
+                              ? 'UNAVAILABLE'
+                              : (kIsWeb && store.deepgramKey.isEmpty
+                                    ? 'NO KEY'
+                                    : 'CONNECTING…')),
+                    style: TextStyle(
+                      color: _dgConnected
+                          ? chartColor
+                          : theme.colorScheme.onSurfaceVariant,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             ],
           ),
           const SizedBox(height: 12),
 
+          if (store.sessionTranscript.isEmpty && _interimText.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 32.0),
+              child: Text(
+                !kIsWeb
+                    ? (_transcriptError != null
+                          ? 'Device speech unavailable. Results will try the Tavus transcript after the call ends.'
+                          : (_dgConnected
+                                ? 'Listening — transcript will appear as you speak…'
+                                : 'Starting device speech recognition…'))
+                    : (store.deepgramKey.isEmpty
+                          ? 'Transcript requires a Deepgram API key in Settings.'
+                          : (_dgConnected
+                                ? 'Listening — transcript will appear as you speak…'
+                                : 'Connecting to Deepgram…')),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  fontStyle: FontStyle.italic,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+
           Expanded(
             child: ListView.builder(
               controller: _transcriptScrollController,
-              itemCount: store.sessionTranscript.length,
+              itemCount:
+                  store.sessionTranscript.length +
+                  (_interimText.isNotEmpty ? 1 : 0),
               itemBuilder: (context, idx) {
+                // Trailing interim "typing" entry
+                if (idx >= store.sessionTranscript.length) {
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.onSurface.withOpacity(0.02),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withOpacity(0.12),
+                        style: BorderStyle.solid,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Typing…',
+                          style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _interimText,
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface.withOpacity(0.6),
+                            fontSize: 13,
+                            height: 1.4,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
                 final entry = store.sessionTranscript[idx];
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.04),
-                    border: Border.all(color: Colors.white.withOpacity(0.08)),
-                    borderRadius: BorderRadius.circular(10),
+                    color: theme.colorScheme.onSurface.withOpacity(0.04),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.12),
+                    ),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -837,21 +1214,37 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
                           Text(
                             'Q${entry.questionIdx + 1} · ${entry.role == 'avatar' ? 'Interviewer' : 'Candidate'}',
                             style: TextStyle(
-                              color: entry.role == 'avatar' ? AppColors.accent : AppColors.success,
-                              fontSize: 9,
+                              color: entry.role == 'avatar'
+                                  ? theme.colorScheme.secondary
+                                  : theme.colorScheme.primary,
+                              fontSize: 10,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           Text(
-                            DateTime.fromMillisecondsSinceEpoch(entry.timestamp).toLocal().toString().split(' ').last.substring(0, 8),
-                            style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 9, fontFamily: 'Courier'),
+                            DateTime.fromMillisecondsSinceEpoch(entry.timestamp)
+                                .toLocal()
+                                .toString()
+                                .split(' ')
+                                .last
+                                .substring(0, 8),
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withOpacity(0.5),
+                              fontSize: 9,
+                              fontFamily: 'Courier',
+                            ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Text(
                         entry.text,
-                        style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 11, height: 1.4),
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
                       ),
                     ],
                   ),
@@ -865,26 +1258,45 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
   }
 
   Widget _buildLiveMetricBar(String label, int value, Color color) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label, style: const TextStyle(color: AppColors.textMuted, fontSize: 10, fontWeight: FontWeight.w600)),
-            Text('$value%', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+            Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+            ),
+            Text(
+              '$value%',
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Container(
-          height: 5,
+          height: 6,
           width: double.infinity,
-          decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(10)),
-          child: FractionallySizedBox(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.outline.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Align(
             alignment: Alignment.centerLeft,
-            widthFactor: value / 100.0,
-            child: Container(
-              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+            child: FractionallySizedBox(
+              widthFactor: value / 100.0,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
             ),
           ),
         ),
@@ -894,21 +1306,25 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
     final validQs = store.questions.where((q) => q.isNotEmpty).toList();
 
     if (store.currentConversation == null) {
       return Scaffold(
-        backgroundColor: AppColors.background,
+        backgroundColor: theme.colorScheme.background,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('No active interview session.', style: TextStyle(color: Colors.white, fontSize: 16)),
-              const SizedBox(height: 12),
+              Text(
+                'No active interview session.',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 16),
               CustomButton(
                 text: 'Go to Setup',
-                onPressed: () => Navigator.pushReplacementNamed(context, '/setup'),
+                onPressed: () => store.navigateTo('/setup'),
               ),
             ],
           ),
@@ -916,41 +1332,20 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
       );
     }
 
-    final isMobile = MediaQuery.of(context).size.width < 800;
+    final isMobile = MediaQuery.of(context).size.width < 850;
     final mainVideo = _buildVideoPanel(store, validQs);
     final bottomControls = _buildQuestionBar(store, validQs);
     final sidebar = _buildSidebar(store, validQs, isMobile: isMobile);
 
-    if (_isFullscreen) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: Column(
-          children: [
-            Expanded(child: mainVideo),
-            bottomControls,
-          ],
-        ),
-      );
-    }
-
-    if (isMobile) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        body: Column(
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: mainVideo,
-            ),
-            bottomControls,
-            Expanded(child: sidebar),
-          ],
-        ),
-      );
-    }
-
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
+      endDrawer: isMobile
+          ? Drawer(
+              width: 320,
+              backgroundColor: theme.colorScheme.surface,
+              child: SafeArea(child: sidebar),
+            )
+          : null,
       body: Row(
         children: [
           Expanded(
@@ -961,7 +1356,7 @@ class _InterviewPageState extends State<InterviewPage> with TickerProviderStateM
               ],
             ),
           ),
-          sidebar,
+          if (!isMobile && !_isFullscreen) sidebar,
         ],
       ),
     );
@@ -974,7 +1369,8 @@ class _PulsingAvatar extends StatefulWidget {
   State<_PulsingAvatar> createState() => _PulsingAvatarState();
 }
 
-class _PulsingAvatarState extends State<_PulsingAvatar> with SingleTickerProviderStateMixin {
+class _PulsingAvatarState extends State<_PulsingAvatar>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
@@ -994,6 +1390,7 @@ class _PulsingAvatarState extends State<_PulsingAvatar> with SingleTickerProvide
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -1002,17 +1399,15 @@ class _PulsingAvatarState extends State<_PulsingAvatar> with SingleTickerProvide
           height: 80,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: const LinearGradient(colors: [AppColors.primary, AppColors.primaryHover]),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withOpacity(0.3),
-                blurRadius: 10 + _controller.value * 15,
-                spreadRadius: 2 + _controller.value * 8,
+            color: theme.colorScheme.primary.withOpacity(0.12),
+            border: Border.all(
+              color: theme.colorScheme.primary.withOpacity(
+                0.3 + _controller.value * 0.5,
               ),
-            ],
-            border: Border.all(color: Colors.white24, width: 2),
+              width: 2 + _controller.value * 2,
+            ),
           ),
-          child: const Icon(Icons.person, color: Colors.white, size: 36),
+          child: Icon(Icons.person, color: theme.colorScheme.primary, size: 36),
         );
       },
     );

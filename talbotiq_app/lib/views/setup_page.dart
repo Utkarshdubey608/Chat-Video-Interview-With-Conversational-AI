@@ -59,7 +59,7 @@ class _SetupPageState extends State<SetupPage> {
     _personaIdController.text = store.defaultPersonaId;
     _convNameController.text = 'TalbotIQ Interview';
     _contextController.text =
-        'You are Alex, a Senior Talent Specialist at TalbotIQ conduction a screening interview. Maintain a warm, professional tone.';
+        'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview. Maintain a warm, professional tone.';
     _greetingController.text = 'Hello, welcome to your TalbotIQ interview.';
     _loadApis();
   }
@@ -214,15 +214,14 @@ $numbered''';
   Future<void> _confirmLaunch(String candidateName) async {
     if (candidateName.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a display name'), backgroundColor: AppColors.danger),
+        const SnackBar(content: Text('Enter a display name'), backgroundColor: Colors.red),
       );
       return;
     }
 
-    // Ensure replica is set
     if (_replicaIdController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select or enter a Replica ID to start a session'), backgroundColor: AppColors.danger),
+        const SnackBar(content: Text('Select or enter a Replica ID to start a session'), backgroundColor: Colors.red),
       );
       return;
     }
@@ -241,9 +240,9 @@ $numbered''';
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Session created!'), backgroundColor: AppColors.success),
+          SnackBar(content: const Text('Session created!'), backgroundColor: Theme.of(context).colorScheme.primary),
         );
-        Navigator.pushNamed(context, '/interview');
+        store.navigateTo('/interview');
       }
     } catch (e) {
       if (mounted) {
@@ -259,16 +258,15 @@ $numbered''';
     showDialog(
       context: context,
       builder: (BuildContext context) {
+        final theme = Theme.of(context);
         return AlertDialog(
-          backgroundColor: AppColors.cardBg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Confirm Session', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          title: const Text('Confirm Session'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 'Enter the candidate\'s name to personalise this interview session.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 16),
               CustomInputField(
@@ -282,7 +280,7 @@ $numbered''';
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+              child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
             ),
             CustomButton(
               text: 'Launch Interview',
@@ -303,16 +301,15 @@ $numbered''';
     showDialog(
       context: context,
       builder: (BuildContext context) {
+        final theme = Theme.of(context);
         return AlertDialog(
-          backgroundColor: AppColors.cardBg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Save Draft', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          title: const Text('Save Draft'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 'Give this draft a name so you can find it later.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+                style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 16),
               CustomInputField(
@@ -326,7 +323,7 @@ $numbered''';
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+              child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
             ),
             CustomButton(
               text: 'Save',
@@ -362,7 +359,7 @@ $numbered''';
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Draft "$name" saved successfully'),
-                    backgroundColor: AppColors.success,
+                    backgroundColor: theme.colorScheme.primary,
                   ),
                 );
               },
@@ -377,9 +374,8 @@ $numbered''';
     showDialog(
       context: context,
       builder: (BuildContext context) {
+        final theme = Theme.of(context);
         return AlertDialog(
-          backgroundColor: AppColors.cardBg,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,14 +385,17 @@ $numbered''';
                   Container(
                     width: 36,
                     height: 36,
-                    decoration: BoxDecoration(color: const Color(0x1ADB2626), borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.error, color: AppColors.danger, size: 20),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.error.withOpacity(0.12), 
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.error, color: theme.colorScheme.error, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Tavus API Error',
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
@@ -406,19 +405,19 @@ $numbered''';
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0x0FDB2626),
-                  border: Border.all(color: const Color(0x1ADB2626)),
-                  borderRadius: BorderRadius.circular(10),
+                  color: theme.colorScheme.error.withOpacity(0.04),
+                  border: Border.all(color: theme.colorScheme.error.withOpacity(0.12)),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
                   message,
-                  style: const TextStyle(color: AppColors.danger, fontSize: 13, height: 1.4),
+                  style: TextStyle(color: theme.colorScheme.error, fontSize: 13, height: 1.4),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'To launch standard conversational sessions, make sure you configure a valid API key in settings.',
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12, height: 1.4),
+                style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 24),
               Row(
@@ -480,30 +479,31 @@ $numbered''';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Loaded draft "${draft.name}"'),
-        backgroundColor: AppColors.success,
+        backgroundColor: Theme.of(context).colorScheme.primary,
       ),
     );
   }
 
   Widget _buildSavedDrafts(AppStore store) {
     if (store.drafts.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Saved Drafts',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white),
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
             Text(
               '${store.drafts.length} draft(s) — click to load',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             const SizedBox(height: 12),
-            Container(
+            SizedBox(
               height: 72,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
@@ -514,13 +514,13 @@ $numbered''';
                     margin: const EdgeInsets.only(right: 12),
                     child: InkWell(
                       onTap: () => _loadDraft(draft),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         width: 220,
                         decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.border),
-                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -532,27 +532,31 @@ $numbered''';
                                 children: [
                                   Text(
                                     draft.name,
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                                    style: TextStyle(
+                                      fontSize: 13, 
+                                      fontWeight: FontWeight.bold, 
+                                      color: theme.colorScheme.onSurface,
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
                                     '${draft.questions.length} questions',
-                                    style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                                    style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
                                   ),
                                 ],
                               ),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.close, size: 14, color: AppColors.textMuted),
+                              icon: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
                               onPressed: () {
                                 store.deleteDraft(draft.id);
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('Draft deleted')),
                                 );
                               },
-                              hoverColor: const Color(0x1ADB2626),
+                              hoverColor: theme.colorScheme.error.withOpacity(0.08),
                             ),
                           ],
                         ),
@@ -569,6 +573,7 @@ $numbered''';
   }
 
   Widget _buildTavusConfigCard() {
+    final theme = Theme.of(context);
     final replicaOptions = [
       const DropdownMenuItem<String>(value: '', child: Text('Select a Replica')),
       ..._replicas.map((r) => DropdownMenuItem<String>(
@@ -596,10 +601,10 @@ $numbered''';
           children: [
             Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Tavus Configuration',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
                 if (_isLoadingTavus)
@@ -614,7 +619,7 @@ $numbered''';
                 else
                   IconButton(
                     icon: const Icon(Icons.refresh, size: 18),
-                    color: AppColors.textMuted,
+                    color: theme.colorScheme.onSurfaceVariant,
                     tooltip: 'Reload replicas & personas',
                     onPressed: _loadApis,
                   ),
@@ -624,7 +629,7 @@ $numbered''';
               _isLoadingTavus
                   ? 'Loading replicas & personas from Tavus…'
                   : 'Avatar and persona selection for this session',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             if (_tavusLoadError != null) ...[
               const SizedBox(height: 12),
@@ -632,19 +637,19 @@ $numbered''';
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
+                  color: theme.colorScheme.error.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withOpacity(0.4)),
+                  border: Border.all(color: theme.colorScheme.error.withOpacity(0.3)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.error_outline, size: 16, color: Colors.redAccent),
+                    Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         _tavusLoadError!,
-                        style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+                        style: TextStyle(fontSize: 12, color: theme.colorScheme.error),
                       ),
                     ),
                   ],
@@ -674,7 +679,6 @@ $numbered''';
                         : '',
                     items: personaOptions,
                     onChanged: (val) => setState(() => _personaIdController.text = val ?? ''),
-                    hint: 'Optional — inherits defaults if unset',
                   ),
                 ),
               ],
@@ -727,20 +731,21 @@ $numbered''';
   }
 
   Widget _buildQuestionsCard(AppStore store) {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Interview Questions',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
             Text(
               '${store.questions.length} questions configured',
-              style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             const SizedBox(height: 16),
 
@@ -754,13 +759,16 @@ $numbered''';
                   child: Row(
                     children: [
                       Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(4)),
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withOpacity(0.12), 
+                          borderRadius: BorderRadius.circular(6),
+                        ),
                         alignment: Alignment.center,
                         child: Text(
                           '${idx + 1}',
-                          style: const TextStyle(color: AppColors.accent, fontSize: 11, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -768,10 +776,10 @@ $numbered''';
                         child: TextField(
                           controller: TextEditingController(text: store.questions[idx])
                             ..selection = TextSelection.collapsed(offset: store.questions[idx].length),
-                          style: const TextStyle(fontSize: 13, color: Colors.white),
+                          style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
                           decoration: InputDecoration(
                             hintText: 'Question ${idx + 1}',
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                           ),
                           onChanged: (val) {
                             final qs = List<String>.from(store.questions);
@@ -782,13 +790,13 @@ $numbered''';
                       ),
                       const SizedBox(width: 8),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.textMuted),
+                        icon: Icon(Icons.delete_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
                         onPressed: () {
                           final qs = List<String>.from(store.questions);
                           qs.removeAt(idx);
                           store.setQuestions(qs);
                         },
-                        hoverColor: const Color(0x1ADB2626),
+                        hoverColor: theme.colorScheme.error.withOpacity(0.08),
                       ),
                     ],
                   ),
@@ -802,13 +810,13 @@ $numbered''';
                 store.setQuestions(qs);
               },
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppColors.border, style: BorderStyle.solid),
-                minimumSize: const Size(double.infinity, 38),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                side: BorderSide(color: theme.colorScheme.outline.withOpacity(0.3)),
+                minimumSize: const Size(double.infinity, 48), // MD3 touch target size
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
               ),
-              child: const Text(
+              child: Text(
                 '+ Add Question',
-                style: TextStyle(color: AppColors.accent, fontSize: 12, fontWeight: FontWeight.bold),
+                style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
               ),
             ),
           ],
@@ -818,19 +826,20 @@ $numbered''';
   }
 
   Widget _buildSessionPropertiesCard() {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Session Properties',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const Text(
+            Text(
               'All values map to the Tavus conversation properties object',
-              style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             const SizedBox(height: 20),
 
@@ -902,7 +911,7 @@ $numbered''';
               ],
             ),
             const SizedBox(height: 16),
-            const Divider(color: AppColors.border),
+            Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
             const SizedBox(height: 8),
 
             CustomToggle(
@@ -945,6 +954,7 @@ $numbered''';
 
   Widget _buildS3StorageCard() {
     if (!_enableRecording) return const SizedBox.shrink();
+    final theme = Theme.of(context);
 
     return Card(
       child: Padding(
@@ -952,13 +962,13 @@ $numbered''';
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'S3 Recording Storage',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const Text(
+            Text(
               'Configure AWS S3 bucket details to preserve session recording',
-              style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             const SizedBox(height: 20),
 
@@ -1023,11 +1033,12 @@ $numbered''';
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
     final payload = _buildPayload('Candidate');
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth > 1050;
@@ -1040,32 +1051,42 @@ $numbered''';
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.2),
-                      border: Border.all(color: AppColors.primary),
+                      color: theme.colorScheme.primary.withOpacity(0.12),
+                      border: Border.all(color: theme.colorScheme.primary.withOpacity(0.24)),
                       borderRadius: BorderRadius.circular(20),
                     ),
-                    child: const Text(
+                    child: Text(
                       'AI Avatar Screening',
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.success),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Configure Your',
+                    style: theme.textTheme.headlineLarge?.copyWith(
+                      fontWeight: FontWeight.w300, 
+                      color: theme.colorScheme.onSurfaceVariant,
+                      height: 0.95,
+                    ),
+                  ),
+                  Text(
+                    'Interview Session',
+                    style: theme.textTheme.displayMedium?.copyWith(
+                      fontSize: 40,
+                      fontWeight: FontWeight.w700, 
+                      color: theme.colorScheme.onSurface, 
+                      height: 1.0, 
+                      letterSpacing: -1,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Configure Your',
-                    style: TextStyle(fontSize: 32, fontWeight: FontWeight.w300, color: AppColors.textMuted, height: 0.9),
-                  ),
-                  const Text(
-                    'Interview Session',
-                    style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900, color: Colors.white, height: 1.0, letterSpacing: -1),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Set up your AI avatar, questions, and analysis preferences. Everything is customisable.',
-                    style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                    style: theme.textTheme.bodyMedium,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   Row(
                     children: [
                       CustomButton(
@@ -1083,7 +1104,7 @@ $numbered''';
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
 
               // Saved Drafts
               _buildSavedDrafts(store),
@@ -1101,7 +1122,6 @@ $numbered''';
           );
 
           if (isWide) {
-            // Split layout
             return Padding(
               padding: const EdgeInsets.all(24.0),
               child: Row(
@@ -1113,7 +1133,7 @@ $numbered''';
                     ),
                   ),
                   const SizedBox(width: 24),
-                  Container(
+                  SizedBox(
                     width: 380,
                     child: StickyColumn(
                       payload: payload,
@@ -1123,14 +1143,13 @@ $numbered''';
               ),
             );
           } else {
-            // Single column layout
             return SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Column(
                 children: [
                   mainForm,
                   const SizedBox(height: 24),
-                  Container(
+                  SizedBox(
                     height: 400,
                     child: JsonPreviewPane(
                       data: payload,
@@ -1157,6 +1176,7 @@ class StickyColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1176,15 +1196,15 @@ class StickyColumn extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Quick Reference',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 10),
-                _buildRefRow('conversational_context', 'system prompt overrides LLM persona'),
-                _buildRefRow('custom_greeting', 'the first words spoken by avatar'),
-                _buildRefRow('greenscreen', 'needs transparent background replica'),
-                _buildRefRow('callback_url', 'receives conversation event payloads'),
+                const SizedBox(height: 12),
+                _buildRefRow(context, 'conversational_context', 'system prompt overrides LLM persona'),
+                _buildRefRow(context, 'custom_greeting', 'the first words spoken by avatar'),
+                _buildRefRow(context, 'greenscreen', 'needs transparent background replica'),
+                _buildRefRow(context, 'callback_url', 'receives conversation event payloads'),
               ],
             ),
           ),
@@ -1193,7 +1213,8 @@ class StickyColumn extends StatelessWidget {
     );
   }
 
-  Widget _buildRefRow(String term, String desc) {
+  Widget _buildRefRow(BuildContext context, String term, String desc) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: Column(
@@ -1201,11 +1222,11 @@ class StickyColumn extends StatelessWidget {
         children: [
           Text(
             term,
-            style: const TextStyle(fontSize: 10, fontFamily: 'Courier', color: AppColors.accent, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 11, fontFamily: 'Courier', color: theme.colorScheme.secondary, fontWeight: FontWeight.bold),
           ),
           Text(
             desc,
-            style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+            style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
           ),
         ],
       ),

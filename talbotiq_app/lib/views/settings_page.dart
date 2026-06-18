@@ -76,9 +76,9 @@ class _SettingsPageState extends State<SettingsPage> {
     store.setWebhookUrl(_webhookController.text.trim());
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Settings saved successfully'),
-        backgroundColor: AppColors.success,
+      SnackBar(
+        content: const Text('Settings saved successfully'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
       ),
     );
   }
@@ -100,18 +100,18 @@ class _SettingsPageState extends State<SettingsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Connected — ${replicas.length} replica(s) found'),
-            backgroundColor: AppColors.success,
+            backgroundColor: Theme.of(context).colorScheme.primary,
           ),
         );
       }
     } catch (e) {
-      print(e);
+      debugPrint('$e');
       setState(() => _tavusTestState = 'fail');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Connection failed: ${e.toString().replaceAll('Exception: ', '')}'),
-            backgroundColor: AppColors.danger,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -133,9 +133,9 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() => _dgTestState = 'ok');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Deepgram Nova-3 connected successfully'),
-              backgroundColor: AppColors.success,
+            SnackBar(
+              content: const Text('Deepgram Nova-3 connected successfully'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
             ),
           );
         }
@@ -145,7 +145,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Deepgram connection failed: ${res['message']}'),
-              backgroundColor: AppColors.danger,
+              backgroundColor: Theme.of(context).colorScheme.error,
             ),
           );
         }
@@ -156,7 +156,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Connection failed: $e'),
-            backgroundColor: AppColors.danger,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -180,9 +180,9 @@ class _SettingsPageState extends State<SettingsPage> {
         setState(() => _humeTestState = 'ok');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Hume AI connected successfully'),
-              backgroundColor: AppColors.success,
+            SnackBar(
+              content: const Text('Hume AI connected successfully'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
             ),
           );
         }
@@ -192,7 +192,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Hume returned HTTP ${res.statusCode}'),
-              backgroundColor: AppColors.danger,
+              backgroundColor: Theme.of(context).colorScheme.error,
             ),
           );
         }
@@ -203,7 +203,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Hume connection failed: $e'),
-            backgroundColor: AppColors.danger,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -211,20 +211,19 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   void _resetToDefaults() {
+    final theme = Theme.of(context);
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          backgroundColor: AppColors.cardBg,
-          title: const Text('Reset Settings?', style: TextStyle(color: Colors.white)),
+          title: const Text('Reset Settings?'),
           content: const Text(
             'Are you sure you want to reset all settings and clear stored API keys?',
-            style: TextStyle(color: AppColors.textMuted),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+              child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
             ),
             CustomButton(
               text: 'Reset',
@@ -242,9 +241,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 _webhookController.clear();
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Reset completed'),
-                    backgroundColor: AppColors.success,
+                  SnackBar(
+                    content: const Text('Reset completed'),
+                    backgroundColor: theme.colorScheme.primary,
                   ),
                 );
               },
@@ -256,6 +255,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _buildKeyField({
+    required BuildContext context,
     required String label,
     required String hint,
     required String placeholder,
@@ -264,6 +264,7 @@ class _SettingsPageState extends State<SettingsPage> {
     required VoidCallback toggleShow,
     Widget? trailingStatus,
   }) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -272,70 +273,82 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             Text(
               label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textMuted,
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
               ),
             ),
             if (trailingStatus != null) trailingStatus,
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8), // M3 consistent 8dp spacing
         TextField(
           controller: controller,
           obscureText: !show,
-          style: const TextStyle(fontSize: 13, color: Colors.white, fontFamily: 'Courier'),
+          style: TextStyle(
+            fontSize: 14, 
+            color: theme.colorScheme.onSurface, 
+            fontFamily: 'Courier',
+          ),
           decoration: InputDecoration(
             hintText: placeholder,
             suffixIcon: IconButton(
               icon: Icon(
                 show ? Icons.visibility : Icons.visibility_off,
-                color: AppColors.textMuted,
-                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+                size: 20,
               ),
               onPressed: toggleShow,
             ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 8),
         Text(
           hint,
-          style: const TextStyle(
-            fontSize: 11,
-            color: AppColors.textMuted,
-            height: 1.3,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontSize: 12,
+            color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
           ),
         ),
       ],
     );
   }
 
-  Widget _getStatusIndicator(String state) {
+  Widget _getStatusIndicator(BuildContext context, String state) {
+    final theme = Theme.of(context);
     if (state == 'testing') {
-      return const SizedBox(
-        width: 12,
-        height: 12,
-        child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(AppColors.textMuted)),
+      return SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(
+          strokeWidth: 2, 
+          valueColor: AlwaysStoppedAnimation(theme.colorScheme.onSurfaceVariant),
+        ),
       );
     }
     if (state == 'ok') {
-      return const Row(
+      return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.check_circle, color: AppColors.success, size: 14),
-          SizedBox(width: 4),
-          Text('Connected', style: TextStyle(color: AppColors.success, fontSize: 11, fontWeight: FontWeight.bold)),
+          Icon(Icons.check_circle, color: theme.colorScheme.primary, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            'Connected', 
+            style: TextStyle(color: theme.colorScheme.primary, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
         ],
       );
     }
     if (state == 'fail') {
-      return const Row(
+      return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.error, color: AppColors.danger, size: 14),
-          SizedBox(width: 4),
-          Text('Failed', style: TextStyle(color: AppColors.danger, fontSize: 11, fontWeight: FontWeight.bold)),
+          Icon(Icons.error, color: theme.colorScheme.error, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            'Failed', 
+            style: TextStyle(color: theme.colorScheme.error, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
         ],
       );
     }
@@ -344,8 +357,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -356,52 +370,48 @@ class _SettingsPageState extends State<SettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Header
-                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Platform Config',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.accent,
-                              letterSpacing: 1.5,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Platform Config',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.secondary,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.5,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Settings',
-                            style: TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                              letterSpacing: -1,
+                            const SizedBox(height: 8),
+                            Text(
+                              'Settings',
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                fontSize: 32,
+                                fontWeight: FontWeight.w700,
+                                color: theme.colorScheme.onSurface,
+                                letterSpacing: -1,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Manage API credentials and platform behaviour.',
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: AppColors.textMuted,
+                            const SizedBox(height: 8),
+                            Text(
+                              'Manage API credentials and platform behaviour.',
+                              style: theme.textTheme.bodyMedium,
+                              softWrap: true,
                             ),
-                            softWrap: true,
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 16),
-                    CustomButton(
-                      text: 'Save Settings',
-                      onPressed: _saveSettings,
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 16),
+                      CustomButton(
+                        text: 'Save Settings',
+                        onPressed: _saveSettings,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 24),
 
                   // API Key Credentials Card
@@ -411,51 +421,55 @@ class _SettingsPageState extends State<SettingsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'API Credentials',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
+                          Text(
                             'Keys are stored locally in your browser and never sent to TalbotIQ servers.',
-                            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                            style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
                           ),
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'Tavus API Key',
                             hint: 'Required — from tavus.io → Settings → API Keys',
                             placeholder: 'ta_xxxxxxxxxxxxxxxxxxxxxxxx',
                             controller: _tavusController,
                             show: _showTavus,
                             toggleShow: () => setState(() => _showTavus = !_showTavus),
-                            trailingStatus: _getStatusIndicator(_tavusTestState),
+                            trailingStatus: _getStatusIndicator(context, _tavusTestState),
                           ),
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'Deepgram API Key',
                             hint: 'Optional — transcription & pace analysis (Nova-3)',
                             placeholder: 'Token xxxxxxxxxxxxxxxx',
                             controller: _deepgramController,
                             show: _showDeepgram,
                             toggleShow: () => setState(() => _showDeepgram = !_showDeepgram),
-                            trailingStatus: _getStatusIndicator(_dgTestState),
+                            trailingStatus: _getStatusIndicator(context, _dgTestState),
                           ),
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'Hume AI API Key',
                             hint: 'Optional — voice prosody & sentiment scoring',
                             placeholder: 'hume_xxxxxxxx',
                             controller: _humeController,
                             show: _showHume,
                             toggleShow: () => setState(() => _showHume = !_showHume),
-                            trailingStatus: _getStatusIndicator(_humeTestState),
+                            trailingStatus: _getStatusIndicator(context, _humeTestState),
                           ),
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'Google Gemini Key',
                             hint: 'Optional — Gemini-powered ATS scorecard analysis (2.5 Flash)',
                             placeholder: 'AIza…',
@@ -466,6 +480,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'AWS Access Key',
                             hint: 'Optional — Rekognition facial analysis',
                             placeholder: 'AKIA…',
@@ -476,6 +491,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           const SizedBox(height: 20),
 
                           _buildKeyField(
+                            context: context,
                             label: 'Anthropic / Claude Key',
                             hint: 'Optional — AI scorecard synthesis',
                             placeholder: 'sk-ant-api03-…',
@@ -493,28 +509,28 @@ class _SettingsPageState extends State<SettingsPage> {
                               CustomButton(
                                 text: 'Test Tavus Connection',
                                 variant: ButtonVariant.outline,
-                                height: 32,
+                                height: 36,
                                 onPressed: _testTavus,
                                 isLoading: _tavusTestState == 'testing',
                               ),
                               CustomButton(
                                 text: 'Test Deepgram Connection',
                                 variant: ButtonVariant.outline,
-                                height: 32,
+                                height: 36,
                                 onPressed: _testDeepgram,
                                 isLoading: _dgTestState == 'testing',
                               ),
                               CustomButton(
                                 text: 'Test Hume Connection',
                                 variant: ButtonVariant.outline,
-                                height: 32,
+                                height: 36,
                                 onPressed: _testHume,
                                 isLoading: _humeTestState == 'testing',
                               ),
                             ],
                           ),
                           const SizedBox(height: 24),
-                          const Divider(color: AppColors.border),
+                          Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
                           const SizedBox(height: 16),
 
                           CustomInputField(
@@ -536,14 +552,14 @@ class _SettingsPageState extends State<SettingsPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'Webhook Configuration',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
+                          Text(
                             'Receives real-time conversation events from Tavus',
-                            style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                            style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
                           ),
                           const SizedBox(height: 20),
                           CustomInputField(
@@ -582,5 +598,3 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 }
-
-

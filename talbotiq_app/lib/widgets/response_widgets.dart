@@ -21,13 +21,14 @@ class JsonPreviewPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final String prettyJson = const JsonEncoder.withIndent('  ').convert(data);
 
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.backgroundDarker,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(16),
+        color: theme.colorScheme.surfaceVariant,
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,24 +41,23 @@ class JsonPreviewPane extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 12,
+                  style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppColors.accentLight,
+                    color: theme.colorScheme.secondary.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     method,
-                    style: const TextStyle(
-                      fontSize: 9,
+                    style: TextStyle(
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.accent,
+                      color: theme.colorScheme.secondary,
                       fontFamily: 'Courier',
                     ),
                   ),
@@ -65,23 +65,23 @@ class JsonPreviewPane extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, color: AppColors.border),
+          Divider(height: 1, color: theme.colorScheme.outline.withOpacity(0.2)),
           
           // Endpoint URL bar
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: const Color(0x0AFFFFFF),
+            color: theme.colorScheme.onSurface.withOpacity(0.04),
             child: Text(
               endpoint,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontFamily: 'Courier',
-                color: AppColors.textMuted,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
           ),
-          const Divider(height: 1, color: AppColors.border),
+          Divider(height: 1, color: theme.colorScheme.outline.withOpacity(0.2)),
           
           // Code Box
           Expanded(
@@ -89,10 +89,10 @@ class JsonPreviewPane extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: Text(
                 prettyJson,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontFamily: 'Courier',
-                  color: AppColors.success, // Nice green syntax-like color
+                  color: theme.brightness == Brightness.dark ? AppColors.success : theme.colorScheme.primary,
                   height: 1.4,
                 ),
               ),
@@ -117,6 +117,7 @@ class CircularScoreRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -129,8 +130,8 @@ class CircularScoreRing extends StatelessWidget {
               child: CustomPaint(
                 painter: _ScoreRingPainter(
                   score: score,
-                  backgroundColor: AppColors.border,
-                  progressColor: AppColors.primary,
+                  backgroundColor: theme.colorScheme.outline.withOpacity(0.12),
+                  progressColor: theme.colorScheme.primary,
                 ),
               ),
             ),
@@ -139,18 +140,16 @@ class CircularScoreRing extends StatelessWidget {
               children: [
                 Text(
                   '$score',
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    letterSpacing: -1,
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
-                const Text(
+                Text(
                   '/100',
                   style: TextStyle(
                     fontSize: 11,
-                    color: AppColors.textMuted,
+                    color: theme.colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -193,7 +192,6 @@ class _ScoreRingPainter extends CustomPainter {
     canvas.drawCircle(center, radius, backgroundPaint);
 
     final angle = 2 * math.pi * (score / 100.0);
-    // Draw starting from -90 degrees (top center)
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
       -math.pi / 2,
@@ -220,6 +218,9 @@ class SentimentArc extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final Color arcColor = theme.brightness == Brightness.dark ? AppColors.humeTeal : theme.colorScheme.secondary;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -232,8 +233,8 @@ class SentimentArc extends StatelessWidget {
               child: CustomPaint(
                 painter: _ArcPainter(
                   score: score,
-                  bg: AppColors.border,
-                  fg: AppColors.humeTeal,
+                  bg: theme.colorScheme.outline.withOpacity(0.12),
+                  fg: arcColor,
                 ),
               ),
             ),
@@ -243,17 +244,17 @@ class SentimentArc extends StatelessWidget {
                 children: [
                   Text(
                     '$score%',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.humeTeal,
+                      color: arcColor,
                     ),
                   ),
                   Text(
                     label,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 9,
-                      color: AppColors.humeMuted,
+                      color: theme.colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -289,10 +290,8 @@ class _ArcPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Background semi-circle arc
     canvas.drawArc(rect, math.pi, math.pi, false, bgPaint);
 
-    // Score filled arc
     final sweepAngle = math.pi * (score / 100.0);
     canvas.drawArc(rect, math.pi, sweepAngle, false, fgPaint);
   }
@@ -312,6 +311,9 @@ class EmotionRadarChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final Color chartColor = theme.brightness == Brightness.dark ? AppColors.humeTeal : theme.colorScheme.secondary;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final double size = math.min(constraints.maxWidth, 260);
@@ -320,7 +322,14 @@ class EmotionRadarChart extends StatelessWidget {
             width: size,
             height: size,
             child: CustomPaint(
-              painter: _RadarChartPainter(categoryScores),
+              painter: _RadarChartPainter(
+                scores: categoryScores,
+                borderColor: theme.colorScheme.outline.withOpacity(0.2),
+                gridColor: theme.colorScheme.outline.withOpacity(0.08),
+                textColor: theme.colorScheme.onSurfaceVariant,
+                polyFillColor: chartColor.withOpacity(0.2),
+                polyBorderColor: chartColor,
+              ),
             ),
           ),
         );
@@ -331,6 +340,12 @@ class EmotionRadarChart extends StatelessWidget {
 
 class _RadarChartPainter extends CustomPainter {
   final Map<String, double> scores;
+  final Color borderColor;
+  final Color gridColor;
+  final Color textColor;
+  final Color polyFillColor;
+  final Color polyBorderColor;
+
   static const List<String> categories = [
     'positive_high',
     'positive_calm',
@@ -349,7 +364,14 @@ class _RadarChartPainter extends CustomPainter {
     'Disengaged',
   ];
 
-  _RadarChartPainter(this.scores);
+  _RadarChartPainter({
+    required this.scores,
+    required this.borderColor,
+    required this.gridColor,
+    required this.textColor,
+    required this.polyFillColor,
+    required this.polyBorderColor,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -357,15 +379,15 @@ class _RadarChartPainter extends CustomPainter {
     final maxRadius = math.min(size.width, size.height) / 2.0 - 35;
 
     final axisPaint = Paint()
-      ..color = AppColors.border
+      ..color = borderColor
       ..strokeWidth = 1.0;
 
     final gridPaint = Paint()
-      ..color = const Color(0x1AFFFFFF)
+      ..color = gridColor
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
 
-    // 1. Draw web grid rings (at 25%, 50%, 75%, 100% radius)
+    // 1. Draw web grid rings
     final int rings = 4;
     for (int rIndex = 1; rIndex <= rings; rIndex++) {
       final ringRadius = maxRadius * (rIndex / rings);
@@ -385,8 +407,8 @@ class _RadarChartPainter extends CustomPainter {
     }
 
     // 2. Draw axis lines & labels
-    const textStyle = TextStyle(
-      color: AppColors.textMuted,
+    final textStyle = TextStyle(
+      color: textColor,
       fontSize: 8,
       fontWeight: FontWeight.bold,
     );
@@ -396,10 +418,8 @@ class _RadarChartPainter extends CustomPainter {
       final outerX = center.dx + maxRadius * math.cos(angle);
       final outerY = center.dy + maxRadius * math.sin(angle);
 
-      // Line
       canvas.drawLine(center, Offset(outerX, outerY), axisPaint);
 
-      // Draw label
       final labelX = center.dx + (maxRadius + 18) * math.cos(angle);
       final labelY = center.dy + (maxRadius + 10) * math.sin(angle);
       final span = TextSpan(text: categoryLabels[i], style: textStyle);
@@ -411,11 +431,11 @@ class _RadarChartPainter extends CustomPainter {
     // 3. Draw score polygon
     final polyPath = Path();
     final valuePaint = Paint()
-      ..color = AppColors.humeTeal.withOpacity(0.25)
+      ..color = polyFillColor
       ..style = PaintingStyle.fill;
     
     final borderPaint = Paint()
-      ..color = AppColors.humeTeal
+      ..color = polyBorderColor
       ..strokeWidth = 2.0
       ..style = PaintingStyle.stroke;
 

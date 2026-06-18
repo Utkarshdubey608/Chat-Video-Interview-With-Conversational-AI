@@ -30,37 +30,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark, // Default to Dark mode matching premium React look
-      initialRoute: '/setup',
-      onGenerateRoute: (RouteSettings settings) {
-        Widget page;
-        String routeName = settings.name ?? '/setup';
-
-        switch (routeName) {
-          case '/setup':
-            page = const SetupPage();
-            break;
-          case '/interview':
-            page = const InterviewPage();
-            break;
-          case '/results':
-            page = const ResultsPage();
-            break;
-          case '/settings':
-            page = const SettingsPage();
-            break;
-          default:
-            page = const SetupPage();
-            routeName = '/setup';
-        }
-
-        return PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => MainLayout(
-            currentRoute: routeName,
-            child: page,
-          ),
-          transitionDuration: Duration.zero, // Fast switch to match SPA web feel
-        );
-      },
+      home: const MainLayout(),
     );
   }
 }

@@ -2,46 +2,46 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  // Dark Background theme
-  static const Color background = Color.fromARGB(255, 0, 1, 3);
-  static const Color backgroundDarker = Color(0xFF0A1628);
-  static const Color backgroundBlack = Color(0xFF091525);
+  // Material Design 3 Restrained Dark Palette
+  static const Color background = Color(0xFF111318);       // Soft dark grey (M3 surface)
+  static const Color backgroundDarker = Color(0xFF1A1C1E); // Tonal surface
+  static const Color backgroundBlack = Color(0xFF0E1013);  // Deepest neutral surface
   
-  // Translucent border and cards
-  static const Color cardBg = Color.fromARGB(255, 0, 5, 13);
-  static const Color border = Color(0xFF1E293B);
-  static const Color borderLight = Color(0x33FFFFFF);
+  // Clean border and cards
+  static const Color cardBg = Color(0xFF1E2025);           // M3 Surface Container
+  static const Color border = Color(0xFF43474E);           // M3 Outline Variant
+  static const Color borderLight = Color(0x26FFFFFF);      // Minimal opacity border
   
-  // Brand accents
-  static const Color primary = Color(0xFF0D5C3A); // Emerald green
-  static const Color primaryHover = Color(0xFF1A8050);
-  static const Color primaryLight = Color(0xFFF0FAF5);
-  static const Color accent = Color(0xFFF0C040); // Amber yellow
-  static const Color accentLight = Color(0x26F0C040); // Yellow translucent
+  // Brand accents (Restrained M3 Emerald Green & Slate Blue)
+  static const Color primary = Color(0xFF81D7A3);         // M3 Dark Primary (Clean Emerald)
+  static const Color primaryHover = Color(0xFF98EBB9);
+  static const Color primaryLight = Color(0xFF003920);     // Dark primary container
+  static const Color accent = Color(0xFFA2CDDB);           // M3 Dark Tertiary (Slate Blue)
+  static const Color accentLight = Color(0x1FA2CDDB);      // Tertiary translucent
   
-  // Feedback colors
-  static const Color success = Color(0xFF3DB36B);
-  static const Color successBg = Color(0xFFF0FAF5);
-  static const Color successBorder = Color(0xFFB3E9CD);
+  // Feedback colors (M3 aligned)
+  static const Color success = Color(0xFF81D7A3);          // Standardised success
+  static const Color successBg = Color(0xFF003920);
+  static const Color successBorder = Color(0xFF005232);
   
-  static const Color warning = Color(0xFFD97706);
-  static const Color warningBg = Color(0xFFFFFBEB);
-  static const Color warningBorder = Color(0xFFFDE68A);
+  static const Color warning = Color(0xFFE4C270);
+  static const Color warningBg = Color(0xFF3C2E00);
+  static const Color warningBorder = Color(0xFF574300);
   
-  static const Color danger = Color(0xFFDC2626);
-  static const Color dangerBg = Color(0xFFFEE2E2);
-  static const Color dangerBorder = Color(0xFFFCA5A5);
+  static const Color danger = Color(0xFFF2B8B5);           // M3 Dark Error
+  static const Color dangerBg = Color(0xFF601410);
+  static const Color dangerBorder = Color(0xFF8C1D18);
   
   // Grays / Neutral text
-  static const Color textLight = Color(0xFFF8FAFC);
-  static const Color textMuted = Color(0xFF94A3B8);
-  static const Color textDark = Color(0xFF0F172A);
+  static const Color textLight = Color(0xFFE2E2E6);        // M3 On Surface
+  static const Color textMuted = Color(0xFF8D9199);        // M3 On Surface Variant
+  static const Color textDark = Color(0xFF111318);         // M3 Light On Surface
   
-  // Hume specific branding
-  static const Color humeBase = Color(0xFF0A1628);
-  static const Color humeCard = Color(0xFF13223A);
-  static const Color humeBorder = Color(0xFF1E3A5F);
-  static const Color humeText = Color(0xFFE2E8F0);
-  static const Color humeMuted = Color(0xFF64748B);
-  static const Color humeTeal = Color(0xFF00FF9D);
+  // Hume specific branding (Restrained M3 Teal)
+  static const Color humeBase = Color(0xFF1A1C1E);
+  static const Color humeCard = Color(0xFF242629);
+  static const Color humeBorder = Color(0xFF3F4145);
+  static const Color humeText = Color(0xFFE2E2E6);
+  static const Color humeMuted = Color(0xFF8D9199);
+  static const Color humeTeal = Color(0xFF80CBC4);        // Subtle pastel teal
 }

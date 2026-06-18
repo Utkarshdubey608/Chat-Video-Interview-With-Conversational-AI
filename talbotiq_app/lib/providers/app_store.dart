@@ -60,6 +60,15 @@ class AppStore extends ChangeNotifier {
   List<TranscriptEntry> _sessionTranscript = [];
   bool _deepgramConnected = false;
 
+  // Routing state
+  String _currentRoute = '/setup';
+  String get currentRoute => _currentRoute;
+
+  void navigateTo(String route) {
+    _currentRoute = route;
+    notifyListeners();
+  }
+
   // Getters
   String get tavusKey => _tavusKey;
   String get deepgramKey => _deepgramKey;

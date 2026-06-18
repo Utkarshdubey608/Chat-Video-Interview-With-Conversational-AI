@@ -9,6 +9,7 @@ import '../providers/app_store.dart';
 import '../core/services/gemini_service.dart';
 import '../core/services/tavus_service.dart';
 import '../core/services/hume_service.dart';
+import '../core/services/deepgram_service.dart';
 import '../widgets/custom_buttons.dart';
 import '../widgets/custom_inputs.dart';
 import '../widgets/response_widgets.dart';
@@ -38,10 +39,71 @@ class _ResultsPageState extends State<ResultsPage> {
   final _interviewerController = TextEditingController();
   final _notesController = TextEditingController();
 
+  bool _fetchingTranscript = false;
+
   @override
   void initState() {
     super.initState();
+    _initResults();
+  }
+
+  Future<void> _initResults() async {
+    // On web the transcript is captured live via Deepgram during the call. On
+    // mobile the WebView owns the mic, so we instead pull Tavus's own
+    // server-side transcript (enable_transcription) once the call has ended.
+    await _ensureTranscript();
+    if (!mounted) return;
     _startHumeProcess();
+  }
+
+  // Poll Tavus for the conversation transcript. It is only produced after the
+  // call ends and takes a little while to become available, so we retry.
+  Future<void> _ensureTranscript() async {
+    final store = Provider.of<AppStore>(context, listen: false);
+    final capturedCandidateText = store.sessionTranscript
+        .where((e) => e.role == 'candidate')
+        .map((e) => e.text)
+        .join(' ')
+        .trim();
+    if (capturedCandidateText.length >= 30)
+      return; // already captured live/native
+
+    final conv = store.currentConversation;
+    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty)
+      return;
+
+    setState(() => _fetchingTranscript = true);
+    try {
+      for (int attempt = 0; attempt < 18; attempt++) {
+        try {
+          final entries = await tavusService.getConversationTranscript(
+            conv.conversationId,
+          );
+          if (entries.isNotEmpty) {
+            for (final e in entries) {
+              store.pushTranscriptEntry(e);
+            }
+            // Derive speech metrics from the candidate's turns so the scorecard
+            // isn't all zeros (these are computed live from Deepgram on web).
+            final int fillers = store.sessionTranscript
+                .where((e) => e.role == 'candidate')
+                .fold(
+                  0,
+                  (acc, e) => acc + deepgramService.countFillers(e.text),
+                );
+            final int wpm = deepgramService.calcWpm(store.sessionTranscript);
+            store.updateMetrics(w: wpm, f: fillers);
+            break;
+          }
+        } catch (e) {
+          debugPrint('Transcript fetch attempt $attempt failed: $e');
+        }
+        await Future.delayed(const Duration(seconds: 5));
+        if (!mounted) return;
+      }
+    } finally {
+      if (mounted) setState(() => _fetchingTranscript = false);
+    }
   }
 
   @override
@@ -57,39 +119,42 @@ class _ResultsPageState extends State<ResultsPage> {
   void _startHumeProcess() async {
     final store = Provider.of<AppStore>(context, listen: false);
     final hasHumeKey = store.humeKey.isNotEmpty;
-    final hasConvId = store.currentConversation != null && store.currentConversation!.conversationId.isNotEmpty;
+    final hasConvId =
+        store.currentConversation != null &&
+        store.currentConversation!.conversationId.isNotEmpty;
 
     if (!hasHumeKey || !hasConvId) {
-      // Hume not active or no conversation - proceed immediately to Gemini analysis
       _runAtsAnalysis();
       return;
     }
 
     setState(() => _humeProcessing = true);
 
-    // If we already have a hume result, no need to poll
     if (store.humeResult != null) {
       setState(() => _humeProcessing = false);
       _runAtsAnalysis();
       return;
     }
 
-    // If we already have a job ID, skip submission and poll directly
     if (store.humeJobId != null) {
       _pollHumeJob(store.humeJobId!);
       return;
     }
 
-    // Otherwise, poll Tavus for the compiled recording URL first
     _pollAttempts = 0;
     _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
       _pollAttempts++;
-      if (_pollAttempts > 15) { // Stop polling after 1 minute
+      if (_pollAttempts > 15) {
         timer.cancel();
         if (mounted) {
           setState(() => _humeProcessing = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Hume analysis skipped: S3 recording ready event timeout'), backgroundColor: AppColors.warning),
+            const SnackBar(
+              content: Text(
+                'Hume analysis skipped: S3 recording ready event timeout',
+              ),
+              backgroundColor: Colors.amber,
+            ),
           );
           _runAtsAnalysis();
         }
@@ -98,15 +163,20 @@ class _ResultsPageState extends State<ResultsPage> {
 
       try {
         final convId = store.currentConversation!.conversationId;
-        final recordingUri = await tavusService.getConversationRecordingUri(convId);
-        
+        final recordingUri = await tavusService.getConversationRecordingUri(
+          convId,
+        );
+
         if (recordingUri != null) {
           timer.cancel();
-          // Fallback to us-east-1 if draft is missing bucket region
-          final region = store.drafts.isNotEmpty ? store.drafts.first.form.recordingS3BucketRegion : 'us-east-1';
-          final httpUrl = _convertS3UriToHttp(recordingUri, region.isNotEmpty ? region : 'us-east-1');
-          
-          // Submit the URL directly to Hume Batch Jobs API
+          final region = store.drafts.isNotEmpty
+              ? store.drafts.first.form.recordingS3BucketRegion
+              : 'us-east-1';
+          final httpUrl = _convertS3UriToHttp(
+            recordingUri,
+            region.isNotEmpty ? region : 'us-east-1',
+          );
+
           final jobId = await humeService.submitBatchJobWithUrls([httpUrl]);
           store.setHumeJobId(jobId);
           store.setHumeJobStatus('QUEUED');
@@ -134,12 +204,15 @@ class _ResultsPageState extends State<ResultsPage> {
 
     _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
       _pollAttempts++;
-      if (_pollAttempts > 45) { // Stop polling after 3 minutes
+      if (_pollAttempts > 45) {
         timer.cancel();
         if (mounted) {
           setState(() => _humeProcessing = false);
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Hume analysis job polling timeout'), backgroundColor: AppColors.danger),
+            const SnackBar(
+              content: Text('Hume analysis job polling timeout'),
+              backgroundColor: Colors.red,
+            ),
           );
           _runAtsAnalysis();
         }
@@ -154,13 +227,21 @@ class _ResultsPageState extends State<ResultsPage> {
           timer.cancel();
           final preds = await humeService.fetchBatchPredictions(jobId);
           final questions = store.questions.where((q) => q.isNotEmpty).toList();
-          final result = humeService.buildSessionResult(jobId, preds, store.questionTimestamps, questions);
-          
+          final result = humeService.buildSessionResult(
+            jobId,
+            preds,
+            store.questionTimestamps,
+            questions,
+          );
+
           store.setHumeResult(result);
           if (mounted) {
             setState(() => _humeProcessing = false);
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Hume voice analysis completed!'), backgroundColor: AppColors.success),
+              SnackBar(
+                content: const Text('Hume voice analysis completed!'),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+              ),
             );
             _runAtsAnalysis();
           }
@@ -169,7 +250,10 @@ class _ResultsPageState extends State<ResultsPage> {
           if (mounted) {
             setState(() => _humeProcessing = false);
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Hume analysis job failed'), backgroundColor: AppColors.danger),
+              const SnackBar(
+                content: Text('Hume analysis job failed'),
+                backgroundColor: Colors.red,
+              ),
             );
             _runAtsAnalysis();
           }
@@ -182,8 +266,24 @@ class _ResultsPageState extends State<ResultsPage> {
 
   Future<void> _runAtsAnalysis() async {
     final store = Provider.of<AppStore>(context, listen: false);
-    if (store.geminiKey.isEmpty) return; // Need Gemini key
-    if (store.sessionTranscript.isEmpty) return; // Need candidate inputs
+
+    if (store.geminiKey.isEmpty) {
+      setState(() {
+        _geminiError =
+            'Failed: Google Gemini API key is missing. Go to Settings and add your key.';
+        _geminiLoading = false;
+      });
+      return;
+    }
+
+    if (store.sessionTranscript.isEmpty) {
+      setState(() {
+        _geminiError =
+            'Failed: No transcript entries captured. ATS scorecard requires interview dialogue.';
+        _geminiLoading = false;
+      });
+      return;
+    }
 
     setState(() {
       _geminiLoading = true;
@@ -208,9 +308,11 @@ class _ResultsPageState extends State<ResultsPage> {
       );
 
       final scorecard = await geminiService.analyze(
-        candidateName: (store.currentConversation?.conversationName ?? 'Candidate').replaceAll('TalbotIQ — ', ''),
+        candidateName:
+            (store.currentConversation?.conversationName ?? 'Candidate')
+                .replaceAll('TalbotIQ — ', ''),
         jobRole: 'Senior Software Engineer',
-        interviewDurationSeconds: 120, // dummy duration
+        interviewDurationSeconds: 120,
         transcript: store.sessionTranscript,
         questions: store.questions,
         humeResult: store.humeResult,
@@ -231,10 +333,11 @@ class _ResultsPageState extends State<ResultsPage> {
     }
   }
 
-  Color _getScoreColor(int score) {
-    if (score >= 85) return AppColors.success;
-    if (score >= 70) return Colors.white;
-    return AppColors.warning;
+  Color _getScoreColor(BuildContext context, int score) {
+    final theme = Theme.of(context);
+    if (score >= 85) return theme.colorScheme.primary;
+    if (score >= 70) return theme.colorScheme.secondary;
+    return theme.colorScheme.error;
   }
 
   String _getScoreVerdict(int score) {
@@ -244,40 +347,78 @@ class _ResultsPageState extends State<ResultsPage> {
     return 'Needs Further Review';
   }
 
-  void _shareProfile(int score, String verdict, String? jobId) {
-    final text = 'TalbotIQ Report — Score: $score/100 — $verdict — Session: ${jobId ?? 'TIQ-demo'}';
+  void _shareProfile(
+    BuildContext context,
+    int score,
+    String verdict,
+    String? jobId,
+  ) {
+    final theme = Theme.of(context);
+    final text =
+        'TalbotIQ Report — Score: $score/100 — $verdict — Session: ${jobId ?? 'TIQ-demo'}';
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Report details copied to clipboard'), backgroundColor: AppColors.success),
+      SnackBar(
+        content: const Text('Report details copied to clipboard'),
+        backgroundColor: theme.colorScheme.primary,
+      ),
     );
   }
 
-  Widget _buildStatRow(String label, String value, Color color, String sub) {
+  Widget _buildStatRow(
+    BuildContext context,
+    String label,
+    String value,
+    Color color,
+    String sub,
+  ) {
+    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.cardBg,
-        border: Border.all(color: AppColors.border),
+        color: theme.colorScheme.surfaceVariant,
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: color),
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: color,
+            ),
           ),
-          const SizedBox(height: 4),
-          Text(sub, style: const TextStyle(fontSize: 10, color: AppColors.textMuted)),
+          const SizedBox(height: 6),
+          Text(
+            sub,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildDimensionProgress(String label, int score) {
-    final color = _getScoreColor(score);
+  Widget _buildDimensionProgress(
+    BuildContext context,
+    String label,
+    int score,
+  ) {
+    final theme = Theme.of(context);
+    final color = _getScoreColor(context, score);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12.0),
       child: Row(
@@ -286,18 +427,30 @@ class _ResultsPageState extends State<ResultsPage> {
             width: 120,
             child: Text(
               label,
-              style: const TextStyle(fontSize: 13, color: AppColors.textLight, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           Expanded(
             child: Container(
               height: 8,
-              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(10)),
-              child: FractionallySizedBox(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Align(
                 alignment: Alignment.centerLeft,
-                widthFactor: score / 100.0,
-                child: Container(
-                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                child: FractionallySizedBox(
+                  widthFactor: score / 100.0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -305,19 +458,28 @@ class _ResultsPageState extends State<ResultsPage> {
           const SizedBox(width: 16),
           Text(
             '$score',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildQuestionDetails(QuestionEmotionSummary q, int index) {
+  Widget _buildQuestionDetails(
+    BuildContext context,
+    QuestionEmotionSummary q,
+    int index,
+  ) {
+    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.02),
-        border: Border.all(color: AppColors.border),
+        color: theme.colorScheme.onSurface.withOpacity(0.02),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -326,17 +488,31 @@ class _ResultsPageState extends State<ResultsPage> {
           Row(
             children: [
               Container(
-                width: 20,
-                height: 20,
-                decoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
                 alignment: Alignment.center,
-                child: Text('${index + 1}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                child: Text(
+                  '${index + 1}',
+                  style: TextStyle(
+                    color: theme.colorScheme.onPrimary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   q.questionText,
-                  style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: AppColors.textLight),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                    color: theme.colorScheme.onSurface,
+                  ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -347,10 +523,17 @@ class _ResultsPageState extends State<ResultsPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Dominant: ${q.dominant}', style: const TextStyle(fontSize: 11, color: AppColors.accent, fontWeight: FontWeight.bold)),
+              Text(
+                'Dominant: ${q.dominant}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: theme.colorScheme.secondary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               Text(
                 'Confidence: ${(q.avgCategoryScores['positive_high']! * 100).round()}%',
-                style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
               ),
             ],
           ),
@@ -359,14 +542,25 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  Widget _buildRecruiterActions(int overallScore, String verdict, String? jobId) {
+  Widget _buildRecruiterActions(
+    BuildContext context,
+    int overallScore,
+    String verdict,
+    String? jobId,
+  ) {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Recruiter Actions', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text(
+              'Recruiter Actions',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 16),
             Wrap(
               spacing: 12,
@@ -379,7 +573,8 @@ class _ResultsPageState extends State<ResultsPage> {
                 CustomButton(
                   text: 'Share Profile Summary',
                   variant: ButtonVariant.secondary,
-                  onPressed: () => _shareProfile(overallScore, verdict, jobId),
+                  onPressed: () =>
+                      _shareProfile(context, overallScore, verdict, jobId),
                 ),
                 CustomButton(
                   text: 'Generate AI Offer Rec.',
@@ -390,8 +585,9 @@ class _ResultsPageState extends State<ResultsPage> {
                   text: 'New Interview Session',
                   variant: ButtonVariant.ghost,
                   onPressed: () {
-                    Provider.of<AppStore>(context, listen: false).reset();
-                    Navigator.pushReplacementNamed(context, '/setup');
+                    final store = Provider.of<AppStore>(context, listen: false);
+                    store.reset();
+                    store.navigateTo('/setup');
                   },
                 ),
               ],
@@ -402,43 +598,8 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  Widget _buildAtsAssessmentCard(AppStore store) {
-    if (store.geminiKey.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const Icon(Icons.lock_outline, color: AppColors.textMuted, size: 36),
-              const SizedBox(height: 12),
-              const Text('Add Google Gemini API Key to enable ATS scorecards.', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pushNamed(context, '/settings'),
-                child: const Text('Go to Settings →', style: TextStyle(color: AppColors.accent, fontSize: 12)),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_geminiLoading) {
-      return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(40.0),
-          child: Center(
-            child: Column(
-              children: [
-                CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(AppColors.accent)),
-                SizedBox(height: 16),
-                Text('Gemini is synthesizing transcript analytics…', style: TextStyle(color: Colors.white, fontSize: 13)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+  Widget _buildAtsAssessmentCard(BuildContext context, AppStore store) {
+    final theme = Theme.of(context);
 
     if (_geminiError != null) {
       return Card(
@@ -447,20 +608,32 @@ class _ResultsPageState extends State<ResultsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 children: [
-                  Icon(Icons.warning_amber, color: AppColors.danger, size: 20),
-                  SizedBox(width: 8),
-                  Text('ATS Assessment Synthesis Failed', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Icon(
+                    Icons.warning_amber,
+                    color: theme.colorScheme.error,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'ATS Assessment Synthesis Failed',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
-              Text(_geminiError!, style: const TextStyle(color: AppColors.danger, fontSize: 12)),
+              Text(
+                _geminiError!,
+                style: TextStyle(color: theme.colorScheme.error, fontSize: 13),
+              ),
               const SizedBox(height: 16),
               CustomButton(
                 text: 'Retry Synthesis',
                 variant: ButtonVariant.outline,
-                height: 32,
+                height: 36,
                 onPressed: _runAtsAnalysis,
               ),
             ],
@@ -469,11 +642,74 @@ class _ResultsPageState extends State<ResultsPage> {
       );
     }
 
-    if (_atsScorecard == null) {
-      return const Card(
+    if (store.geminiKey.isEmpty) {
+      return Card(
         child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: Text('No transcripts captured for synthesis.', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            children: [
+              Icon(
+                Icons.lock_outline,
+                color: theme.colorScheme.onSurfaceVariant,
+                size: 36,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Add Google Gemini API Key to enable ATS scorecards.',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Provider.of<AppStore>(
+                  context,
+                  listen: false,
+                ).navigateTo('/settings'),
+                child: Text(
+                  'Go to Settings →',
+                  style: TextStyle(
+                    color: theme.colorScheme.primary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_geminiLoading) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(40.0),
+          child: Center(
+            child: Column(
+              children: [
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Gemini is synthesizing transcript analytics…',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_atsScorecard == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Text(
+            'No transcripts captured for synthesis.',
+            style: theme.textTheme.bodyMedium,
+          ),
         ),
       );
     }
@@ -483,7 +719,12 @@ class _ResultsPageState extends State<ResultsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('AI-Powered ATS Assessment (Gemini)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+        Text(
+          'AI-Powered ATS Assessment (Gemini)',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         const SizedBox(height: 12),
         Card(
           child: Padding(
@@ -494,52 +735,102 @@ class _ResultsPageState extends State<ResultsPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('ATS Recommendation: ${card.hiringRecommendation}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
-                        const SizedBox(height: 2),
-                        Text('Overall Fit: ${card.overallFitLabel} (${card.overallFitScore}/100)', style: const TextStyle(fontSize: 11, color: AppColors.accent)),
-                      ],
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ATS Recommendation: ${card.hiringRecommendation}',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Overall Fit: ${card.overallFitLabel} (${card.overallFitScore}/100)',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     _buildFitBadge(card.hiringRecommendation),
                   ],
                 ),
                 const SizedBox(height: 16),
-                const Divider(color: AppColors.border),
-                const SizedBox(height: 12),
-
-                const Text('Hiring Recommendation Rationale', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                const SizedBox(height: 6),
-                Text(card.hiringRecommendationRationale, style: const TextStyle(fontSize: 12, color: AppColors.textMuted, height: 1.4)),
+                Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
                 const SizedBox(height: 16),
 
-                const Text('Key Strengths', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.success)),
-                const SizedBox(height: 6),
-                ...card.topStrengths.map((s) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4.0),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.check, color: AppColors.success, size: 12),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(s, style: const TextStyle(fontSize: 11, color: AppColors.textMuted))),
-                        ],
-                      ),
-                    )),
+                Text(
+                  'Hiring Recommendation Rationale',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  card.hiringRecommendationRationale,
+                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                ),
                 const SizedBox(height: 16),
 
-                const Text('Watch Points & Concerns', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.danger)),
-                const SizedBox(height: 6),
-                ...card.topConcerns.map((c) => Padding(
-                      padding: const EdgeInsets.only(bottom: 4.0),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.warning, color: AppColors.danger, size: 12),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(c, style: const TextStyle(fontSize: 11, color: AppColors.textMuted))),
-                        ],
-                      ),
-                    )),
+                Text(
+                  'Key Strengths',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...card.topStrengths.map(
+                  (s) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6.0),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.check,
+                          color: theme.colorScheme.primary,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(s, style: theme.textTheme.bodyMedium),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                Text(
+                  'Watch Points & Concerns',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ...card.topConcerns.map(
+                  (c) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6.0),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.warning,
+                          color: theme.colorScheme.error,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(c, style: theme.textTheme.bodyMedium),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -549,36 +840,48 @@ class _ResultsPageState extends State<ResultsPage> {
   }
 
   Widget _buildFitBadge(String rec) {
+    final theme = Theme.of(context);
     Color bg;
     Color fg;
     if (rec == 'Advance') {
-      bg = AppColors.success.withOpacity(0.1);
-      fg = AppColors.success;
+      bg = theme.colorScheme.primary.withOpacity(0.12);
+      fg = theme.colorScheme.primary;
     } else if (rec == 'Hold') {
-      bg = AppColors.accent.withOpacity(0.1);
-      fg = AppColors.accent;
+      bg = theme.colorScheme.secondary.withOpacity(0.12);
+      fg = theme.colorScheme.secondary;
     } else {
-      bg = AppColors.danger.withOpacity(0.1);
-      fg = AppColors.danger;
+      bg = theme.colorScheme.error.withOpacity(0.12);
+      fg = theme.colorScheme.error;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
         rec.toUpperCase(),
-        style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: fg),
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: fg,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
 
   Widget _buildFacialPanel() {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Facial Analysis (AWS Rekognition)', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+        Text(
+          'Facial Analysis (AWS Rekognition)',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         const SizedBox(height: 12),
         Card(
           child: Padding(
@@ -586,19 +889,36 @@ class _ResultsPageState extends State<ResultsPage> {
             child: Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), shape: BoxShape.circle),
-                  child: const Icon(Icons.videocam_off, color: AppColors.textMuted, size: 18),
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurface.withOpacity(0.04),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.videocam_off,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 16),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('No Facial signals captured for this session.', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
-                      SizedBox(height: 2),
-                      Text('Webcam face-tracking requires proxy registration set up in Settings.', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+                      Text(
+                        'No Facial signals captured for this session.',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Webcam face-tracking requires proxy registration set up in Settings.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -612,21 +932,30 @@ class _ResultsPageState extends State<ResultsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
-    
-    // Fallbacks if no active state
-    if (store.sessionTranscript.isEmpty && store.humeResult == null && !_humeProcessing) {
+
+    // Retrieving Tavus's server-side transcript after the call (mobile path).
+    if (_fetchingTranscript && store.sessionTranscript.isEmpty) {
       return Scaffold(
-        backgroundColor: AppColors.background,
+        backgroundColor: theme.colorScheme.background,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('No interview assessment logs found.', style: TextStyle(color: Colors.white, fontSize: 16)),
-              const SizedBox(height: 12),
-              CustomButton(
-                text: 'Go to Setup',
-                onPressed: () => Navigator.pushReplacementNamed(context, '/setup'),
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Retrieving interview transcript…',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Tavus is finalising the conversation transcript. This can take up to a minute.',
+                style: theme.textTheme.bodyMedium,
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -634,12 +963,47 @@ class _ResultsPageState extends State<ResultsPage> {
       );
     }
 
-    // Dynamic scoring logic based on Hume Composite score
+    if (store.sessionTranscript.isEmpty &&
+        store.humeResult == null &&
+        !_humeProcessing) {
+      return Scaffold(
+        backgroundColor: theme.colorScheme.background,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'No interview assessment logs found.',
+                style: theme.textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  store.tavusKey.isEmpty
+                      ? 'Add a Tavus API key in Settings so the transcript can be retrieved.'
+                      : 'The transcript could not be retrieved. Make sure transcription was enabled for the session.',
+                  style: theme.textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 16),
+              CustomButton(
+                text: 'Go to Setup',
+                onPressed: () => store.navigateTo('/setup'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final humeResult = store.humeResult;
-    final int overallScore = humeResult != null ? humeResult.compositeScore : 72;
+    final int overallScore = humeResult != null
+        ? humeResult.compositeScore
+        : 72;
     final String verdict = _getScoreVerdict(overallScore);
 
-    // Strengths & Watch points bullet list
     final List<String> strengths = [];
     final List<String> watchPoints = [];
 
@@ -666,7 +1030,7 @@ class _ResultsPageState extends State<ResultsPage> {
     final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: theme.colorScheme.background,
       body: Stack(
         children: [
           SingleChildScrollView(
@@ -677,32 +1041,47 @@ class _ResultsPageState extends State<ResultsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Header kicker
                     isMobile
                         ? Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Interview Complete',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.success, letterSpacing: 1.2),
-                              ),
-                              const SizedBox(height: 4),
                               Text(
-                                store.currentConversation?.conversationName ?? 'Interview Assessment',
-                                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white),
+                                'Interview Complete',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.2,
+                                ),
                               ),
-                              const SizedBox(height: 4),
-                              const Text(
+                              const SizedBox(height: 6),
+                              Text(
+                                store.currentConversation?.conversationName ??
+                                    'Interview Assessment',
+                                style: theme.textTheme.headlineLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
                                 'Comprehensive candidate intelligence powered by conversational AI.',
-                                style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                                style: theme.textTheme.bodyMedium,
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 12),
                               Row(
                                 children: [
-                                  const Text('Session ID: ', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                                   Text(
-                                    store.currentConversation?.conversationId ?? 'TIQ-demo',
-                                    style: const TextStyle(color: Colors.white, fontFamily: 'Courier', fontSize: 11, fontWeight: FontWeight.bold),
+                                    'Session ID: ',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                  Text(
+                                    store.currentConversation?.conversationId ??
+                                        'TIQ-demo',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurface,
+                                      fontFamily: 'Courier',
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -715,21 +1094,32 @@ class _ResultsPageState extends State<ResultsPage> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      'Interview Complete',
-                                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.success, letterSpacing: 1.2),
-                                    ),
-                                    const SizedBox(height: 4),
                                     Text(
-                                      store.currentConversation?.conversationName ?? 'Interview Assessment',
-                                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white),
+                                      'Interview Complete',
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: theme.colorScheme.primary,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 1.2,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      store
+                                              .currentConversation
+                                              ?.conversationName ??
+                                          'Interview Assessment',
+                                      style: theme.textTheme.headlineLarge
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(height: 4),
-                                    const Text(
+                                    const SizedBox(height: 6),
+                                    Text(
                                       'Comprehensive candidate intelligence powered by conversational AI.',
-                                      style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+                                      style: theme.textTheme.bodyMedium,
                                     ),
                                   ],
                                 ),
@@ -738,39 +1128,63 @@ class _ResultsPageState extends State<ResultsPage> {
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  const Text('Session ID', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                                   Text(
-                                    store.currentConversation?.conversationId ?? 'TIQ-demo',
-                                    style: const TextStyle(color: Colors.white, fontFamily: 'Courier', fontSize: 12, fontWeight: FontWeight.bold),
+                                    'Session ID',
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                  Text(
+                                    store.currentConversation?.conversationId ??
+                                        'TIQ-demo',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurface,
+                                      fontFamily: 'Courier',
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ],
                               ),
                             ],
                           ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
-                    // Hume job active processing banner
-                    if (_humeProcessing) ...[
+                    if (_hProcessingAndPending(store)) ...[
                       Container(
-                        margin: const EdgeInsets.only(bottom: 16),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        margin: const EdgeInsets.only(bottom: 20),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         decoration: BoxDecoration(
-                          color: AppColors.humeCard,
-                          border: Border.all(color: AppColors.humeBorder),
+                          color: theme.colorScheme.secondary.withOpacity(0.08),
+                          border: Border.all(
+                            color: theme.colorScheme.secondary.withOpacity(
+                              0.24,
+                            ),
+                          ),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(AppColors.humeTeal)),
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(
+                                  theme.colorScheme.secondary,
+                                ),
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 'HUME AI · Analysing prosody — emotion results will appear shortly. Job: ${store.humeJobId}',
-                                style: const TextStyle(color: AppColors.humeTeal, fontSize: 11, fontFamily: 'Courier'),
+                                style: TextStyle(
+                                  color: theme.colorScheme.secondary,
+                                  fontSize: 12,
+                                  fontFamily: 'Courier',
+                                ),
                               ),
                             ),
                           ],
@@ -778,18 +1192,44 @@ class _ResultsPageState extends State<ResultsPage> {
                       ),
                     ],
 
-                    // KPI row
-                    GridPaperStub(
+                    GridPaperResult(
                       children: [
-                        _buildStatRow('Overall Score', '$overallScore/100', AppColors.success, verdict),
-                        _buildStatRow('Hiring Confidence', '$overallScore%', AppColors.success, 'Based on speech keys'),
-                        _buildStatRow('Words / Min', '${store.wpm}', store.wpm > 100 ? AppColors.success : AppColors.warning, 'Nova-3 speech pace'),
-                        _buildStatRow('Total Fillers', '${store.fillers}', store.fillers <= 4 ? AppColors.success : AppColors.warning, 'Vocal filler rate'),
+                        _buildStatRow(
+                          context,
+                          'Overall Score',
+                          '$overallScore/100',
+                          theme.colorScheme.primary,
+                          verdict,
+                        ),
+                        _buildStatRow(
+                          context,
+                          'Hiring Confidence',
+                          '$overallScore%',
+                          theme.colorScheme.primary,
+                          'Based on speech keys',
+                        ),
+                        _buildStatRow(
+                          context,
+                          'Words / Min',
+                          '${store.wpm}',
+                          store.wpm > 100
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.error,
+                          'Nova-3 speech pace',
+                        ),
+                        _buildStatRow(
+                          context,
+                          'Total Fillers',
+                          '${store.fillers}',
+                          store.fillers <= 4
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.error,
+                          'Vocal filler rate',
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
-                    // Score ring + Dimension bars split
                     LayoutBuilder(
                       builder: (context, box) {
                         final isDesktop = box.maxWidth > 700;
@@ -799,14 +1239,36 @@ class _ResultsPageState extends State<ResultsPage> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                CircularScoreRing(score: overallScore, verdict: verdict),
+                                CircularScoreRing(
+                                  score: overallScore,
+                                  verdict: verdict,
+                                ),
                                 const SizedBox(height: 16),
-                                const Text('Overall Score', style: TextStyle(fontSize: 12, color: AppColors.textMuted, fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 8),
+                                Text(
+                                  'Overall Score',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                  decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
-                                  child: Text(verdict, style: const TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.primary
+                                        .withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: Text(
+                                    verdict,
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -819,14 +1281,43 @@ class _ResultsPageState extends State<ResultsPage> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Dimension Scores', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
-                                const SizedBox(height: 16),
-                                _buildDimensionProgress('Communication', overallScore),
-                                _buildDimensionProgress('Confidence', overallScore + 4),
-                                _buildDimensionProgress('Engagement', overallScore - 2),
-                                _buildDimensionProgress('Vocabulary', 75),
-                                _buildDimensionProgress('Stress Mgmt', overallScore + 2),
-                                _buildDimensionProgress('Articulation', (100 - store.fillers * 5).clamp(40, 100)),
+                                Text(
+                                  'Dimension Scores',
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 20),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Communication',
+                                  overallScore,
+                                ),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Confidence',
+                                  overallScore + 4,
+                                ),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Engagement',
+                                  overallScore - 2,
+                                ),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Vocabulary',
+                                  75,
+                                ),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Stress Mgmt',
+                                  overallScore + 2,
+                                ),
+                                _buildDimensionProgress(
+                                  context,
+                                  'Articulation',
+                                  (100 - store.fillers * 5).clamp(40, 100),
+                                ),
                               ],
                             ),
                           ),
@@ -836,7 +1327,7 @@ class _ResultsPageState extends State<ResultsPage> {
                           return Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(width: 220, child: scoreRingCard),
+                              SizedBox(width: 220, child: scoreRingCard),
                               const SizedBox(width: 20),
                               Expanded(child: dimsCard),
                             ],
@@ -852,14 +1343,16 @@ class _ResultsPageState extends State<ResultsPage> {
                         }
                       },
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
                     // Hume AI Emotional Intelligence Report Dashboard
                     Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: AppColors.humeBase,
-                        border: Border.all(color: AppColors.humeBorder),
+                        color: theme.colorScheme.surfaceVariant,
+                        border: Border.all(
+                          color: theme.colorScheme.outline.withOpacity(0.12),
+                        ),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
@@ -868,47 +1361,108 @@ class _ResultsPageState extends State<ResultsPage> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              const Column(
+                              Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
                                     'HUME AI · PROSODY ANALYSIS',
-                                    style: TextStyle(color: AppColors.humeMuted, fontSize: 10, fontWeight: FontWeight.bold, fontFamily: 'Courier'),
+                                    style: TextStyle(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'Courier',
+                                    ),
                                   ),
-                                  SizedBox(height: 4),
+                                  const SizedBox(height: 4),
                                   Text(
                                     'Emotional Intelligence Report',
-                                    style: TextStyle(color: AppColors.humeText, fontSize: 16, fontWeight: FontWeight.bold),
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold),
                                   ),
                                 ],
                               ),
                               if (humeResult != null)
-                                SentimentArc(score: humeResult.compositeScore, label: 'Emotion Score'),
+                                SentimentArc(
+                                  score: humeResult.compositeScore,
+                                  label: 'Emotion Score',
+                                ),
                             ],
                           ),
                           const SizedBox(height: 24),
-                          
+
                           if (humeResult != null) ...[
                             LayoutBuilder(
                               builder: (context, radarBox) {
                                 final isWide = radarBox.maxWidth > 600;
-                                final radarWidget = Container(
+                                final radarWidget = SizedBox(
                                   width: 260,
                                   height: 260,
-                                  child: EmotionRadarChart(categoryScores: humeResult.overallCategoryScores),
+                                  child: EmotionRadarChart(
+                                    categoryScores:
+                                        humeResult.overallCategoryScores,
+                                  ),
                                 );
-                                
+
                                 final breakdownWidget = Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text('Category Breakdown', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 12),
-                                    _buildHumeCategoryRow('High Positive', humeResult.overallCategoryScores['positive_high'] ?? 0.0, AppColors.humeTeal),
-                                    _buildHumeCategoryRow('Calm Positive', humeResult.overallCategoryScores['positive_calm'] ?? 0.0, AppColors.humeTeal),
-                                    _buildHumeCategoryRow('Cognitive', humeResult.overallCategoryScores['cognitive'] ?? 0.0, AppColors.accent),
-                                    _buildHumeCategoryRow('Social', humeResult.overallCategoryScores['social'] ?? 0.0, Colors.purpleAccent),
-                                    _buildHumeCategoryRow('Negative', humeResult.overallCategoryScores['negative'] ?? 0.0, AppColors.danger),
-                                    _buildHumeCategoryRow('Disengaged', humeResult.overallCategoryScores['disengagement'] ?? 0.0, AppColors.textMuted),
+                                    Text(
+                                      'Category Breakdown',
+                                      style: theme.textTheme.titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'High Positive',
+                                      humeResult
+                                              .overallCategoryScores['positive_high'] ??
+                                          0.0,
+                                      theme.colorScheme.primary,
+                                    ),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'Calm Positive',
+                                      humeResult
+                                              .overallCategoryScores['positive_calm'] ??
+                                          0.0,
+                                      theme.colorScheme.primary,
+                                    ),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'Cognitive',
+                                      humeResult
+                                              .overallCategoryScores['cognitive'] ??
+                                          0.0,
+                                      theme.colorScheme.secondary,
+                                    ),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'Social',
+                                      humeResult
+                                              .overallCategoryScores['social'] ??
+                                          0.0,
+                                      Colors.purpleAccent,
+                                    ),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'Negative',
+                                      humeResult
+                                              .overallCategoryScores['negative'] ??
+                                          0.0,
+                                      theme.colorScheme.error,
+                                    ),
+                                    _buildHumeCategoryRow(
+                                      context,
+                                      'Disengaged',
+                                      humeResult
+                                              .overallCategoryScores['disengagement'] ??
+                                          0.0,
+                                      theme.colorScheme.onSurfaceVariant
+                                          .withOpacity(0.6),
+                                    ),
                                   ],
                                 );
 
@@ -932,41 +1486,61 @@ class _ResultsPageState extends State<ResultsPage> {
                               },
                             ),
                             const SizedBox(height: 24),
-                            const Text('Question-by-Question Voice Analysis', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 12),
+                            Text(
+                              'Question-by-Question Voice Analysis',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
                             GridView.builder(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
-                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: !isMobile ? 2 : 1,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
-                                mainAxisExtent: 92,
-                              ),
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: !isMobile ? 2 : 1,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                    mainAxisExtent: 96,
+                                  ),
                               itemCount: humeResult.perQuestion.length,
                               itemBuilder: (context, idx) {
-                                return _buildQuestionDetails(humeResult.perQuestion[idx], idx);
+                                return _buildQuestionDetails(
+                                  context,
+                                  humeResult.perQuestion[idx],
+                                  idx,
+                                );
                               },
                             ),
                           ] else ...[
-                            // Hume key absent / no data
                             Center(
                               child: Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 40.0),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 40.0,
+                                ),
                                 child: Column(
                                   children: [
-                                    const Icon(Icons.mic_off, color: AppColors.humeMuted, size: 36),
+                                    Icon(
+                                      Icons.mic_off,
+                                      color: theme.colorScheme.onSurfaceVariant
+                                          .withOpacity(0.5),
+                                      size: 36,
+                                    ),
                                     const SizedBox(height: 12),
-                                    const Text(
+                                    Text(
                                       'Prosody voice analysis was not captured.',
-                                      style: TextStyle(color: Colors.white, fontSize: 13),
+                                      style: theme.textTheme.titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
                                     ),
                                     const SizedBox(height: 6),
                                     Text(
                                       store.humeKey.isEmpty
                                           ? 'Add a Hume API key in Settings to analyze emotional tone.'
                                           : 'Make sure candidate speaks clearly during session.',
-                                      style: const TextStyle(color: AppColors.humeMuted, fontSize: 11),
+                                      style: theme.textTheme.bodyMedium,
+                                      textAlign: TextAlign.center,
                                     ),
                                   ],
                                 ),
@@ -976,7 +1550,7 @@ class _ResultsPageState extends State<ResultsPage> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
                     // Strengths / Watch points tags
                     Row(
@@ -992,23 +1566,66 @@ class _ResultsPageState extends State<ResultsPage> {
                                   Row(
                                     children: [
                                       Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(color: AppColors.success.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                                        child: const Text('✓', style: TextStyle(color: AppColors.success, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.primary
+                                              .withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '✓',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.primary,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      const Text('Strengths', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Strengths',
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
                                     ],
                                   ),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: 16),
                                   Wrap(
                                     spacing: 8,
                                     runSpacing: 8,
-                                    children: strengths.map((s) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                      decoration: BoxDecoration(color: AppColors.success.withOpacity(0.1), border: Border.all(color: AppColors.success.withOpacity(0.3)), borderRadius: BorderRadius.circular(20)),
-                                      child: Text(s, style: const TextStyle(color: AppColors.success, fontSize: 11)),
-                                    )).toList(),
+                                    children: strengths
+                                        .map(
+                                          (s) => Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: theme.colorScheme.primary
+                                                  .withOpacity(0.08),
+                                              border: Border.all(
+                                                color: theme.colorScheme.primary
+                                                    .withOpacity(0.24),
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                            ),
+                                            child: Text(
+                                              s,
+                                              style: TextStyle(
+                                                color:
+                                                    theme.colorScheme.primary,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
                                 ],
                               ),
@@ -1026,23 +1643,65 @@ class _ResultsPageState extends State<ResultsPage> {
                                   Row(
                                     children: [
                                       Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                        decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
-                                        child: const Text('⚠', style: TextStyle(color: AppColors.warning, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.error
+                                              .withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '⚠',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.error,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      const Text('Watch Points', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Watch Points',
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                      ),
                                     ],
                                   ),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: 16),
                                   Wrap(
                                     spacing: 8,
                                     runSpacing: 8,
-                                    children: watchPoints.map((w) => Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                      decoration: BoxDecoration(color: AppColors.warning.withOpacity(0.1), border: Border.all(color: AppColors.warning.withOpacity(0.3)), borderRadius: BorderRadius.circular(20)),
-                                      child: Text(w, style: const TextStyle(color: AppColors.warning, fontSize: 11)),
-                                    )).toList(),
+                                    children: watchPoints
+                                        .map(
+                                          (w) => Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: theme.colorScheme.error
+                                                  .withOpacity(0.08),
+                                              border: Border.all(
+                                                color: theme.colorScheme.error
+                                                    .withOpacity(0.24),
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
+                                            ),
+                                            child: Text(
+                                              w,
+                                              style: TextStyle(
+                                                color: theme.colorScheme.error,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
                                   ),
                                 ],
                               ),
@@ -1051,18 +1710,20 @@ class _ResultsPageState extends State<ResultsPage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
-                    // Gemini Scorecard
-                    _buildAtsAssessmentCard(store),
-                    const SizedBox(height: 20),
+                    _buildAtsAssessmentCard(context, store),
+                    const SizedBox(height: 24),
 
-                    // Facial Analysis
                     _buildFacialPanel(),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
-                    // Full Recruiter actions
-                    _buildRecruiterActions(overallScore, verdict, store.humeJobId),
+                    _buildRecruiterActions(
+                      context,
+                      overallScore,
+                      verdict,
+                      store.humeJobId,
+                    ),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -1070,38 +1731,64 @@ class _ResultsPageState extends State<ResultsPage> {
             ),
           ),
 
-          // Schedule Technical Round Modal overlay
-          if (_scheduleOpen) ...[
-            _buildScheduleModal(),
-          ],
+          if (_scheduleOpen) ...[_buildScheduleModal(theme)],
 
-          // AI Offer Recommendation Modal overlay
           if (_offerOpen) ...[
-            _buildOfferModal(overallScore, verdict, strengths, watchPoints),
+            _buildOfferModal(
+              theme,
+              overallScore,
+              verdict,
+              strengths,
+              watchPoints,
+            ),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildHumeCategoryRow(String label, double val, Color color) {
+  bool _hProcessingAndPending(AppStore store) {
+    return _humeProcessing && store.humeJobId != null;
+  }
+
+  Widget _buildHumeCategoryRow(
+    BuildContext context,
+    String label,
+    double val,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: Row(
         children: [
           SizedBox(
             width: 100,
-            child: Text(label, style: const TextStyle(color: AppColors.humeText, fontSize: 11)),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontSize: 12,
+              ),
+            ),
           ),
           Expanded(
             child: Container(
-              height: 4,
-              decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(10)),
-              child: FractionallySizedBox(
+              height: 5,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Align(
                 alignment: Alignment.centerLeft,
-                widthFactor: val.clamp(0.0, 1.0),
-                child: Container(
-                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+                child: FractionallySizedBox(
+                  widthFactor: val.clamp(0.0, 1.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -1109,31 +1796,58 @@ class _ResultsPageState extends State<ResultsPage> {
           const SizedBox(width: 12),
           Text(
             '${(val * 100).round()}%',
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold, fontFamily: 'Courier'),
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'Courier',
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildScheduleModal() {
+  Widget _buildScheduleModal(ThemeData theme) {
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
-      child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 24),
+      child: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 400),
+          margin: const EdgeInsets.symmetric(horizontal: 24),
+          constraints: const BoxConstraints(maxWidth: 420),
           padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(28), // M3 Dialog corner radius
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.12),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 15,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Schedule Technical Interview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 4),
-              const Text('Book the next round for this candidate.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+              Text(
+                'Schedule Technical Interview',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Book the next round for this candidate.',
+                style: theme.textTheme.bodyMedium,
+              ),
               const SizedBox(height: 16),
-              
+
               Row(
                 children: [
                   Expanded(
@@ -1154,7 +1868,7 @@ class _ResultsPageState extends State<ResultsPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              
+
               CustomInputField(
                 label: 'Interviewer',
                 placeholder: 'Interviewer Name',
@@ -1169,13 +1883,18 @@ class _ResultsPageState extends State<ResultsPage> {
                 maxLines: 3,
               ),
               const SizedBox(height: 24),
-              
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
                     onPressed: () => setState(() => _scheduleOpen = false),
-                    child: const Text('Cancel', style: TextStyle(color: AppColors.textMuted)),
+                    child: Text(
+                      'Cancel',
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   CustomButton(
@@ -1183,7 +1902,10 @@ class _ResultsPageState extends State<ResultsPage> {
                     onPressed: () {
                       setState(() => _scheduleOpen = false);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Technical round scheduled!'), backgroundColor: AppColors.success),
+                        SnackBar(
+                          content: const Text('Technical round scheduled!'),
+                          backgroundColor: theme.colorScheme.primary,
+                        ),
                       );
                     },
                   ),
@@ -1196,28 +1918,55 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  Widget _buildOfferModal(int score, String verdict, List<String> str, List<String> watch) {
+  Widget _buildOfferModal(
+    ThemeData theme,
+    int score,
+    String verdict,
+    List<String> str,
+    List<String> watch,
+  ) {
     return Container(
       color: Colors.black54,
       alignment: Alignment.center,
-      child: Card(
-        margin: const EdgeInsets.symmetric(horizontal: 24),
+      child: Center(
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 450),
+          margin: const EdgeInsets.symmetric(horizontal: 24),
+          constraints: const BoxConstraints(maxWidth: 460),
           padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(28), // M3 Dialog corner radius
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.12),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 15,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('AI Offer Recommendation', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-              const SizedBox(height: 12),
-              
+              Text(
+                'AI Offer Recommendation',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppColors.backgroundDarker,
-                  border: Border.all(color: AppColors.border),
+                  color: theme.colorScheme.surfaceVariant,
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withOpacity(0.12),
+                  ),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
@@ -1230,28 +1979,44 @@ Top Strengths: ${str.join(', ')}
 Watch Points: ${watch.join(', ')}
 
 Generated: ${DateTime.now().toString().split(' ').first}''',
-                  style: const TextStyle(fontSize: 11, fontFamily: 'Courier', color: AppColors.success, height: 1.4),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontFamily: 'Courier',
+                    color: theme.colorScheme.primary,
+                    height: 1.4,
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
-              
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
                     onPressed: () => setState(() => _offerOpen = false),
-                    child: const Text('Close', style: TextStyle(color: AppColors.textMuted)),
+                    child: Text(
+                      'Close',
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   CustomButton(
                     text: 'Copy to Clipboard',
                     onPressed: () {
-                      Clipboard.setData(ClipboardData(
-                        text: 'OFFER RECOMMENDATION — Score: $score/100 — Verdict: $verdict — Strengths: ${str.join(', ')}',
-                      ));
+                      Clipboard.setData(
+                        ClipboardData(
+                          text:
+                              'OFFER RECOMMENDATION — Score: $score/100 — Verdict: $verdict — Strengths: ${str.join(', ')}',
+                        ),
+                      );
                       setState(() => _offerOpen = false);
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Offer copied to clipboard!'), backgroundColor: AppColors.success),
+                        SnackBar(
+                          content: const Text('Offer copied to clipboard!'),
+                          backgroundColor: theme.colorScheme.primary,
+                        ),
                       );
                     },
                   ),
@@ -1265,18 +2030,21 @@ Generated: ${DateTime.now().toString().split(' ').first}''',
   }
 }
 
-// Responsive grid support for cards
-class GridPaperStub extends StatelessWidget {
+class GridPaperResult extends StatelessWidget {
   final List<Widget> children;
 
-  const GridPaperStub({super.key, required this.children});
+  const GridPaperResult({super.key, required this.children});
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, box) {
-        final crossCount = box.maxWidth > 750 ? 4 : (box.maxWidth > 480 ? 2 : 1);
-        final double aspectRatio = box.maxWidth > 750 ? 1.5 : (box.maxWidth > 480 ? 1.8 : 3.0);
+        final crossCount = box.maxWidth > 750
+            ? 4
+            : (box.maxWidth > 480 ? 2 : 1);
+        final double aspectRatio = box.maxWidth > 750
+            ? 1.5
+            : (box.maxWidth > 480 ? 1.8 : 3.0);
         return GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -1289,10 +2057,4 @@ class GridPaperStub extends StatelessWidget {
       },
     );
   }
-}
-
-// Random mock stub helper
-class MathRandomStub {
-  double nextDouble() => 0.5;
-  int nextInt(int max) => 5;
 }
