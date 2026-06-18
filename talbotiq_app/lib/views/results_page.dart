@@ -60,17 +60,12 @@ class _ResultsPageState extends State<ResultsPage> {
   // call ends and takes a little while to become available, so we retry.
   Future<void> _ensureTranscript() async {
     final store = Provider.of<AppStore>(context, listen: false);
-    final capturedCandidateText = store.sessionTranscript
-        .where((e) => e.role == 'candidate')
-        .map((e) => e.text)
-        .join(' ')
-        .trim();
-    if (capturedCandidateText.length >= 30)
-      return; // already captured live/native
-
     final conv = store.currentConversation;
-    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty)
+    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty) {
       return;
+    }
+
+    tavusService.setKey(store.tavusKey);
 
     setState(() => _fetchingTranscript = true);
     try {
@@ -79,9 +74,22 @@ class _ResultsPageState extends State<ResultsPage> {
           final entries = await tavusService.getConversationTranscript(
             conv.conversationId,
           );
+          debugPrint('DEBUG: Tavus API returned ${entries.length} transcript entries.');
           if (entries.isNotEmpty) {
+            for (var i = 0; i < entries.length; i++) {
+              debugPrint('  Entry $i: [${entries[i].role}] ${entries[i].text} (timestamp: ${entries[i].timestamp})');
+            }
+            // Found transcript! Clear local transcript list to prevent duplicates
+            store.clearSessionTranscript();
+
             for (final e in entries) {
-              store.pushTranscriptEntry(e);
+              final qIdx = _getQuestionIdxForTimestamp(e.timestamp, store.questionTimestamps);
+              store.pushTranscriptEntry(TranscriptEntry(
+                role: e.role,
+                text: e.text,
+                timestamp: e.timestamp,
+                questionIdx: qIdx,
+              ));
             }
             // Derive speech metrics from the candidate's turns so the scorecard
             // isn't all zeros (these are computed live from Deepgram on web).
@@ -104,6 +112,16 @@ class _ResultsPageState extends State<ResultsPage> {
     } finally {
       if (mounted) setState(() => _fetchingTranscript = false);
     }
+  }
+
+  int _getQuestionIdxForTimestamp(int entryTimestamp, List<int> timestamps) {
+    if (timestamps.isEmpty) return 0;
+    for (int i = timestamps.length - 1; i >= 0; i--) {
+      if (entryTimestamp >= timestamps[i]) {
+        return i;
+      }
+    }
+    return 0;
   }
 
   @override
@@ -936,7 +954,7 @@ class _ResultsPageState extends State<ResultsPage> {
     final store = Provider.of<AppStore>(context);
 
     // Retrieving Tavus's server-side transcript after the call (mobile path).
-    if (_fetchingTranscript && store.sessionTranscript.isEmpty) {
+    if (_fetchingTranscript) {
       return Scaffold(
         backgroundColor: theme.colorScheme.background,
         body: Center(

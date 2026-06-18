@@ -214,6 +214,20 @@ class TavusService {
     }
   }
 
+  Future<List<TranscriptEntry>> getLiveTranscript(String id) async {
+    final url = Uri.parse(
+      'https://tavusapi.com/v2/conversations/$id?verbose=true',
+    );
+    final response = await http.get(url, headers: _authHeaders());
+
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body);
+      return _parseTranscriptResponse(body);
+    } else {
+      throw Exception('Failed to load live transcript: HTTP ${response.statusCode}');
+    }
+  }
+
   List<TranscriptEntry> _parseTranscriptResponse(dynamic body) {
     final List<TranscriptEntry> entries = [];
     final dynamic data = body is Map ? body['data'] : null;

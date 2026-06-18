@@ -34,6 +34,7 @@ class _InterviewPageState extends State<InterviewPage>
   Timer? _fallbackRevealTimer;
   Timer? _autoAdvanceTimeoutTimer;
   Timer? _avatarSpeakTimer;
+  Timer? _tavusPollTimer;
 
   // Live transcription:
   // - web: Deepgram Nova-3 streaming the candidate's mic
@@ -81,8 +82,10 @@ class _InterviewPageState extends State<InterviewPage>
     final shouldRun = store.currentRoute == '/interview' && store.interviewActive;
     if (shouldRun) {
       _startLiveTranscription();
+      _startTavusPolling();
     } else {
       _stopLiveTranscription();
+      _stopTavusPolling();
     }
   }
 
@@ -93,6 +96,7 @@ class _InterviewPageState extends State<InterviewPage>
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
     _avatarSpeakTimer?.cancel();
+    _tavusPollTimer?.cancel();
     _dgSession?.stop();
     _overrideController.dispose();
     _transcriptScrollController.dispose();
@@ -104,11 +108,24 @@ class _InterviewPageState extends State<InterviewPage>
   // immediately from store.sessionTranscript.
   void _startLiveTranscription() {
     if (_transcriptionStarted) return;
-    final store = Provider.of<AppStore>(context, listen: false);
-    if (kIsWeb) {
-      if (store.deepgramKey.isEmpty) return;
-      deepgramService.setKey(store.deepgramKey);
+    
+    // Only run local transcription if we are on Web AND have a Deepgram key.
+    // On native mobile/desktop platforms, we MUST NOT use native SpeechToText because
+    // the WebView's WebRTC session locks the microphone, causing continuous conflict/beep loops.
+    if (!kIsWeb) {
+      _transcriptionStarted = true;
+      _dgConnected = false;
+      return;
     }
+
+    final store = Provider.of<AppStore>(context, listen: false);
+    if (store.deepgramKey.isEmpty) {
+      _transcriptionStarted = true;
+      _dgConnected = false;
+      return;
+    }
+
+    deepgramService.setKey(store.deepgramKey);
     // Mark started before creating the session so route-change notifications
     // that fire mid-startup don't spawn a second recognizer.
     _transcriptionStarted = true;
@@ -170,6 +187,74 @@ class _InterviewPageState extends State<InterviewPage>
         _dgConnected = false;
       });
     }
+  }
+
+  int _getQuestionIdxForTimestamp(int entryTimestamp, List<int> timestamps) {
+    if (timestamps.isEmpty) return 0;
+    for (int i = timestamps.length - 1; i >= 0; i--) {
+      if (entryTimestamp >= timestamps[i]) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  void _startTavusPolling() {
+    _tavusPollTimer?.cancel();
+    final store = Provider.of<AppStore>(context, listen: false);
+    final conv = store.currentConversation;
+    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty) {
+      return;
+    }
+
+    tavusService.setKey(store.tavusKey);
+
+    // Initial check right away
+    _pollTavusTranscript(store, conv.conversationId);
+
+    _tavusPollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
+      if (!store.interviewActive || !mounted) {
+        timer.cancel();
+        return;
+      }
+      await _pollTavusTranscript(store, conv.conversationId);
+    });
+  }
+
+  Future<void> _pollTavusTranscript(AppStore store, String conversationId) async {
+    try {
+      final entries = await tavusService.getLiveTranscript(conversationId);
+      if (entries.isNotEmpty && mounted) {
+        final List<TranscriptEntry> mappedEntries = [];
+        for (final entry in entries) {
+          final qIdx = _getQuestionIdxForTimestamp(entry.timestamp, store.questionTimestamps);
+          mappedEntries.add(TranscriptEntry(
+            role: entry.role,
+            text: entry.text,
+            timestamp: entry.timestamp,
+            questionIdx: qIdx,
+          ));
+        }
+
+        store.updateTranscriptEntries(mappedEntries);
+
+        // Re-calculate WPM and fillers from candidate entries
+        final candidateTurns = mappedEntries.where((e) => e.role == 'candidate').toList();
+        final int fillers = candidateTurns.fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
+        final int wpm = deepgramService.calcWpm(mappedEntries);
+
+        _totalFillers = fillers;
+        store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: fillers);
+        _scrollToBottom();
+      }
+    } catch (e) {
+      debugPrint('Tavus live transcript poll error: $e');
+    }
+  }
+
+  void _stopTavusPolling() {
+    _tavusPollTimer?.cancel();
+    _tavusPollTimer = null;
   }
 
   void _startSimulations() {

@@ -186,11 +186,17 @@ class AppStore extends ChangeNotifier {
 
   void setCurrentQuestionIdx(int idx) {
     _currentQuestionIdx = idx;
+    if (_interviewActive) {
+      pushQuestionTimestamp(DateTime.now().millisecondsSinceEpoch);
+    }
     notifyListeners();
   }
 
   void setInterviewActive(bool active) {
     _interviewActive = active;
+    if (active) {
+      pushQuestionTimestamp(DateTime.now().millisecondsSinceEpoch);
+    }
     notifyListeners();
   }
 
@@ -263,6 +269,11 @@ class AppStore extends ChangeNotifier {
 
   void pushTranscriptEntry(TranscriptEntry entry) {
     _sessionTranscript.add(entry);
+    notifyListeners();
+  }
+
+  void updateTranscriptEntries(List<TranscriptEntry> entries) {
+    _sessionTranscript = entries;
     notifyListeners();
   }
 

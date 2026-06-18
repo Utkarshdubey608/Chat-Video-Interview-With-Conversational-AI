@@ -123,6 +123,9 @@ class GeminiService {
 
     final url = Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent?key=$_apiKey');
 
+    print('DEBUG: [Gemini API] Request model: $_model');
+    print('DEBUG: [Gemini API] Request Body:\n${jsonEncode(requestBody)}');
+
     // Retry loop for 503 & 429
     int attempts = 4;
     http.Response? response;
@@ -148,8 +151,12 @@ class GeminiService {
     }
 
     if (response == null) {
+      print('DEBUG: [Gemini API] No response received.');
       throw Exception('Failed to generate content: No response received from Gemini.');
     }
+
+    print('DEBUG: [Gemini API] Response Status Code: ${response.statusCode}');
+    print('DEBUG: [Gemini API] Response Body:\n${response.body}');
 
     if (response.statusCode != 200) {
       throw Exception('Gemini API error: ${response.statusCode} - ${response.body}');
