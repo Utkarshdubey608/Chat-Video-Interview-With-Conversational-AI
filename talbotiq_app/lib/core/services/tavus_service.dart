@@ -188,43 +188,110 @@ class TavusService {
 
   Future<TavusConversation> getConversation(String id) async {
     final url = Uri.parse('https://tavusapi.com/v2/conversations/$id');
-    final response = await http.get(url, headers: _authHeaders());
+    try {
+      print('debug: GET $url');
+      print('debug: headers: ${_authHeaders()}');
+      final response = await http.get(url, headers: _authHeaders());
+      print('debug: GET response status: ${response.statusCode}');
+      // Print limited body for readability
+      final bodyPreview = response.body.length > 1000
+          ? response.body.substring(0, 1000) + '...'
+          : response.body;
+      print('debug: GET response body: $bodyPreview');
 
-    if (response.statusCode == 200) {
-      final body = jsonDecode(response.body);
-      return TavusConversation.fromJson(body);
-    } else {
-      throw Exception(
-        'Failed to load conversation: HTTP ${response.statusCode}',
-      );
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        return TavusConversation.fromJson(body);
+      } else {
+        throw Exception(
+          'Failed to load conversation: HTTP ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      print('debug: getConversation error: $e');
+      rethrow;
     }
   }
 
   Future<List<TranscriptEntry>> getConversationTranscript(String id) async {
+    // Tavus exposes the server-side transcript through the conversation object
+    // with ?verbose=true (in the `events` array as application.transcription_ready),
+    // not via a /transcript sub-path. _parseTranscriptResponse handles that shape,
+    // and getLiveTranscript() already uses the same endpoint.
     final url = Uri.parse(
-      'https://tavusapi.com/v2/conversations/$id/transcript',
+      'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
-    final response = await http.get(url, headers: _authHeaders());
+    try {
+      print('debug: GET (transcript) $url?verbose=true');
+      print('debug: headers: ${_authHeaders()}');
+      final response = await http.get(url, headers: _authHeaders());
+      print('debug: GET transcript status: ${response.statusCode}');
+      final bodyPreview = response.body.length > 2000
+          ? response.body.substring(0, 2000) + '...'
+          : response.body;
+      print('debug: GET transcript body preview: $bodyPreview');
 
-    if (response.statusCode == 200) {
-      final body = jsonDecode(response.body);
-      return _parseTranscriptResponse(body);
-    } else {
-      throw Exception('Failed to load transcript: HTTP ${response.statusCode}');
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        return _parseTranscriptResponse(body);
+      } else {
+        throw Exception('Failed to load transcript: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      print('debug: getConversationTranscript error: $e');
+      rethrow;
     }
+  }
+
+  /// Polls the conversation verbose endpoint until a non-empty transcript
+  /// is returned or the max attempts are exhausted. Uses exponential backoff.
+  Future<List<TranscriptEntry>> fetchTranscriptWithRetry(
+    String id, {
+    int maxAttempts = 18,
+    Duration initialDelay = const Duration(seconds: 5),
+  }) async {
+    int attempt = 0;
+    Duration delay = initialDelay;
+
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        print('debug: fetchTranscriptWithRetry attempt $attempt for $id');
+        final entries = await getConversationTranscript(id);
+        if (entries.isNotEmpty) {
+          print('debug: transcript available on attempt $attempt (entries: ${entries.length})');
+          return entries;
+        }
+        print('debug: transcript empty on attempt $attempt, will retry after ${delay.inSeconds}s');
+      } catch (e) {
+        print('debug: fetchTranscriptWithRetry error on attempt $attempt: $e');
+      }
+
+      if (attempt >= maxAttempts) break;
+      await Future.delayed(delay);
+      // increase delay by 1.5x, capped to avoid unbounded growth
+      final nextMs = (delay.inMilliseconds * 1.5).round();
+      delay = Duration(milliseconds: nextMs.clamp(1000, 60000));
+    }
+
+    throw Exception('Transcript not available after $maxAttempts attempts');
   }
 
   Future<List<TranscriptEntry>> getLiveTranscript(String id) async {
     final url = Uri.parse(
       'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
-    final response = await http.get(url, headers: _authHeaders());
-
-    if (response.statusCode == 200) {
-      final body = jsonDecode(response.body);
-      return _parseTranscriptResponse(body);
-    } else {
-      throw Exception('Failed to load live transcript: HTTP ${response.statusCode}');
+    try {
+      final response = await http.get(url, headers: _authHeaders());
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        return _parseTranscriptResponse(body);
+      } else {
+        throw Exception('Failed to load live transcript: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      print('debug: getLiveTranscript error: $e');
+      rethrow;
     }
   }
 
@@ -336,35 +403,61 @@ class TavusService {
     final url = Uri.parse(
       'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
-    final response = await http.get(url, headers: _authHeaders());
+    try {
+      print('debug: GET (recording uri) $url');
+      print('debug: headers: ${_authHeaders()}');
+      final response = await http.get(url, headers: _authHeaders());
+      print('debug: GET recording uri status: ${response.statusCode}');
+      final bodyPreview = response.body.length > 2000
+          ? response.body.substring(0, 2000) + '...'
+          : response.body;
+      print('debug: GET recording uri body preview: $bodyPreview');
 
-    if (response.statusCode == 200) {
-      final body = jsonDecode(response.body);
-      final events =
-          body['events'] ??
-          (body['data'] != null ? body['data']['events'] : null);
-      if (events is List) {
-        for (var event in events) {
-          if (event['event_type'] == 'application.recording_ready') {
-            final props = event['properties'];
-            if (props != null && props['storage_uri'] != null) {
-              return props['storage_uri'].toString();
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final events =
+            body['events'] ??
+            (body['data'] != null ? body['data']['events'] : null);
+        if (events is List) {
+          for (var event in events) {
+            if (event['event_type'] == 'application.recording_ready') {
+              final props = event['properties'];
+              if (props != null && props['storage_uri'] != null) {
+                print('debug: found storage_uri: ${props['storage_uri']}');
+                return props['storage_uri'].toString();
+              }
             }
           }
         }
       }
+      return null;
+    } catch (e) {
+      print('debug: getConversationRecordingUri error: $e');
+      rethrow;
     }
-    return null;
   }
 
+  // Ends the live call but KEEPS the conversation record and its server-side
+  // transcript. This must POST to the /end action — a DELETE on the
+  // conversation permanently destroys the record (and the transcript with it),
+  // which would leave the results page with nothing to fetch.
   Future<void> endConversation(String id) async {
-    final url = Uri.parse('https://tavusapi.com/v2/conversations/$id');
-    final response = await http.delete(url, headers: _authHeaders());
+    final url = Uri.parse('https://tavusapi.com/v2/conversations/$id/end');
+    try {
+      print('debug: POST $url');
+      print('debug: headers: ${_headers()}');
+      final response = await http.post(url, headers: _headers());
+      print('debug: POST endConversation status: ${response.statusCode}');
+      print('debug: POST endConversation body: ${response.body}');
 
-    if (response.statusCode != 200 && response.statusCode != 204) {
-      throw Exception(
-        'Failed to end conversation: HTTP ${response.statusCode}',
-      );
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception(
+          'Failed to end conversation: HTTP ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      print('debug: endConversation error: $e');
+      rethrow;
     }
   }
 }

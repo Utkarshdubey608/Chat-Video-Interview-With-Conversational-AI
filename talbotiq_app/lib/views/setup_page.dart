@@ -79,11 +79,22 @@ class _SetupPageState extends State<SetupPage> {
     super.dispose();
   }
 
-  Future<void> _loadApis() async {
-    final key = Provider.of<AppStore>(context, listen: false).tavusKey;
+  Future<void> _loadApis({bool forceRefresh = false}) async {
+    final store = Provider.of<AppStore>(context, listen: false);
+    final key = store.tavusKey;
     if (key.isEmpty) {
       setState(() {
         _tavusLoadError = 'No Tavus API key set. Add it in Settings to load replicas & personas.';
+      });
+      return;
+    }
+
+    if (!forceRefresh && store.cachedReplicas.isNotEmpty) {
+      setState(() {
+        _replicas = store.cachedReplicas;
+        _personas = store.cachedPersonas;
+        _isLoadingTavus = false;
+        _tavusLoadError = null;
       });
       return;
     }
@@ -100,11 +111,17 @@ class _SetupPageState extends State<SetupPage> {
         tavusService.listPersonas(),
       ]);
       if (!mounted) return;
+
+      final replicasResult = results[0] as List<TavusReplica>;
+      final personasResult = results[1] as List<TavusPersona>;
+
       setState(() {
-        _replicas = results[0] as List<TavusReplica>;
-        _personas = results[1] as List<TavusPersona>;
+        _replicas = replicasResult;
+        _personas = personasResult;
         _isLoadingTavus = false;
       });
+
+      store.setCachedTavusData(replicasResult, personasResult);
     } catch (e) {
       debugPrint('Failed to load Tavus replicas/personas: $e');
       if (!mounted) return;
@@ -621,7 +638,7 @@ $numbered''';
                     icon: const Icon(Icons.refresh, size: 18),
                     color: theme.colorScheme.onSurfaceVariant,
                     tooltip: 'Reload replicas & personas',
-                    onPressed: _loadApis,
+                    onPressed: () => _loadApis(forceRefresh: true),
                   ),
               ],
             ),
@@ -1050,18 +1067,7 @@ $numbered''';
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary.withOpacity(0.12),
-                      border: Border.all(color: theme.colorScheme.primary.withOpacity(0.24)),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'AI Avatar Screening',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: theme.colorScheme.primary),
-                    ),
-                  ),
+           
                   const SizedBox(height: 16),
                   Text(
                     'Configure Your',

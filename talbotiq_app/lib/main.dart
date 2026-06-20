@@ -9,11 +9,13 @@ import 'views/interview_page.dart';
 import 'views/results_page.dart';
 import 'views/settings_page.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final store = AppStore();
+  await store.loadFromPrefs();
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => AppStore(),
+    ChangeNotifierProvider.value(
+      value: store,
       child: const MyApp(),
     ),
   );

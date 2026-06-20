@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart'; // for clipboard
-import '../core/constants/colors.dart';
+
 import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/gemini_service.dart';
@@ -11,8 +11,17 @@ import '../core/services/tavus_service.dart';
 import '../core/services/hume_service.dart';
 import '../core/services/deepgram_service.dart';
 import '../widgets/custom_buttons.dart';
-import '../widgets/custom_inputs.dart';
 import '../widgets/response_widgets.dart';
+
+// Modular components
+import 'results/widgets/results_modals.dart';
+import 'results/widgets/results_loading_view.dart';
+import 'results/widgets/ats_assessment_card.dart';
+import 'results/widgets/facial_analysis_panel.dart';
+import 'results/widgets/dimension_scores_panel.dart';
+import 'results/widgets/hume_emotion_panel.dart';
+import 'results/widgets/strengths_watchpoints_panel.dart';
+import 'results/widgets/results_stats_widgets.dart';
 
 class ResultsPage extends StatefulWidget {
   const ResultsPage({super.key});
@@ -33,20 +42,48 @@ class _ResultsPageState extends State<ResultsPage> {
   Timer? _humePollTimer;
   int _pollAttempts = 0;
 
-  // Dialog controllers
-  final _dateController = TextEditingController();
-  final _timeController = TextEditingController(text: '10:00');
-  final _interviewerController = TextEditingController();
-  final _notesController = TextEditingController();
-
   bool _fetchingTranscript = false;
 
+  // ResultsPage lives inside an IndexedStack (always mounted), so initState
+  // runs only once at app startup. We instead (re)run the analysis pipeline
+  // each time the user enters the /results route — see _onRouteChanged.
+  AppStore? _store;
+  bool _didInit = false;
+
   @override
-  void initState() {
-    super.initState();
-    _initResults();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final store = Provider.of<AppStore>(context, listen: false);
+    if (!identical(store, _store)) {
+      _store?.removeListener(_onRouteChanged);
+      _store = store;
+      _store!.addListener(_onRouteChanged);
+    }
+    _onRouteChanged();
   }
 
+  /// Runs the analysis pipeline once when the results route becomes active, and
+  /// re-arms it when the user navigates away so a fresh interview re-analyses.
+  void _onRouteChanged() {
+    final store = _store;
+    if (store == null) return;
+    if (store.currentRoute == '/results') {
+      if (_didInit) return;
+      _didInit = true;
+      _initResults();
+    } else {
+      _didInit = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _store?.removeListener(_onRouteChanged);
+    _humePollTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Initialises results page by fetching transcripts and starting Hume processing.
   Future<void> _initResults() async {
     // On web the transcript is captured live via Deepgram during the call. On
     // mobile the WebView owns the mic, so we instead pull Tavus's own
@@ -56,10 +93,53 @@ class _ResultsPageState extends State<ResultsPage> {
     _startHumeProcess();
   }
 
-  // Poll Tavus for the conversation transcript. It is only produced after the
-  // call ends and takes a little while to become available, so we retry.
+  /// Builds the session transcript. Prefers the candidate's locally-recorded
+  /// .wav (transcribed via Deepgram's pre-recorded endpoint). Falls back to
+  /// Tavus's server-side transcript only when no local recording is available
+  /// (e.g. on web, where the transcript is captured live during the call).
   Future<void> _ensureTranscript() async {
     final store = Provider.of<AppStore>(context, listen: false);
+
+    // Preferred path: transcribe the locally-recorded interview audio.
+    final bytes = store.recordingBytes;
+    debugPrint(
+      'debug[rec]: results recordingBytes=${bytes?.length ?? 0}, deepgramKey=${store.deepgramKey.isNotEmpty}',
+    );
+    if (bytes != null && bytes.isNotEmpty && store.deepgramKey.isNotEmpty) {
+      setState(() => _fetchingTranscript = true);
+      try {
+        deepgramService.setKey(store.deepgramKey);
+        final entries = await deepgramService.transcribeFromFile(bytes);
+        if (entries.isNotEmpty) {
+          store.clearSessionTranscript();
+          for (final e in entries) {
+            store.pushTranscriptEntry(e);
+          }
+          final int fillers = store.sessionTranscript
+              .where((t) => t.role == 'candidate')
+              .fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
+          final int wpm = deepgramService.calcWpm(store.sessionTranscript);
+          store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: fillers);
+        }
+      } catch (e) {
+        debugPrint('Deepgram file transcription failed: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Unable to transcribe recording: $e'),
+              backgroundColor: Colors.amber,
+            ),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _fetchingTranscript = false);
+      }
+    }
+
+    // If the local recording already produced a transcript, we're done.
+    if (store.sessionTranscript.isNotEmpty) return;
+
+    // Fallback path: pull Tavus's own server-side transcript.
     final conv = store.currentConversation;
     if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty) {
       return;
@@ -69,71 +149,42 @@ class _ResultsPageState extends State<ResultsPage> {
 
     setState(() => _fetchingTranscript = true);
     try {
-      for (int attempt = 0; attempt < 18; attempt++) {
-        try {
-          final entries = await tavusService.getConversationTranscript(
-            conv.conversationId,
-          );
-          debugPrint('DEBUG: Tavus API returned ${entries.length} transcript entries.');
-          if (entries.isNotEmpty) {
-            for (var i = 0; i < entries.length; i++) {
-              debugPrint('  Entry $i: [${entries[i].role}] ${entries[i].text} (timestamp: ${entries[i].timestamp})');
-            }
-            // Found transcript! Clear local transcript list to prevent duplicates
-            store.clearSessionTranscript();
+      final entries = await tavusService.fetchTranscriptWithRetry(
+        conv.conversationId,
+        maxAttempts: 18,
+        initialDelay: const Duration(seconds: 5),
+      );
+      debugPrint('DEBUG: Tavus API returned ${entries.length} transcript entries.');
 
-            for (final e in entries) {
-              final qIdx = _getQuestionIdxForTimestamp(e.timestamp, store.questionTimestamps);
-              store.pushTranscriptEntry(TranscriptEntry(
-                role: e.role,
-                text: e.text,
-                timestamp: e.timestamp,
-                questionIdx: qIdx,
-              ));
-            }
-            // Derive speech metrics from the candidate's turns so the scorecard
-            // isn't all zeros (these are computed live from Deepgram on web).
-            final int fillers = store.sessionTranscript
-                .where((e) => e.role == 'candidate')
-                .fold(
-                  0,
-                  (acc, e) => acc + deepgramService.countFillers(e.text),
-                );
-            final int wpm = deepgramService.calcWpm(store.sessionTranscript);
-            store.updateMetrics(w: wpm, f: fillers);
-            break;
-          }
-        } catch (e) {
-          debugPrint('Transcript fetch attempt $attempt failed: $e');
-        }
-        await Future.delayed(const Duration(seconds: 5));
-        if (!mounted) return;
+      // Found transcript! Clear local transcript list to prevent duplicates
+      store.clearSessionTranscript();
+      for (final e in entries) {
+        store.pushTranscriptEntry(e);
+      }
+
+      // Derive speech metrics from the candidate's turns so the scorecard
+      // isn't all zeros (these are computed live from Deepgram on web).
+      final int fillers = store.sessionTranscript
+          .where((t) => t.role == 'candidate')
+          .fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
+      final int wpm = deepgramService.calcWpm(store.sessionTranscript);
+      store.updateMetrics(w: wpm, f: fillers);
+    } catch (e) {
+      debugPrint('Transcript fetch failed after retries: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Unable to fetch transcript: $e'),
+            backgroundColor: Colors.amber,
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _fetchingTranscript = false);
     }
   }
 
-  int _getQuestionIdxForTimestamp(int entryTimestamp, List<int> timestamps) {
-    if (timestamps.isEmpty) return 0;
-    for (int i = timestamps.length - 1; i >= 0; i--) {
-      if (entryTimestamp >= timestamps[i]) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  @override
-  void dispose() {
-    _humePollTimer?.cancel();
-    _dateController.dispose();
-    _timeController.dispose();
-    _interviewerController.dispose();
-    _notesController.dispose();
-    super.dispose();
-  }
-
+  /// Triggers the background analysis of Hume audio recording.
   void _startHumeProcess() async {
     final store = Provider.of<AppStore>(context, listen: false);
     final hasHumeKey = store.humeKey.isNotEmpty;
@@ -195,6 +246,9 @@ class _ResultsPageState extends State<ResultsPage> {
             region.isNotEmpty ? region : 'us-east-1',
           );
 
+          // Submit the Tavus recording to Hume for facial/voice analysis. The
+          // session transcript itself comes from the candidate's locally
+          // recorded .wav (see _ensureTranscript).
           final jobId = await humeService.submitBatchJobWithUrls([httpUrl]);
           store.setHumeJobId(jobId);
           store.setHumeJobStatus('QUEUED');
@@ -207,6 +261,7 @@ class _ResultsPageState extends State<ResultsPage> {
     });
   }
 
+  /// Converts standard S3 URI format to direct HTTP link.
   String _convertS3UriToHttp(String s3Uri, String region) {
     if (!s3Uri.startsWith('s3://')) return s3Uri;
     final clean = s3Uri.replaceFirst('s3://', '');
@@ -216,6 +271,7 @@ class _ResultsPageState extends State<ResultsPage> {
     return 'https://$bucket.s3.$region.amazonaws.com/$key';
   }
 
+  /// Periodically checks Hume batch job status until completion or failure.
   void _pollHumeJob(String jobId) {
     final store = Provider.of<AppStore>(context, listen: false);
     _pollAttempts = 0;
@@ -282,6 +338,7 @@ class _ResultsPageState extends State<ResultsPage> {
     });
   }
 
+  /// Runs final ATS assessment synthesis using Gemini service.
   Future<void> _runAtsAnalysis() async {
     final store = Provider.of<AppStore>(context, listen: false);
 
@@ -351,13 +408,7 @@ class _ResultsPageState extends State<ResultsPage> {
     }
   }
 
-  Color _getScoreColor(BuildContext context, int score) {
-    final theme = Theme.of(context);
-    if (score >= 85) return theme.colorScheme.primary;
-    if (score >= 70) return theme.colorScheme.secondary;
-    return theme.colorScheme.error;
-  }
-
+  /// Maps composite score to verbal candidate fit verdict.
   String _getScoreVerdict(int score) {
     if (score >= 85) return 'Excellent Candidate';
     if (score >= 70) return 'Good Candidate';
@@ -365,6 +416,7 @@ class _ResultsPageState extends State<ResultsPage> {
     return 'Needs Further Review';
   }
 
+  /// Copies text report summary to system clipboard.
   void _shareProfile(
     BuildContext context,
     int score,
@@ -383,183 +435,7 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  Widget _buildStatRow(
-    BuildContext context,
-    String label,
-    String value,
-    Color color,
-    String sub,
-  ) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant,
-        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w900,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            sub,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontSize: 11,
-              color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDimensionProgress(
-    BuildContext context,
-    String label,
-    int score,
-  ) {
-    final theme = Theme.of(context);
-    final color = _getScoreColor(context, score);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Container(
-              height: 8,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.outline.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FractionallySizedBox(
-                  widthFactor: score / 100.0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Text(
-            '$score',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuestionDetails(
-    BuildContext context,
-    QuestionEmotionSummary q,
-    int index,
-  ) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.onSurface.withOpacity(0.02),
-        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '${index + 1}',
-                  style: TextStyle(
-                    color: theme.colorScheme.onPrimary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  q.questionText,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontStyle: FontStyle.italic,
-                    color: theme.colorScheme.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Dominant: ${q.dominant}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.secondary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                'Confidence: ${(q.avgCategoryScores['positive_high']! * 100).round()}%',
-                style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
+  /// Builds recruiter quick actions card layout.
   Widget _buildRecruiterActions(
     BuildContext context,
     int overallScore,
@@ -616,336 +492,9 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  Widget _buildAtsAssessmentCard(BuildContext context, AppStore store) {
-    final theme = Theme.of(context);
-
-    if (_geminiError != null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.warning_amber,
-                    color: theme.colorScheme.error,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'ATS Assessment Synthesis Failed',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                _geminiError!,
-                style: TextStyle(color: theme.colorScheme.error, fontSize: 13),
-              ),
-              const SizedBox(height: 16),
-              CustomButton(
-                text: 'Retry Synthesis',
-                variant: ButtonVariant.outline,
-                height: 36,
-                onPressed: _runAtsAnalysis,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (store.geminiKey.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              Icon(
-                Icons.lock_outline,
-                color: theme.colorScheme.onSurfaceVariant,
-                size: 36,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Add Google Gemini API Key to enable ATS scorecards.',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Provider.of<AppStore>(
-                  context,
-                  listen: false,
-                ).navigateTo('/settings'),
-                child: Text(
-                  'Go to Settings →',
-                  style: TextStyle(
-                    color: theme.colorScheme.primary,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_geminiLoading) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(40.0),
-          child: Center(
-            child: Column(
-              children: [
-                CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Gemini is synthesizing transcript analytics…',
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (_atsScorecard == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Text(
-            'No transcripts captured for synthesis.',
-            style: theme.textTheme.bodyMedium,
-          ),
-        ),
-      );
-    }
-
-    final card = _atsScorecard!;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'AI-Powered ATS Assessment (Gemini)',
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ATS Recommendation: ${card.hiringRecommendation}',
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Overall Fit: ${card.overallFitLabel} (${card.overallFitScore}/100)',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    _buildFitBadge(card.hiringRecommendation),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
-                const SizedBox(height: 16),
-
-                Text(
-                  'Hiring Recommendation Rationale',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  card.hiringRecommendationRationale,
-                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
-                ),
-                const SizedBox(height: 16),
-
-                Text(
-                  'Key Strengths',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ...card.topStrengths.map(
-                  (s) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6.0),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.check,
-                          color: theme.colorScheme.primary,
-                          size: 14,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(s, style: theme.textTheme.bodyMedium),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                Text(
-                  'Watch Points & Concerns',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.error,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                ...card.topConcerns.map(
-                  (c) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6.0),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.warning,
-                          color: theme.colorScheme.error,
-                          size: 14,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(c, style: theme.textTheme.bodyMedium),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFitBadge(String rec) {
-    final theme = Theme.of(context);
-    Color bg;
-    Color fg;
-    if (rec == 'Advance') {
-      bg = theme.colorScheme.primary.withOpacity(0.12);
-      fg = theme.colorScheme.primary;
-    } else if (rec == 'Hold') {
-      bg = theme.colorScheme.secondary.withOpacity(0.12);
-      fg = theme.colorScheme.secondary;
-    } else {
-      bg = theme.colorScheme.error.withOpacity(0.12);
-      fg = theme.colorScheme.error;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        rec.toUpperCase(),
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-          color: fg,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFacialPanel() {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Facial Analysis (AWS Rekognition)',
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.onSurface.withOpacity(0.04),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.videocam_off,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'No Facial signals captured for this session.',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Webcam face-tracking requires proxy registration set up in Settings.',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
+  /// Checks if Hume voice analysis job is running.
+  bool _hProcessingAndPending(AppStore store) {
+    return _humeProcessing && store.humeJobId != null;
   }
 
   @override
@@ -953,31 +502,17 @@ class _ResultsPageState extends State<ResultsPage> {
     final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
 
-    // Retrieving Tavus's server-side transcript after the call (mobile path).
-    if (_fetchingTranscript) {
-      return Scaffold(
-        backgroundColor: theme.colorScheme.background,
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Retrieving interview transcript…',
-                style: theme.textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Tavus is finalising the conversation transcript. This can take up to a minute.',
-                style: theme.textTheme.bodyMedium,
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
+    // Unified progressive loading screen for background tasks
+    final showLoader = _fetchingTranscript || _humeProcessing || _geminiLoading;
+
+    if (showLoader) {
+      return ResultsLoadingView(
+        fetchingTranscript: _fetchingTranscript,
+        humeProcessing: _humeProcessing,
+        geminiLoading: _geminiLoading,
+        sessionTranscript: store.sessionTranscript,
+        atsScorecard: _atsScorecard,
+        geminiError: _geminiError,
       );
     }
 
@@ -985,7 +520,7 @@ class _ResultsPageState extends State<ResultsPage> {
         store.humeResult == null &&
         !_humeProcessing) {
       return Scaffold(
-        backgroundColor: theme.colorScheme.background,
+        backgroundColor: theme.colorScheme.surface,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1048,7 +583,7 @@ class _ResultsPageState extends State<ResultsPage> {
     final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
+      backgroundColor: theme.colorScheme.surface,
       body: Stack(
         children: [
           SingleChildScrollView(
@@ -1174,10 +709,10 @@ class _ResultsPageState extends State<ResultsPage> {
                           vertical: 12,
                         ),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.secondary.withOpacity(0.08),
+                          color: theme.colorScheme.secondary.withValues(alpha: 0.08),
                           border: Border.all(
-                            color: theme.colorScheme.secondary.withOpacity(
-                              0.24,
+                            color: theme.colorScheme.secondary.withValues(
+                              alpha: 0.24,
                             ),
                           ),
                           borderRadius: BorderRadius.circular(12),
@@ -1212,37 +747,33 @@ class _ResultsPageState extends State<ResultsPage> {
 
                     GridPaperResult(
                       children: [
-                        _buildStatRow(
-                          context,
-                          'Overall Score',
-                          '$overallScore/100',
-                          theme.colorScheme.primary,
-                          verdict,
+                        StatCard(
+                          label: 'Overall Score',
+                          value: '$overallScore/100',
+                          valueColor: theme.colorScheme.primary,
+                          subTitle: verdict,
                         ),
-                        _buildStatRow(
-                          context,
-                          'Hiring Confidence',
-                          '$overallScore%',
-                          theme.colorScheme.primary,
-                          'Based on speech keys',
+                        StatCard(
+                          label: 'Hiring Confidence',
+                          value: '$overallScore%',
+                          valueColor: theme.colorScheme.primary,
+                          subTitle: 'Based on speech keys',
                         ),
-                        _buildStatRow(
-                          context,
-                          'Words / Min',
-                          '${store.wpm}',
-                          store.wpm > 100
+                        StatCard(
+                          label: 'Words / Min',
+                          value: '${store.wpm}',
+                          valueColor: store.wpm > 100
                               ? theme.colorScheme.primary
                               : theme.colorScheme.error,
-                          'Nova-3 speech pace',
+                          subTitle: 'Nova-3 speech pace',
                         ),
-                        _buildStatRow(
-                          context,
-                          'Total Fillers',
-                          '${store.fillers}',
-                          store.fillers <= 4
+                        StatCard(
+                          label: 'Total Fillers',
+                          value: '${store.fillers}',
+                          valueColor: store.fillers <= 4
                               ? theme.colorScheme.primary
                               : theme.colorScheme.error,
-                          'Vocal filler rate',
+                          subTitle: 'Vocal filler rate',
                         ),
                       ],
                     ),
@@ -1276,7 +807,7 @@ class _ResultsPageState extends State<ResultsPage> {
                                   ),
                                   decoration: BoxDecoration(
                                     color: theme.colorScheme.primary
-                                        .withOpacity(0.12),
+                                        .withValues(alpha: 0.12),
                                     borderRadius: BorderRadius.circular(20),
                                   ),
                                   child: Text(
@@ -1293,52 +824,9 @@ class _ResultsPageState extends State<ResultsPage> {
                           ),
                         );
 
-                        final dimsCard = Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Dimension Scores',
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Communication',
-                                  overallScore,
-                                ),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Confidence',
-                                  overallScore + 4,
-                                ),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Engagement',
-                                  overallScore - 2,
-                                ),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Vocabulary',
-                                  75,
-                                ),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Stress Mgmt',
-                                  overallScore + 2,
-                                ),
-                                _buildDimensionProgress(
-                                  context,
-                                  'Articulation',
-                                  (100 - store.fillers * 5).clamp(40, 100),
-                                ),
-                              ],
-                            ),
-                          ),
+                        final dimsCard = DimensionScoresPanel(
+                          overallScore: overallScore,
+                          fillers: store.fillers,
                         );
 
                         if (isDesktop) {
@@ -1364,376 +852,32 @@ class _ResultsPageState extends State<ResultsPage> {
                     const SizedBox(height: 24),
 
                     // Hume AI Emotional Intelligence Report Dashboard
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceVariant,
-                        border: Border.all(
-                          color: theme.colorScheme.outline.withOpacity(0.12),
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'HUME AI · PROSODY ANALYSIS',
-                                    style: TextStyle(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      fontFamily: 'Courier',
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Emotional Intelligence Report',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.bold),
-                                  ),
-                                ],
-                              ),
-                              if (humeResult != null)
-                                SentimentArc(
-                                  score: humeResult.compositeScore,
-                                  label: 'Emotion Score',
-                                ),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-
-                          if (humeResult != null) ...[
-                            LayoutBuilder(
-                              builder: (context, radarBox) {
-                                final isWide = radarBox.maxWidth > 600;
-                                final radarWidget = SizedBox(
-                                  width: 260,
-                                  height: 260,
-                                  child: EmotionRadarChart(
-                                    categoryScores:
-                                        humeResult.overallCategoryScores,
-                                  ),
-                                );
-
-                                final breakdownWidget = Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Category Breakdown',
-                                      style: theme.textTheme.titleSmall
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'High Positive',
-                                      humeResult
-                                              .overallCategoryScores['positive_high'] ??
-                                          0.0,
-                                      theme.colorScheme.primary,
-                                    ),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'Calm Positive',
-                                      humeResult
-                                              .overallCategoryScores['positive_calm'] ??
-                                          0.0,
-                                      theme.colorScheme.primary,
-                                    ),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'Cognitive',
-                                      humeResult
-                                              .overallCategoryScores['cognitive'] ??
-                                          0.0,
-                                      theme.colorScheme.secondary,
-                                    ),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'Social',
-                                      humeResult
-                                              .overallCategoryScores['social'] ??
-                                          0.0,
-                                      Colors.purpleAccent,
-                                    ),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'Negative',
-                                      humeResult
-                                              .overallCategoryScores['negative'] ??
-                                          0.0,
-                                      theme.colorScheme.error,
-                                    ),
-                                    _buildHumeCategoryRow(
-                                      context,
-                                      'Disengaged',
-                                      humeResult
-                                              .overallCategoryScores['disengagement'] ??
-                                          0.0,
-                                      theme.colorScheme.onSurfaceVariant
-                                          .withOpacity(0.6),
-                                    ),
-                                  ],
-                                );
-
-                                if (isWide) {
-                                  return Row(
-                                    children: [
-                                      radarWidget,
-                                      const SizedBox(width: 40),
-                                      Expanded(child: breakdownWidget),
-                                    ],
-                                  );
-                                } else {
-                                  return Column(
-                                    children: [
-                                      radarWidget,
-                                      const SizedBox(height: 20),
-                                      breakdownWidget,
-                                    ],
-                                  );
-                                }
-                              },
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              'Question-by-Question Voice Analysis',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            GridView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: !isMobile ? 2 : 1,
-                                    crossAxisSpacing: 12,
-                                    mainAxisSpacing: 12,
-                                    mainAxisExtent: 96,
-                                  ),
-                              itemCount: humeResult.perQuestion.length,
-                              itemBuilder: (context, idx) {
-                                return _buildQuestionDetails(
-                                  context,
-                                  humeResult.perQuestion[idx],
-                                  idx,
-                                );
-                              },
-                            ),
-                          ] else ...[
-                            Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 40.0,
-                                ),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.mic_off,
-                                      color: theme.colorScheme.onSurfaceVariant
-                                          .withOpacity(0.5),
-                                      size: 36,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      'Prosody voice analysis was not captured.',
-                                      style: theme.textTheme.titleSmall
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      store.humeKey.isEmpty
-                                          ? 'Add a Hume API key in Settings to analyze emotional tone.'
-                                          : 'Make sure candidate speaks clearly during session.',
-                                      style: theme.textTheme.bodyMedium,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                    HumeEmotionPanel(
+                      humeResult: humeResult,
+                      humeKey: store.humeKey,
+                      humeJobId: store.humeJobId,
+                      isMobile: isMobile,
                     ),
                     const SizedBox(height: 24),
 
                     // Strengths / Watch points tags
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: theme.colorScheme.primary
-                                              .withOpacity(0.12),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '✓',
-                                          style: TextStyle(
-                                            color: theme.colorScheme.primary,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        'Strengths',
-                                        style: theme.textTheme.titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: strengths
-                                        .map(
-                                          (s) => Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: theme.colorScheme.primary
-                                                  .withOpacity(0.08),
-                                              border: Border.all(
-                                                color: theme.colorScheme.primary
-                                                    .withOpacity(0.24),
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Text(
-                                              s,
-                                              style: TextStyle(
-                                                color:
-                                                    theme.colorScheme.primary,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(20.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: theme.colorScheme.error
-                                              .withOpacity(0.12),
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                        ),
-                                        child: Text(
-                                          '⚠',
-                                          style: TextStyle(
-                                            color: theme.colorScheme.error,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Text(
-                                        'Watch Points',
-                                        style: theme.textTheme.titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: watchPoints
-                                        .map(
-                                          (w) => Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: theme.colorScheme.error
-                                                  .withOpacity(0.08),
-                                              border: Border.all(
-                                                color: theme.colorScheme.error
-                                                    .withOpacity(0.24),
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Text(
-                                              w,
-                                              style: TextStyle(
-                                                color: theme.colorScheme.error,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                    StrengthsWatchpointsPanel(
+                      strengths: strengths,
+                      watchPoints: watchPoints,
                     ),
                     const SizedBox(height: 24),
 
-                    _buildAtsAssessmentCard(context, store),
+                    AtsAssessmentCard(
+                      geminiKey: store.geminiKey,
+                      geminiError: _geminiError,
+                      geminiLoading: _geminiLoading,
+                      atsScorecard: _atsScorecard,
+                      onRetry: _runAtsAnalysis,
+                      onNavigateToSettings: () => store.navigateTo('/settings'),
+                    ),
                     const SizedBox(height: 24),
 
-                    _buildFacialPanel(),
+                    const FacialAnalysisPanel(),
                     const SizedBox(height: 24),
 
                     _buildRecruiterActions(
@@ -1749,330 +893,23 @@ class _ResultsPageState extends State<ResultsPage> {
             ),
           ),
 
-          if (_scheduleOpen) ...[_buildScheduleModal(theme)],
+          if (_scheduleOpen) ...[
+            ScheduleInterviewDialog(
+              onClose: () => setState(() => _scheduleOpen = false),
+            )
+          ],
 
           if (_offerOpen) ...[
-            _buildOfferModal(
-              theme,
-              overallScore,
-              verdict,
-              strengths,
-              watchPoints,
+            OfferRecommendationDialog(
+              score: overallScore,
+              verdict: verdict,
+              strengths: strengths,
+              watchPoints: watchPoints,
+              onClose: () => setState(() => _offerOpen = false),
             ),
           ],
         ],
       ),
-    );
-  }
-
-  bool _hProcessingAndPending(AppStore store) {
-    return _humeProcessing && store.humeJobId != null;
-  }
-
-  Widget _buildHumeCategoryRow(
-    BuildContext context,
-    String label,
-    double val,
-    Color color,
-  ) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: theme.colorScheme.onSurface,
-                fontSize: 12,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Container(
-              height: 5,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.outline.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: FractionallySizedBox(
-                  widthFactor: val.clamp(0.0, 1.0),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            '${(val * 100).round()}%',
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Courier',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScheduleModal(ThemeData theme) {
-    return Container(
-      color: Colors.black54,
-      alignment: Alignment.center,
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 24),
-          constraints: const BoxConstraints(maxWidth: 420),
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(28), // M3 Dialog corner radius
-            border: Border.all(
-              color: theme.colorScheme.outline.withOpacity(0.12),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 15,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Schedule Technical Interview',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Book the next round for this candidate.',
-                style: theme.textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 16),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: CustomInputField(
-                      label: 'Date',
-                      placeholder: 'YYYY-MM-DD',
-                      controller: _dateController,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: CustomInputField(
-                      label: 'Time',
-                      placeholder: '10:00',
-                      controller: _timeController,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              CustomInputField(
-                label: 'Interviewer',
-                placeholder: 'Interviewer Name',
-                controller: _interviewerController,
-              ),
-              const SizedBox(height: 12),
-
-              CustomInputField(
-                label: 'Notes',
-                placeholder: 'Areas to probe further…',
-                controller: _notesController,
-                maxLines: 3,
-              ),
-              const SizedBox(height: 24),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => setState(() => _scheduleOpen = false),
-                    child: Text(
-                      'Cancel',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  CustomButton(
-                    text: 'Confirm Schedule',
-                    onPressed: () {
-                      setState(() => _scheduleOpen = false);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Technical round scheduled!'),
-                          backgroundColor: theme.colorScheme.primary,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOfferModal(
-    ThemeData theme,
-    int score,
-    String verdict,
-    List<String> str,
-    List<String> watch,
-  ) {
-    return Container(
-      color: Colors.black54,
-      alignment: Alignment.center,
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 24),
-          constraints: const BoxConstraints(maxWidth: 460),
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(28), // M3 Dialog corner radius
-            border: Border.all(
-              color: theme.colorScheme.outline.withOpacity(0.12),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 15,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'AI Offer Recommendation',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceVariant,
-                  border: Border.all(
-                    color: theme.colorScheme.outline.withOpacity(0.12),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '''OFFER RECOMMENDATION — TalbotIQ AI
-Score: $score/100 | Verdict: $verdict
-
-RECOMMENDATION: ${score >= 75 ? 'Proceed with Offer' : 'Further Technical Assessment'}
-
-Top Strengths: ${str.join(', ')}
-Watch Points: ${watch.join(', ')}
-
-Generated: ${DateTime.now().toString().split(' ').first}''',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontFamily: 'Courier',
-                    color: theme.colorScheme.primary,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => setState(() => _offerOpen = false),
-                    child: Text(
-                      'Close',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  CustomButton(
-                    text: 'Copy to Clipboard',
-                    onPressed: () {
-                      Clipboard.setData(
-                        ClipboardData(
-                          text:
-                              'OFFER RECOMMENDATION — Score: $score/100 — Verdict: $verdict — Strengths: ${str.join(', ')}',
-                        ),
-                      );
-                      setState(() => _offerOpen = false);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Offer copied to clipboard!'),
-                          backgroundColor: theme.colorScheme.primary,
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class GridPaperResult extends StatelessWidget {
-  final List<Widget> children;
-
-  const GridPaperResult({super.key, required this.children});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, box) {
-        final crossCount = box.maxWidth > 750
-            ? 4
-            : (box.maxWidth > 480 ? 2 : 1);
-        final double aspectRatio = box.maxWidth > 750
-            ? 1.5
-            : (box.maxWidth > 480 ? 1.8 : 3.0);
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: crossCount,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: aspectRatio,
-          children: children,
-        );
-      },
     );
   }
 }

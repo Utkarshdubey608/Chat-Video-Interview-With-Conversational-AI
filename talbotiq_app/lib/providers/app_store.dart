@@ -41,12 +41,19 @@ class AppStore extends ChangeNotifier {
   // Saved Drafts
   List<Draft> _drafts = [];
 
+  // Cached Tavus Data
+  List<TavusReplica> _cachedReplicas = [];
+  List<TavusPersona> _cachedPersonas = [];
+
   // Live Metrics
   int _confidence = 0;
   int _anxiety = 0;
   int _wpm = 0;
   int _fillers = 0;
   int _engagement = 0;
+
+  // Recording preferences
+  bool _storeLocalRecordings = false;
 
   // Hume Batch Job
   String? _humeJobId;
@@ -59,6 +66,11 @@ class AppStore extends ChangeNotifier {
   // Transcript logs
   List<TranscriptEntry> _sessionTranscript = [];
   bool _deepgramConnected = false;
+  Future<void>? _loadFuture;
+
+  // Locally-recorded interview audio (native only). Captured during the call,
+  // sent to Deepgram for transcription on the results page.
+  List<int>? _recordingBytes;
 
   // Routing state
   String _currentRoute = '/setup';
@@ -88,6 +100,9 @@ class AppStore extends ChangeNotifier {
   bool get interviewActive => _interviewActive;
   List<Draft> get drafts => _drafts;
 
+  List<TavusReplica> get cachedReplicas => _cachedReplicas;
+  List<TavusPersona> get cachedPersonas => _cachedPersonas;
+
   int get confidence => _confidence;
   int get anxiety => _anxiety;
   int get wpm => _wpm;
@@ -103,17 +118,28 @@ class AppStore extends ChangeNotifier {
 
   List<TranscriptEntry> get sessionTranscript => _sessionTranscript;
   bool get deepgramConnected => _deepgramConnected;
+  bool get storeLocalRecordings => _storeLocalRecordings;
+  List<int>? get recordingBytes => _recordingBytes;
 
   AppStore() {
-    _loadFromPrefs();
+    loadFromPrefs();
+  }
+
+  Future<void> loadFromPrefs() {
+    _loadFuture ??= _loadFromPrefs();
+    return _loadFuture!;
   }
 
   // Setters
   void setTavusKey(String key) {
-    _tavusKey = key;
-    tavusService.setKey(key);
-    _saveToPrefs();
-    notifyListeners();
+    if (_tavusKey != key) {
+      _tavusKey = key;
+      tavusService.setKey(key);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+      _saveToPrefs();
+      notifyListeners();
+    }
   }
 
   void setDeepgramKey(String key) {
@@ -157,6 +183,12 @@ class AppStore extends ChangeNotifier {
 
   void setWebhookUrl(String url) {
     _webhookUrl = url;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setStoreLocalRecordings(bool enable) {
+    _storeLocalRecordings = enable;
     _saveToPrefs();
     notifyListeners();
   }
@@ -232,6 +264,13 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setCachedTavusData(List<TavusReplica> replicas, List<TavusPersona> personas) {
+    _cachedReplicas = replicas;
+    _cachedPersonas = personas;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
   void setHumeJobId(String? id) {
     _humeJobId = id;
     notifyListeners();
@@ -287,6 +326,11 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setRecordingBytes(List<int>? bytes) {
+    _recordingBytes = bytes;
+    notifyListeners();
+  }
+
   void reset() {
     _currentConversation = null;
     _currentQuestionIdx = 0;
@@ -304,6 +348,7 @@ class AppStore extends ChangeNotifier {
     _humeStreamActive = false;
     _sessionTranscript = [];
     _deepgramConnected = false;
+    _recordingBytes = null;
     notifyListeners();
   }
 
@@ -324,6 +369,7 @@ class AppStore extends ChangeNotifier {
       _geminiKey = data['geminiKey'] ?? '';
       _awsProxyUrl = data['awsProxyUrl'] ?? '';
       _webhookUrl = data['webhookUrl'] ?? '';
+      _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
 
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
       _defaultPersonaId = data['defaultPersonaId'] ?? '';
@@ -335,6 +381,16 @@ class AppStore extends ChangeNotifier {
       if (data['drafts'] != null) {
         final List draftsList = data['drafts'];
         _drafts = draftsList.map((d) => Draft.fromJson(d)).toList();
+      }
+
+      if (data['cachedReplicas'] != null) {
+        final List replicasList = data['cachedReplicas'];
+        _cachedReplicas = replicasList.map((r) => TavusReplica.fromJson(r)).toList();
+      }
+
+      if (data['cachedPersonas'] != null) {
+        final List personasList = data['cachedPersonas'];
+        _cachedPersonas = personasList.map((p) => TavusPersona.fromJson(p)).toList();
       }
 
       // Propagate keys to services
@@ -364,8 +420,11 @@ class AppStore extends ChangeNotifier {
         'webhookUrl': _webhookUrl,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
+        'storeLocalRecordings': _storeLocalRecordings,
         'questions': _questions,
         'drafts': _drafts.map((d) => d.toJson()).toList(),
+        'cachedReplicas': _cachedReplicas.map((r) => r.toJson()).toList(),
+        'cachedPersonas': _cachedPersonas.map((p) => p.toJson()).toList(),
       };
       await prefs.setString(_kStoreKey, jsonEncode(data));
     } catch (e) {
@@ -396,6 +455,8 @@ class AppStore extends ChangeNotifier {
       'Do you have any questions for us?',
     ];
     _drafts = [];
+    _cachedReplicas = [];
+    _cachedPersonas = [];
     notifyListeners();
   }
 }

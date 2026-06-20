@@ -249,7 +249,7 @@ class MainLayout extends StatelessWidget {
                       ),
                       alignment: Alignment.center,
                       child: Text(
-                        'SN',
+                        'TE',
                         style: TextStyle(
                           color: theme.colorScheme.primary,
                           fontSize: 13,

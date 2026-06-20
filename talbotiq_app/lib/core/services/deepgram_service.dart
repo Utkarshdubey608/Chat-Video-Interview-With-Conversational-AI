@@ -1,4 +1,5 @@
 // lib/core/services/deepgram_service.dart
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../../models/app_models.dart';
 
@@ -100,6 +101,134 @@ class DeepgramService {
     } catch (e) {
       return {'ok': false, 'message': e.toString()};
     }
+  }
+
+  /// Transcribe an audio file available at a public URL using Deepgram's
+  /// pre-recorded endpoint. Returns a list with a single TranscriptEntry
+  /// containing the combined transcript text.
+  Future<List<TranscriptEntry>> transcribeFromUrl(
+    String audioUrl, {
+    String model = 'nova-3',
+    String language = 'en-US',
+  }) async {
+    if (_apiKey.isEmpty) throw Exception('No Deepgram API key set');
+
+    final params = {
+      'model': model,
+      'language': language,
+      'punctuate': 'true',
+      'smart_format': 'true',
+    };
+    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
+    final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
+
+    try {
+      print('debug: Deepgram transcribeFromUrl POST $uri');
+      final body = jsonEncode({'url': audioUrl});
+      final response = await http.post(
+        uri,
+        headers: {
+          'Authorization': 'Token $_apiKey',
+          'Content-Type': 'application/json',
+        },
+        body: body,
+      );
+
+      print('debug: Deepgram status: ${response.statusCode}');
+      final preview = response.body.length > 1000
+          ? response.body.substring(0, 1000) + '...'
+          : response.body;
+      print('debug: Deepgram body preview: $preview');
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        String transcript = '';
+
+        try {
+          transcript = data['results']?['channels']?[0]?['alternatives']?[0]?['transcript'] ?? '';
+        } catch (_) {
+          transcript = data['results']?.toString() ?? '';
+        }
+
+        if (transcript.isEmpty) {
+          return [];
+        }
+
+        final entry = TranscriptEntry(
+          role: 'candidate',
+          text: transcript,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          questionIdx: 0,
+        );
+
+        return [entry];
+      } else {
+        throw Exception('Deepgram transcription failed: HTTP ${response.statusCode}');
+      }
+    } catch (e) {
+      print('debug: transcribeFromUrl error: $e');
+      rethrow;
+    }
+  }
+
+  /// Transcribe a locally-recorded audio file (e.g. the candidate's .wav) by
+  /// POSTing its raw bytes to Deepgram's pre-recorded endpoint. Returns a list
+  /// with a single TranscriptEntry containing the combined transcript text.
+  Future<List<TranscriptEntry>> transcribeFromFile(
+    List<int> bytes, {
+    String model = 'nova-3',
+    String language = 'en-US',
+    String contentType = 'audio/wav',
+  }) async {
+    if (_apiKey.isEmpty) throw Exception('No Deepgram API key set');
+    if (bytes.isEmpty) return [];
+
+    final params = {
+      'model': model,
+      'language': language,
+      'punctuate': 'true',
+      'smart_format': 'true',
+    };
+    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
+    final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
+
+    print('debug: Deepgram transcribeFromFile POST $uri (${bytes.length} bytes)');
+    final response = await http.post(
+      uri,
+      headers: {
+        'Authorization': 'Token $_apiKey',
+        'Content-Type': contentType,
+      },
+      body: bytes,
+    );
+
+    print('debug: Deepgram (file) status: ${response.statusCode}');
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Deepgram transcription failed: HTTP ${response.statusCode} ${response.body}',
+      );
+    }
+
+    final Map<String, dynamic> data = jsonDecode(response.body);
+    String transcript = '';
+    try {
+      transcript =
+          data['results']?['channels']?[0]?['alternatives']?[0]?['transcript'] ?? '';
+    } catch (_) {
+      transcript = '';
+    }
+
+    if (transcript.isEmpty) return [];
+
+    return [
+      TranscriptEntry(
+        role: 'candidate',
+        text: transcript,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+        questionIdx: 0,
+      ),
+    ];
   }
 }
 
