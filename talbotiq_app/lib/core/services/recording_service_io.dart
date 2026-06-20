@@ -6,6 +6,7 @@
 import 'dart:io';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import '../../models/app_models.dart';
 
 class RecordingService {
   final AudioRecorder _recorder = AudioRecorder();
@@ -73,6 +74,44 @@ class RecordingService {
       print('debug[rec]: stop FAILED: $e');
       return null;
     }
+  }
+
+  /// Copies the most recent recording from the temp cache into permanent
+  /// device storage so it can be played back / deleted later from Settings.
+  Future<SavedRecording?> persistLastRecording(String name) async {
+    if (_path == null) return null;
+    try {
+      final src = File(_path!);
+      if (!await src.exists()) return null;
+
+      final docs = await getApplicationDocumentsDirectory();
+      final recDir = Directory('${docs.path}/recordings');
+      if (!await recDir.exists()) await recDir.create(recursive: true);
+
+      final filename = _path!.split('/').last;
+      final destPath = '${recDir.path}/$filename';
+      final dest = await src.copy(destPath);
+      final size = await dest.length();
+
+      return SavedRecording(
+        id: 'rec-${DateTime.now().millisecondsSinceEpoch}',
+        name: name,
+        path: destPath,
+        savedAt: DateTime.now().toIso8601String(),
+        sizeBytes: size,
+      );
+    } catch (e) {
+      print('debug[rec]: persist failed: $e');
+      return null;
+    }
+  }
+
+  /// Deletes a persisted recording file from device storage.
+  Future<void> deleteFile(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (_) {}
   }
 
   Future<void> dispose() async {

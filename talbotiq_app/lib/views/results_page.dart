@@ -45,10 +45,12 @@ class _ResultsPageState extends State<ResultsPage> {
   bool _fetchingTranscript = false;
 
   // ResultsPage lives inside an IndexedStack (always mounted), so initState
-  // runs only once at app startup. We instead (re)run the analysis pipeline
-  // each time the user enters the /results route — see _onRouteChanged.
+  // runs only once at app startup. We instead react to the /results route
+  // becoming active — but only (re)generate for a NEW interview. Results are
+  // cached per conversation so navigating away and back does NOT re-run Gemini.
   AppStore? _store;
-  bool _didInit = false;
+  String? _loadedConvId;
+  bool _onResults = false;
 
   @override
   void didChangeDependencies() {
@@ -62,18 +64,80 @@ class _ResultsPageState extends State<ResultsPage> {
     _onRouteChanged();
   }
 
-  /// Runs the analysis pipeline once when the results route becomes active, and
-  /// re-arms it when the user navigates away so a fresh interview re-analyses.
+  /// Loads results when the user enters /results. Generation runs once per
+  /// interview; for an already-analysed session it restores the cached result
+  /// instead of re-running the pipeline.
   void _onRouteChanged() {
     final store = _store;
     if (store == null) return;
-    if (store.currentRoute == '/results') {
-      if (_didInit) return;
-      _didInit = true;
-      _initResults();
-    } else {
-      _didInit = false;
+
+    // Only act on a transition INTO /results. The listener fires on every
+    // store change, so ignore notifications while already on the page —
+    // otherwise viewing a past result would reload the current session.
+    final onResults = store.currentRoute == '/results';
+    if (!onResults) {
+      _onResults = false;
+      return;
     }
+    if (_onResults) return;
+    _onResults = true;
+
+    final convId = store.currentConversation?.conversationId ?? '';
+    if (_loadedConvId == convId && convId.isNotEmpty) {
+      return; // already showing this session's result
+    }
+
+    // A freshly-recorded interview that just ended is the ONLY trigger for
+    // running analysis. `recordingBytes` is set in _endInterview and is never
+    // persisted, so on an app relaunch it is null — meaning we never
+    // regenerate; we restore the saved result instead.
+    final hasFreshRecording = store.recordingBytes?.isNotEmpty ?? false;
+    if (hasFreshRecording && convId.isNotEmpty) {
+      final cached = store.interviewResults
+          .where((r) => r.conversationId == convId)
+          .toList();
+      if (cached.isNotEmpty) {
+        _loadedConvId = convId;
+        _applyResult(cached.first);
+      } else {
+        _loadedConvId = convId;
+        _initResults();
+      }
+      return;
+    }
+
+    // No fresh interview (navigated in, or relaunched): show the matching
+    // cached result, otherwise the most recently saved one.
+    InterviewResult? toShow;
+    if (convId.isNotEmpty) {
+      final match =
+          store.interviewResults.where((r) => r.conversationId == convId);
+      if (match.isNotEmpty) toShow = match.first;
+    }
+    toShow ??=
+        store.interviewResults.isNotEmpty ? store.interviewResults.first : null;
+    if (toShow != null) {
+      _loadedConvId = toShow.conversationId;
+      _applyResult(toShow);
+    }
+  }
+
+  /// Restores a previously-generated result into the view without re-running
+  /// any analysis.
+  void _applyResult(InterviewResult r) {
+    final store = _store;
+    if (store == null) return;
+    store.updateTranscriptEntries(r.transcript);
+    store.setHumeResult(r.humeResult);
+    store.updateMetrics(w: r.wpm, f: r.fillers);
+    if (!mounted) return;
+    setState(() {
+      _atsScorecard = r.scorecard;
+      _geminiError = null;
+      _geminiLoading = false;
+      _humeProcessing = false;
+      _fetchingTranscript = false;
+    });
   }
 
   @override
@@ -399,6 +463,30 @@ class _ResultsPageState extends State<ResultsPage> {
       setState(() {
         _atsScorecard = scorecard;
       });
+
+      // Persist this finished result to history so it can be revisited /
+      // deleted later and is never regenerated on navigation.
+      final score = store.humeResult?.compositeScore ??
+          scorecard.overallFitScore ??
+          72;
+      store.addInterviewResult(
+        InterviewResult(
+          id: 'res-${DateTime.now().millisecondsSinceEpoch}',
+          conversationId: store.currentConversation?.conversationId ?? '',
+          name: (store.currentConversation?.conversationName ?? 'Interview')
+              .replaceAll('TalbotIQ — ', ''),
+          createdAt: DateTime.now().toIso8601String(),
+          score: score,
+          wpm: store.wpm,
+          fillers: store.fillers,
+          transcript: List<TranscriptEntry>.from(store.sessionTranscript),
+          scorecard: scorecard,
+          humeResult: store.humeResult,
+        ),
+      );
+      // The recording has now been analysed and saved — clear the "pending"
+      // bytes so navigating back or relaunching never re-runs analysis.
+      store.setRecordingBytes(null);
     } catch (e) {
       setState(() {
         _geminiError = e.toString().replaceAll('Exception: ', '');
@@ -431,6 +519,247 @@ class _ResultsPageState extends State<ResultsPage> {
       SnackBar(
         content: const Text('Report details copied to clipboard'),
         backgroundColor: theme.colorScheme.primary,
+      ),
+    );
+  }
+
+  /// Confirms and deletes a saved interview result from history.
+  Future<void> _deleteResult(BuildContext context, InterviewResult r) async {
+    final theme = Theme.of(context);
+    final store = Provider.of<AppStore>(context, listen: false);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Result?'),
+        content: Text('Permanently delete the result for "${r.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+          ),
+          CustomButton(
+            text: 'Delete',
+            variant: ButtonVariant.danger,
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    store.deleteInterviewResult(r.id);
+    // If we were viewing the deleted result, drop the cache key so the page
+    // falls back to the current session on next entry.
+    if (_loadedConvId == r.conversationId) _loadedConvId = null;
+  }
+
+  /// Builds the "Previous Interviews" history card (view / delete past results).
+  Widget _buildHistoryCard(BuildContext context, AppStore store) {
+    final results = store.interviewResults;
+    if (results.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final currentConvId = store.currentConversation?.conversationId ?? '';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.history, size: 20, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Previous Interviews (${results.length})',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ...results.map((r) {
+                final viewing = _loadedConvId == r.conversationId;
+                final date =
+                    r.createdAt.contains('T') ? r.createdAt.split('T').first : r.createdAt;
+                final isCurrent = r.conversationId == currentConvId;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: viewing
+                        ? theme.colorScheme.primary.withOpacity(0.08)
+                        : theme.colorScheme.onSurface.withOpacity(0.04),
+                    border: Border.all(
+                      color: viewing
+                          ? theme.colorScheme.primary.withOpacity(0.4)
+                          : theme.colorScheme.outline.withOpacity(0.12),
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withOpacity(0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(
+                          '${r.score}',
+                          style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    r.name,
+                                    style: theme.textTheme.bodyMedium
+                                        ?.copyWith(fontWeight: FontWeight.w600),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (isCurrent) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '· current',
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '$date · ${r.wpm} wpm · ${r.fillers} fillers',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontSize: 11,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: viewing
+                            ? null
+                            : () {
+                                setState(() => _loadedConvId = r.conversationId);
+                                _applyResult(r);
+                              },
+                        child: Text(viewing ? 'Viewing' : 'View'),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete_outline,
+                            color: theme.colorScheme.error, size: 20),
+                        onPressed: () => _deleteResult(context, r),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Builds the interview transcript card from the session transcript
+  /// (produced by transcribing the candidate's recording via Deepgram).
+  Widget _buildTranscriptCard(BuildContext context, AppStore store) {
+    final theme = Theme.of(context);
+    final entries = store.sessionTranscript;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.article_outlined,
+                    size: 20, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Interview Transcript',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Transcribed from your recording via Deepgram Nova-3.',
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            if (entries.isEmpty)
+              Text(
+                'No transcript available for this session.',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontStyle: FontStyle.italic),
+              )
+            else
+              ...entries.map((e) {
+                final isCandidate = e.role == 'candidate';
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.onSurface.withOpacity(0.04),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withOpacity(0.12),
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isCandidate ? 'Candidate' : 'Interviewer',
+                        style: TextStyle(
+                          color: isCandidate
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.secondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        e.text,
+                        style: TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 14,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
       ),
     );
   }
@@ -516,9 +845,44 @@ class _ResultsPageState extends State<ResultsPage> {
       );
     }
 
-    if (store.sessionTranscript.isEmpty &&
+    final bool noCurrentResult = store.sessionTranscript.isEmpty &&
         store.humeResult == null &&
-        !_humeProcessing) {
+        !_humeProcessing;
+
+    if (noCurrentResult) {
+      // No result for the current session — but if past results exist, let the
+      // user pick one to view rather than showing a dead end.
+      if (store.interviewResults.isNotEmpty) {
+        return Scaffold(
+          backgroundColor: theme.colorScheme.surface,
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24.0),
+            child: Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 950),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Interview Results',
+                      style: theme.textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Select a previous interview below to view its full scorecard.',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 24),
+                    _buildHistoryCard(context, store),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+
       return Scaffold(
         backgroundColor: theme.colorScheme.surface,
         body: Center(
@@ -701,6 +1065,8 @@ class _ResultsPageState extends State<ResultsPage> {
                           ),
                     const SizedBox(height: 24),
 
+                    _buildHistoryCard(context, store),
+
                     if (_hProcessingAndPending(store)) ...[
                       Container(
                         margin: const EdgeInsets.only(bottom: 20),
@@ -875,6 +1241,9 @@ class _ResultsPageState extends State<ResultsPage> {
                       onRetry: _runAtsAnalysis,
                       onNavigateToSettings: () => store.navigateTo('/settings'),
                     ),
+                    const SizedBox(height: 24),
+
+                    _buildTranscriptCard(context, store),
                     const SizedBox(height: 24),
 
                     const FacialAnalysisPanel(),

@@ -15,10 +15,6 @@ class InterviewSidebar extends StatefulWidget {
   final VoidCallback onEndInterview;
   final TextEditingController overrideController;
   final VoidCallback onSendOverride;
-  final bool dgConnected;
-  final String? transcriptError;
-  final String interimText;
-  final ScrollController transcriptScrollController;
 
   const InterviewSidebar({
     super.key,
@@ -30,10 +26,6 @@ class InterviewSidebar extends StatefulWidget {
     required this.onEndInterview,
     required this.overrideController,
     required this.onSendOverride,
-    required this.dgConnected,
-    required this.transcriptError,
-    required this.interimText,
-    required this.transcriptScrollController,
   });
 
   @override
@@ -92,13 +84,7 @@ class _InterviewSidebarState extends State<InterviewSidebar> {
           onSendOverride: widget.onSendOverride,
         );
       case 'transcript':
-        return TranscriptTab(
-          store: widget.store,
-          dgConnected: widget.dgConnected,
-          transcriptError: widget.transcriptError,
-          interimText: widget.interimText,
-          transcriptScrollController: widget.transcriptScrollController,
-        );
+        return const TranscriptTab();
       default:
         return const SizedBox.shrink();
     }

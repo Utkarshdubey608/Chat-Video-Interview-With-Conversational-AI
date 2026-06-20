@@ -72,6 +72,13 @@ class AppStore extends ChangeNotifier {
   // sent to Deepgram for transcription on the results page.
   List<int>? _recordingBytes;
 
+  // Persisted interview recordings (kept on device when storeLocalRecordings is
+  // enabled). Managed from Settings.
+  List<SavedRecording> _recordings = [];
+
+  // Persisted interview results history (full scorecard + transcript + emotion).
+  List<InterviewResult> _interviewResults = [];
+
   // Routing state
   String _currentRoute = '/setup';
   String get currentRoute => _currentRoute;
@@ -120,6 +127,8 @@ class AppStore extends ChangeNotifier {
   bool get deepgramConnected => _deepgramConnected;
   bool get storeLocalRecordings => _storeLocalRecordings;
   List<int>? get recordingBytes => _recordingBytes;
+  List<SavedRecording> get recordings => _recordings;
+  List<InterviewResult> get interviewResults => _interviewResults;
 
   AppStore() {
     loadFromPrefs();
@@ -331,6 +340,35 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void addRecording(SavedRecording recording) {
+    _recordings.insert(0, recording);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void deleteRecording(String id) {
+    _recordings.removeWhere((r) => r.id == id);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Saves (or replaces, keyed by conversationId) a finished interview result.
+  void addInterviewResult(InterviewResult result) {
+    _interviewResults.removeWhere(
+      (r) => r.conversationId == result.conversationId &&
+          result.conversationId.isNotEmpty,
+    );
+    _interviewResults.insert(0, result);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void deleteInterviewResult(String id) {
+    _interviewResults.removeWhere((r) => r.id == id);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
   void reset() {
     _currentConversation = null;
     _currentQuestionIdx = 0;
@@ -393,6 +431,17 @@ class AppStore extends ChangeNotifier {
         _cachedPersonas = personasList.map((p) => TavusPersona.fromJson(p)).toList();
       }
 
+      if (data['recordings'] != null) {
+        final List recordingsList = data['recordings'];
+        _recordings = recordingsList.map((r) => SavedRecording.fromJson(r)).toList();
+      }
+
+      if (data['interviewResults'] != null) {
+        final List resultsList = data['interviewResults'];
+        _interviewResults =
+            resultsList.map((r) => InterviewResult.fromJson(r)).toList();
+      }
+
       // Propagate keys to services
       tavusService.setKey(_tavusKey);
       humeService.setKey(_humeKey);
@@ -425,6 +474,8 @@ class AppStore extends ChangeNotifier {
         'drafts': _drafts.map((d) => d.toJson()).toList(),
         'cachedReplicas': _cachedReplicas.map((r) => r.toJson()).toList(),
         'cachedPersonas': _cachedPersonas.map((p) => p.toJson()).toList(),
+        'recordings': _recordings.map((r) => r.toJson()).toList(),
+        'interviewResults': _interviewResults.map((r) => r.toJson()).toList(),
       };
       await prefs.setString(_kStoreKey, jsonEncode(data));
     } catch (e) {
@@ -457,6 +508,8 @@ class AppStore extends ChangeNotifier {
     _drafts = [];
     _cachedReplicas = [];
     _cachedPersonas = [];
+    _recordings = [];
+    _interviewResults = [];
     notifyListeners();
   }
 }

@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
-import '../core/constants/colors.dart';
+import 'package:audioplayers/audioplayers.dart';
+import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
 import '../core/services/deepgram_service.dart';
+import '../core/services/recording_service.dart';
 import '../widgets/custom_buttons.dart';
 import '../widgets/custom_inputs.dart';
 
@@ -37,10 +39,18 @@ class _SettingsPageState extends State<SettingsPage> {
   String _dgTestState = 'idle';
   String _humeTestState = 'idle';
 
+  // Recording playback
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  final RecordingService _recordingService = RecordingService();
+  String? _playingId;
+
   @override
   void initState() {
     super.initState();
     final store = Provider.of<AppStore>(context, listen: false);
+    _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _playingId = null);
+    });
     _tavusController = TextEditingController(text: store.tavusKey);
     _deepgramController = TextEditingController(text: store.deepgramKey);
     _humeController = TextEditingController(text: store.humeKey);
@@ -53,6 +63,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    _audioPlayer.dispose();
     _tavusController.dispose();
     _deepgramController.dispose();
     _humeController.dispose();
@@ -314,6 +325,167 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _togglePlay(SavedRecording rec) async {
+    if (_playingId == rec.id) {
+      await _audioPlayer.stop();
+      if (mounted) setState(() => _playingId = null);
+      return;
+    }
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.play(DeviceFileSource(rec.path));
+      if (mounted) setState(() => _playingId = rec.id);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not play recording: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteRecording(SavedRecording rec) async {
+    final theme = Theme.of(context);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Recording?'),
+        content: Text('Permanently delete the recording "${rec.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+          ),
+          CustomButton(
+            text: 'Delete',
+            variant: ButtonVariant.danger,
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    if (_playingId == rec.id) {
+      await _audioPlayer.stop();
+      if (mounted) setState(() => _playingId = null);
+    }
+    await _recordingService.deleteFile(rec.path);
+    if (!mounted) return;
+    Provider.of<AppStore>(context, listen: false).deleteRecording(rec.id);
+  }
+
+  Widget _buildRecordingRow(BuildContext context, SavedRecording rec) {
+    final theme = Theme.of(context);
+    final playing = _playingId == rec.id;
+    final sizeMb = (rec.sizeBytes / (1024 * 1024)).toStringAsFixed(1);
+    final date = rec.savedAt.contains('T')
+        ? rec.savedAt.split('T').first
+        : rec.savedAt;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.onSurface.withOpacity(0.04),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.12)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: Icon(
+              playing ? Icons.stop_circle : Icons.play_circle_fill,
+              color: theme.colorScheme.primary,
+              size: 32,
+            ),
+            onPressed: () => _togglePlay(rec),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  rec.name,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$date · $sizeMb MB',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
+            onPressed: () => _deleteRecording(rec),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecordingsCard(BuildContext context, AppStore store) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Interview Recordings',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Audio recordings are stored only on this device.',
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Save interview recordings'),
+              subtitle: Text(
+                'Keep a local .wav of each interview to play back here.',
+                style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+              ),
+              value: store.storeLocalRecordings,
+              onChanged: (v) => store.setStoreLocalRecordings(v),
+            ),
+            Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
+            const SizedBox(height: 8),
+            if (store.recordings.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  store.storeLocalRecordings
+                      ? 'No recordings yet — finish an interview to save one.'
+                      : 'Enable saving above to keep recordings of your interviews.',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(fontStyle: FontStyle.italic),
+                ),
+              )
+            else
+              ...store.recordings.map((rec) => _buildRecordingRow(context, rec)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _getStatusIndicator(BuildContext context, String state) {
     final theme = Theme.of(context);
     if (state == 'testing') {
@@ -358,6 +530,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final store = Provider.of<AppStore>(context);
     return Scaffold(
       backgroundColor: theme.colorScheme.background,
       body: SingleChildScrollView(
@@ -572,6 +745,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 16),
+
+                  // Interview Recordings management
+                  _buildRecordingsCard(context, store),
                   const SizedBox(height: 24),
 
                   // Action buttons

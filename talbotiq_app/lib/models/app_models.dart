@@ -390,6 +390,103 @@ class TranscriptEntry {
   };
 }
 
+// ── Saved interview recording (local .wav) ──
+class SavedRecording {
+  final String id;
+  final String name; // candidate / conversation name
+  final String path; // absolute file path on device
+  final String savedAt; // ISO-8601 timestamp
+  final int sizeBytes;
+
+  SavedRecording({
+    required this.id,
+    required this.name,
+    required this.path,
+    required this.savedAt,
+    required this.sizeBytes,
+  });
+
+  factory SavedRecording.fromJson(Map<String, dynamic> json) {
+    return SavedRecording(
+      id: json['id'] ?? '',
+      name: json['name'] ?? 'Interview',
+      path: json['path'] ?? '',
+      savedAt: json['savedAt'] ?? '',
+      sizeBytes: json['sizeBytes'] ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'path': path,
+    'savedAt': savedAt,
+    'sizeBytes': sizeBytes,
+  };
+}
+
+// ── Persisted interview result (history) ──
+class InterviewResult {
+  final String id;
+  final String conversationId;
+  final String name;
+  final String createdAt; // ISO-8601
+  final int score;
+  final int wpm;
+  final int fillers;
+  final List<TranscriptEntry> transcript;
+  final ATSScorecard? scorecard;
+  final HumeSessionResult? humeResult;
+
+  InterviewResult({
+    required this.id,
+    required this.conversationId,
+    required this.name,
+    required this.createdAt,
+    required this.score,
+    required this.wpm,
+    required this.fillers,
+    required this.transcript,
+    required this.scorecard,
+    required this.humeResult,
+  });
+
+  factory InterviewResult.fromJson(Map<String, dynamic> json) {
+    return InterviewResult(
+      id: json['id'] ?? '',
+      conversationId: json['conversationId'] ?? '',
+      name: json['name'] ?? 'Interview',
+      createdAt: json['createdAt'] ?? '',
+      score: json['score'] ?? 0,
+      wpm: json['wpm'] ?? 0,
+      fillers: json['fillers'] ?? 0,
+      transcript: (json['transcript'] as List?)
+              ?.map((e) => TranscriptEntry.fromJson(e))
+              .toList() ??
+          [],
+      scorecard: json['scorecard'] != null
+          ? ATSScorecard.fromJson(json['scorecard'])
+          : null,
+      humeResult: json['humeResult'] != null
+          ? HumeSessionResult.fromJson(json['humeResult'])
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'conversationId': conversationId,
+    'name': name,
+    'createdAt': createdAt,
+    'score': score,
+    'wpm': wpm,
+    'fillers': fillers,
+    'transcript': transcript.map((e) => e.toJson()).toList(),
+    'scorecard': scorecard?.toJson(),
+    'humeResult': humeResult?.toJson(),
+  };
+}
+
 // ── Hume Emotion ──
 class HumeEmotion {
   final String name;

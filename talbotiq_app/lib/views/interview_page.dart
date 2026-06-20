@@ -4,11 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
-import '../core/services/deepgram_service.dart';
-import '../core/services/deepgram_live.dart';
 import '../core/services/recording_service.dart';
 import '../widgets/custom_buttons.dart';
 import 'interview/widgets/video_panel.dart';
@@ -18,6 +15,10 @@ import 'interview/widgets/interview_sidebar.dart';
 
 /// The main interview view screen that orchestrates the video feed,
 /// bottom control navigation bar, and sidebar analytics/transcript tab panels.
+///
+/// The candidate's microphone is recorded to a local .wav for the duration of
+/// the call; on end the recording is transcribed by Deepgram on the results
+/// page. There is no live transcription during the call.
 class InterviewPage extends StatefulWidget {
   const InterviewPage({super.key});
 
@@ -29,29 +30,18 @@ class _InterviewPageState extends State<InterviewPage>
     with TickerProviderStateMixin {
   bool _isFullscreen = false;
   bool _autoAdvance = true;
-  bool _avatarSpeaking = false;
+  final bool _avatarSpeaking = false;
   int _revealedIdx = -1;
   final _overrideController = TextEditingController();
-  final _transcriptScrollController = ScrollController();
 
   Timer? _jitterTimer;
   Timer? _fallbackRevealTimer;
   Timer? _autoAdvanceTimeoutTimer;
-  Timer? _avatarSpeakTimer;
-  Timer? _tavusPollTimer;
-
-  // Live transcription session for streaming the candidate's mic (web only).
-  DeepgramLiveSession? _dgSession;
-  bool _transcriptionStarted = false;
 
   // Local .wav recorder for the candidate's mic (native only). The recording is
   // transcribed by Deepgram on the results page once the call ends.
   final RecordingService _recorder = RecordingService();
   bool _recordingStarted = false;
-  String _interimText = '';
-  String? _transcriptError;
-  bool _dgConnected = false;
-  int _totalFillers = 0;
 
   // Cached store reference so we can add/remove a route listener safely.
   AppStore? _store;
@@ -65,39 +55,44 @@ class _InterviewPageState extends State<InterviewPage>
     _resetQuestionTimers();
   }
 
-  /// Manages routing/lifecycle dependencies and synchronizes live transcription when active.
+  /// Manages routing/lifecycle dependencies and starts recording when active.
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final store = Provider.of<AppStore>(context, listen: false);
     if (!identical(store, _store)) {
-      _store?.removeListener(_syncTranscriptionWithRoute);
+      _store?.removeListener(_syncRecordingWithRoute);
       _store = store;
-      _store!.addListener(_syncTranscriptionWithRoute);
+      _store!.addListener(_syncRecordingWithRoute);
     }
-    _syncTranscriptionWithRoute();
+    _syncRecordingWithRoute();
   }
 
-  /// Starts or stops live transcription and Tavus polling based on current route activity.
-  void _syncTranscriptionWithRoute() {
+  /// Starts microphone recording when the interview becomes active.
+  void _syncRecordingWithRoute() {
     final store = _store;
     if (store == null) return;
     final shouldRun = store.currentRoute == '/interview' && store.interviewActive;
     if (shouldRun) {
-      _startLiveTranscription();
       _startRecording();
-      _startTavusPolling();
-    } else {
-      _stopLiveTranscription();
-      _stopTavusPolling();
     }
+  }
+
+  /// Cleans up active timers, controllers, listeners, and the recorder.
+  @override
+  void dispose() {
+    _store?.removeListener(_syncRecordingWithRoute);
+    _jitterTimer?.cancel();
+    _fallbackRevealTimer?.cancel();
+    _autoAdvanceTimeoutTimer?.cancel();
+    _recorder.dispose();
+    _overrideController.dispose();
+    super.dispose();
   }
 
   /// Starts recording the candidate's microphone to a local .wav file.
   ///
-  /// Native only. The recording is transcribed by Deepgram on the results page
-  /// once the call ends. On web this is a no-op (the transcript is captured live
-  /// via [_startLiveTranscription]).
+  /// Native only. On web this is a no-op (the web build does not record).
   void _startRecording() async {
     if (kIsWeb || _recordingStarted) return;
     _recordingStarted = true;
@@ -114,173 +109,6 @@ class _InterviewPageState extends State<InterviewPage>
         ),
       );
     }
-  }
-
-  /// Cleans up active sessions, timers, controllers, and listeners.
-  @override
-  void dispose() {
-    _store?.removeListener(_syncTranscriptionWithRoute);
-    _jitterTimer?.cancel();
-    _fallbackRevealTimer?.cancel();
-    _autoAdvanceTimeoutTimer?.cancel();
-    _avatarSpeakTimer?.cancel();
-    _tavusPollTimer?.cancel();
-    _dgSession?.stop();
-    _recorder.dispose();
-    _overrideController.dispose();
-    _transcriptScrollController.dispose();
-    super.dispose();
-  }
-
-  /// Configures and starts Deepgram Nova-3 live speech-to-text session on Web.
-  ///
-  /// Web only. On native the Tavus WebView owns the microphone, so a local
-  /// recognizer would contend for it and fail. Native instead relies entirely
-  /// on Tavus's server-side transcript: polled live by [_startTavusPolling]
-  /// during the call and finalised in results_page once the call ends.
-  void _startLiveTranscription() {
-    if (_transcriptionStarted) return;
-    if (!kIsWeb) return;
-
-    final store = Provider.of<AppStore>(context, listen: false);
-    _transcriptionStarted = true;
-
-    if (store.deepgramKey.isEmpty) {
-      _dgConnected = false;
-      if (mounted) setState(() => _transcriptError = 'No Deepgram API key configured.');
-      return;
-    }
-
-    deepgramService.setKey(store.deepgramKey);
-
-    _dgSession = DeepgramLiveSession(
-      onFinal: (text) {
-        if (!mounted) return;
-        final entry = TranscriptEntry(
-          role: 'candidate',
-          text: text,
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          questionIdx: store.currentQuestionIdx,
-        );
-        store.pushTranscriptEntry(entry);
-
-        _totalFillers += deepgramService.countFillers(text);
-        final int wpm = deepgramService.calcWpm(store.sessionTranscript);
-        store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: _totalFillers);
-        setState(() => _interimText = '');
-        _scrollToBottom();
-      },
-      onInterim: (text) {
-        if (mounted) setState(() => _interimText = text);
-      },
-      onConnected: (connected) {
-        if (!mounted) return;
-        setState(() {
-          _dgConnected = connected;
-          if (connected) _transcriptError = null;
-        });
-        store.setDeepgramConnected(connected);
-      },
-      onError: (message) {
-        if (!mounted) return;
-        setState(() {
-          _dgConnected = false;
-          _transcriptError = message;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Transcript: $message'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-            duration: const Duration(seconds: 8),
-          ),
-        );
-      },
-    );
-    _dgSession!.start();
-  }
-  
-
-  /// Stops the active Deepgram live transcription session and resets UI status.
-  void _stopLiveTranscription() {
-    if (!_transcriptionStarted) return;
-    _transcriptionStarted = false;
-    _dgSession?.stop();
-    _dgSession = null;
-    if (mounted) {
-      setState(() {
-        _interimText = '';
-        _dgConnected = false;
-      });
-    }
-  }
-
-  /// Helper to map entry timestamps to the corresponding question indexes.
-  int _getQuestionIdxForTimestamp(int entryTimestamp, List<int> timestamps) {
-    if (timestamps.isEmpty) return 0;
-    for (int i = timestamps.length - 1; i >= 0; i--) {
-      if (entryTimestamp >= timestamps[i]) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  /// Initiates periodic polling of Tavus live transcripts.
-  void _startTavusPolling() {
-    _tavusPollTimer?.cancel();
-    final store = Provider.of<AppStore>(context, listen: false);
-    final conv = store.currentConversation;
-    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty) {
-      return;
-    }
-
-    tavusService.setKey(store.tavusKey);
-    _pollTavusTranscript(store, conv.conversationId);
-
-    _tavusPollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
-      if (!store.interviewActive || !mounted) {
-        timer.cancel();
-        return;
-      }
-      await _pollTavusTranscript(store, conv.conversationId);
-    });
-  }
-
-  /// Polls the Tavus live transcript API and synchronizes the local transcript log.
-  Future<void> _pollTavusTranscript(AppStore store, String conversationId) async {
-    try {
-      final entries = await tavusService.getLiveTranscript(conversationId);
-      if (entries.isNotEmpty && mounted) {
-        final List<TranscriptEntry> mappedEntries = [];
-        for (final entry in entries) {
-          final qIdx = _getQuestionIdxForTimestamp(entry.timestamp, store.questionTimestamps);
-          mappedEntries.add(TranscriptEntry(
-            role: entry.role,
-            text: entry.text,
-            timestamp: entry.timestamp,
-            questionIdx: qIdx,
-          ));
-        }
-
-        store.updateTranscriptEntries(mappedEntries);
-
-        final candidateTurns = mappedEntries.where((e) => e.role == 'candidate').toList();
-        final int fillers = candidateTurns.fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
-        final int wpm = deepgramService.calcWpm(mappedEntries);
-
-        _totalFillers = fillers;
-        store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: fillers);
-        _scrollToBottom();
-      }
-    } catch (e) {
-      debugPrint('Tavus live transcript poll error: $e');
-    }
-  }
-
-  /// Stops periodic Tavus transcript polling.
-  void _stopTavusPolling() {
-    _tavusPollTimer?.cancel();
-    _tavusPollTimer = null;
   }
 
   /// Simulates candidate emotional levels (confidence, anxiety, engagement) during interview.
@@ -301,17 +129,6 @@ class _InterviewPageState extends State<InterviewPage>
           : (store.engagement + (random.nextInt(4) - 2)).clamp(85, 96);
       store.updateMetrics(conf: conf, anx: anx, eng: eng);
     });
-  }
-
-  /// Automatically scrolls the transcript view to show latest messages.
-  void _scrollToBottom() {
-    if (_transcriptScrollController.hasClients) {
-      _transcriptScrollController.animateTo(
-        _transcriptScrollController.position.maxScrollExtent + 80,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
-    }
   }
 
   /// Cancels and schedules the timeout advance and fallback reveal timers for the current question.
@@ -339,7 +156,7 @@ class _InterviewPageState extends State<InterviewPage>
     }
   }
 
-  /// Ends the interview session, triggers scorecard generation, and redirects to results.
+  /// Ends the interview session, finalises the recording, and redirects to results.
   Future<void> _endInterview() async {
     final store = Provider.of<AppStore>(context, listen: false);
     final theme = Theme.of(context);
@@ -374,15 +191,21 @@ class _InterviewPageState extends State<InterviewPage>
 
     setState(() => store.setInterviewActive(false));
 
-    _dgSession?.stop();
-    _dgSession = null;
-
     // Stop the local recording and hand its bytes to the store so the results
     // page can transcribe it via Deepgram's pre-recorded endpoint (native only).
     if (!kIsWeb) {
       final bytes = await _recorder.stopAndReadBytes();
       debugPrint('debug[rec]: endInterview got ${bytes?.length ?? 0} bytes');
       store.setRecordingBytes(bytes);
+
+      // If the user opted to keep recordings, persist this one to device
+      // storage so it can be played back / deleted later from Settings.
+      if (store.storeLocalRecordings && bytes != null && bytes.isNotEmpty) {
+        final name = (store.currentConversation?.conversationName ?? 'Interview')
+            .replaceAll('TalbotIQ — ', '');
+        final saved = await _recorder.persistLastRecording(name);
+        if (saved != null) store.addRecording(saved);
+      }
     }
 
     if (store.currentConversation != null &&
@@ -514,10 +337,6 @@ class _InterviewPageState extends State<InterviewPage>
                   onEndInterview: _endInterview,
                   overrideController: _overrideController,
                   onSendOverride: _sendOverride,
-                  dgConnected: _dgConnected,
-                  transcriptError: _transcriptError,
-                  interimText: _interimText,
-                  transcriptScrollController: _transcriptScrollController,
                 ),
               ),
             )
@@ -579,10 +398,6 @@ class _InterviewPageState extends State<InterviewPage>
               onEndInterview: _endInterview,
               overrideController: _overrideController,
               onSendOverride: _sendOverride,
-              dgConnected: _dgConnected,
-              transcriptError: _transcriptError,
-              interimText: _interimText,
-              transcriptScrollController: _transcriptScrollController,
             ),
         ],
       ),
