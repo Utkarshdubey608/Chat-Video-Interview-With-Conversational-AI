@@ -1,5 +1,6 @@
 // lib/views/settings_page.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard;
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
@@ -265,6 +266,23 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _pasteInto(TextEditingController controller) async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Clipboard is empty')),
+        );
+      }
+      return;
+    }
+    controller.text = text;
+    controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: controller.text.length),
+    );
+  }
+
   Widget _buildKeyField({
     required BuildContext context,
     required String label,
@@ -303,13 +321,28 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           decoration: InputDecoration(
             hintText: placeholder,
-            suffixIcon: IconButton(
-              icon: Icon(
-                show ? Icons.visibility : Icons.visibility_off,
-                color: theme.colorScheme.onSurfaceVariant,
-                size: 20,
-              ),
-              onPressed: toggleShow,
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    Icons.content_paste,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
+                  tooltip: 'Paste',
+                  onPressed: () => _pasteInto(controller),
+                ),
+                IconButton(
+                  icon: Icon(
+                    show ? Icons.visibility : Icons.visibility_off,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
+                  tooltip: show ? 'Hide' : 'Show',
+                  onPressed: toggleShow,
+                ),
+              ],
             ),
           ),
         ),
@@ -682,21 +715,21 @@ class _SettingsPageState extends State<SettingsPage> {
                               CustomButton(
                                 text: 'Test Tavus Connection',
                                 variant: ButtonVariant.outline,
-                                height: 36,
+                                height: 40,
                                 onPressed: _testTavus,
                                 isLoading: _tavusTestState == 'testing',
                               ),
                               CustomButton(
                                 text: 'Test Deepgram Connection',
                                 variant: ButtonVariant.outline,
-                                height: 36,
+                                height: 40,
                                 onPressed: _testDeepgram,
                                 isLoading: _dgTestState == 'testing',
                               ),
                               CustomButton(
                                 text: 'Test Hume Connection',
                                 variant: ButtonVariant.outline,
-                                height: 36,
+                                height: 40,
                                 onPressed: _testHume,
                                 isLoading: _humeTestState == 'testing',
                               ),

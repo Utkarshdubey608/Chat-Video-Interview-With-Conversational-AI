@@ -1,5 +1,5 @@
-// lib/widgets/custom_inputs.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard;
 import '../core/constants/colors.dart';
 
 class CustomInputField extends StatelessWidget {
@@ -56,7 +56,28 @@ class CustomInputField extends StatelessWidget {
           ),
           decoration: InputDecoration(
             hintText: placeholder,
-            suffixIcon: suffix,
+            suffixIcon: suffix ??
+                (controller != null
+                    ? IconButton(
+                        icon: Icon(
+                          Icons.content_paste,
+                          color: theme.colorScheme.onSurfaceVariant,
+                          size: 20,
+                        ),
+                        tooltip: 'Paste',
+                        onPressed: () async {
+                          final data =
+                              await Clipboard.getData(Clipboard.kTextPlain);
+                          final text = data?.text?.trim();
+                          if (text == null || text.isEmpty) return;
+                          controller!.text = text;
+                          controller!.selection = TextSelection.fromPosition(
+                            TextPosition(offset: text.length),
+                          );
+                          onChanged?.call(text);
+                        },
+                      )
+                    : null),
           ),
         ),
         if (hint != null) ...[
