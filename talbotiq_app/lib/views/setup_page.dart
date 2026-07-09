@@ -6,12 +6,15 @@ import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
 import '../widgets/custom_buttons.dart';
 import '../widgets/custom_inputs.dart';
+import '../widgets/apple_ui.dart';
 import 'setup/launch_payload.dart';
+import 'setup/avatar_picker.dart';
+import 'setup/welcome_marquee.dart';
 
-/// Meeting kickoff page. Kept intentionally minimal: pick the avatar
-/// (replica/persona) and launch. Everything else (prompt, greeting, session
-/// properties, questions, storage) is configured on the Settings page and read
-/// from [AppStore.sessionConfig] at launch time.
+/// Meeting kickoff page. Kept intentionally minimal and Apple-clean: pick the
+/// avatar (replica/persona) and launch. Everything else (prompt, greeting,
+/// session properties, questions, storage) is configured on the Settings page
+/// and read from [AppStore.sessionConfig] at launch time.
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
 
@@ -21,7 +24,7 @@ class SetupPage extends StatefulWidget {
 
 class _SetupPageState extends State<SetupPage> {
   // Working state for the avatar selection on this page.
-  final _replicaIdController = TextEditingController();
+  String _replicaId = '';
   String _personaId = '';
 
   // Replicas & Personas dropdown options.
@@ -37,15 +40,9 @@ class _SetupPageState extends State<SetupPage> {
   void initState() {
     super.initState();
     final store = Provider.of<AppStore>(context, listen: false);
-    _replicaIdController.text = store.sessionConfig.replicaId;
+    _replicaId = store.sessionConfig.replicaId;
     _personaId = store.sessionConfig.personaId;
     _loadApis();
-  }
-
-  @override
-  void dispose() {
-    _replicaIdController.dispose();
-    super.dispose();
   }
 
   // Fetches the available replicas & personas from Tavus (cached in the store).
@@ -106,9 +103,16 @@ class _SetupPageState extends State<SetupPage> {
   // Merges the current avatar selection into the persisted session config.
   DraftForm _currentConfig(AppStore store) {
     return store.sessionConfig.copyWith(
-      replicaId: _replicaIdController.text.trim(),
+      replicaId: _replicaId.trim(),
       personaId: _personaId.trim(),
     );
+  }
+
+  // Human-readable label for the currently selected persona.
+  String get _personaLabel {
+    if (_personaId.isEmpty) return 'None';
+    final match = _personas.where((p) => p.personaId == _personaId);
+    return match.isNotEmpty ? match.first.personaName : _personaId;
   }
 
   // Clears the previous session's Hume/transcript/metric state before a launch.
@@ -132,7 +136,7 @@ class _SetupPageState extends State<SetupPage> {
       return;
     }
 
-    if (_replicaIdController.text.trim().isEmpty) {
+    if (_replicaId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select or enter a Replica ID to start a session'), backgroundColor: Colors.red),
       );
@@ -357,7 +361,7 @@ class _SetupPageState extends State<SetupPage> {
     store.setSessionConfig(draft.form);
     store.setQuestions(draft.questions);
     setState(() {
-      _replicaIdController.text = draft.form.replicaId;
+      _replicaId = draft.form.replicaId;
       _personaId = draft.form.personaId;
     });
 
@@ -369,247 +373,153 @@ class _SetupPageState extends State<SetupPage> {
     );
   }
 
-  // Horizontal strip of saved drafts; tapping one loads it.
-  Widget _buildSavedDrafts(AppStore store) {
-    if (store.drafts.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Saved Drafts',
-              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '${store.drafts.length} draft(s) — click to load',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 72,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: store.drafts.length,
-                itemBuilder: (context, index) {
-                  final draft = store.drafts[index];
-                  return Container(
-                    margin: const EdgeInsets.only(right: 12),
-                    child: InkWell(
-                      onTap: () => _loadDraft(draft),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        width: 220,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    draft.name,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: theme.colorScheme.onSurface,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${draft.questions.length} questions',
-                                    style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
-                              onPressed: () {
-                                store.deleteDraft(draft.id);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Draft deleted')),
-                                );
-                              },
-                              hoverColor: theme.colorScheme.error.withOpacity(0.08),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+  // Opens the persona picker sheet.
+  Future<void> _pickPersona() async {
+    final options = <AppleOption<String>>[
+      const AppleOption('', 'None'),
+      ..._personas.map((p) => AppleOption(p.personaId, p.personaName)),
+    ];
+    final picked = await showAppleOptions<String>(
+      context,
+      title: 'Choose Persona',
+      options: options,
+      selected: _personaId,
     );
+    if (picked != null) setState(() => _personaId = picked);
   }
 
-  // Avatar picker: replica & persona dropdowns plus a manual replica ID override.
-  Widget _buildAvatarCard() {
-    final theme = Theme.of(context);
-    final replicaOptions = [
-      const DropdownMenuItem<String>(value: '', child: Text('Select a Replica')),
-      ..._replicas.map((r) => DropdownMenuItem<String>(
-            value: r.replicaId,
-            child: Text(
-              '${r.replicaName} (${r.replicaType == 'stock' ? '[Stock] ' : ''}${r.status})',
-              overflow: TextOverflow.ellipsis,
-            ),
-          )),
-    ];
-
-    final personaOptions = [
-      const DropdownMenuItem<String>(value: '', child: Text('None')),
-      ..._personas.map((p) => DropdownMenuItem<String>(
-            value: p.personaId,
-            child: Text(p.personaName, overflow: TextOverflow.ellipsis),
-          )),
-    ];
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Avatar Selection',
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (_isLoadingTavus)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 8),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    color: theme.colorScheme.onSurfaceVariant,
-                    tooltip: 'Reload replicas & personas',
-                    onPressed: () => _loadApis(forceRefresh: true),
-                  ),
-              ],
-            ),
-            Text(
-              _isLoadingTavus
-                  ? 'Loading replicas & personas from Tavus…'
-                  : 'Pick the AI avatar and persona for this session',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            if (_tavusLoadError != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: theme.colorScheme.error.withOpacity(0.3)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _tavusLoadError!,
-                        style: TextStyle(fontSize: 12, color: theme.colorScheme.error),
-                      ),
-                    ),
-                  ],
-                ),
+  // Text dialog to manually type/override a replica ID.
+  Future<void> _editReplicaId() async {
+    final controller = TextEditingController(text: _replicaId);
+    await showDialog(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: const Text('Replica ID'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Paste a Replica ID to use one that isn\'t in the list above.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              CustomInputField(
+                label: 'Replica ID',
+                placeholder: 'e.g. r5f0577fc829',
+                controller: controller,
+                autofocus: true,
               ),
             ],
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Replica (optional)',
-                    value: _replicas.any((r) => r.replicaId == _replicaIdController.text)
-                        ? _replicaIdController.text
-                        : '',
-                    items: replicaOptions,
-                    onChanged: (val) => setState(() => _replicaIdController.text = val ?? ''),
-                  ),
-                ),
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Persona',
-                    value: _personas.any((p) => p.personaId == _personaId) ? _personaId : '',
-                    items: personaOptions,
-                    onChanged: (val) => setState(() => _personaId = val ?? ''),
-                  ),
-                ),
-              ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
             ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Replica ID (Manual Override)',
-              placeholder: 'e.g. r5f0577fc829',
-              controller: _replicaIdController,
-              hint: _replicaIdController.text.isNotEmpty
-                  ? '✓ Replica ID: ${_replicaIdController.text}'
-                  : '${_replicas.length} replicas found',
+            CustomButton(
+              text: 'Set',
+              onPressed: () {
+                setState(() => _replicaId = controller.text.trim());
+                Navigator.pop(context);
+              },
             ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
-  // Lays children in a row on wide screens, stacked column on mobile.
-  Widget _buildResponsiveInputRow(BuildContext context, List<Widget> children) {
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
-    if (isMobile) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children.map((child) {
-          Widget unwrapped = child;
-          if (child is Expanded) {
-            unwrapped = child.child;
-          }
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: unwrapped,
-          );
-        }).toList(),
-      );
-    } else {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children.map((child) {
-          if (child is Expanded) return child;
-          return Expanded(child: child);
-        }).toList().expand((child) => [child, const SizedBox(width: 16)]).toList()..removeLast(),
-      );
-    }
+  // Avatar group: header row with refresh, the avatar strip, persona picker and
+  // manual replica-ID override.
+  Widget _buildAvatarGroup(ThemeData theme) {
+    final replicaValue = _replicaId.isEmpty ? 'Not set' : _replicaId;
+    return AppleGroup(
+      header: 'Avatar',
+      dividerIndent: 16,
+      footer: _tavusLoadError ??
+          (_isLoadingTavus
+              ? 'Loading replicas & personas from Tavus…'
+              : '${_replicas.length} replica(s) available · tap a face to select'),
+      children: [
+        // Strip header with refresh control.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Choose who runs the interview',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w500),
+                ),
+              ),
+              if (_isLoadingTavus)
+                const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  color: theme.colorScheme.onSurfaceVariant,
+                  tooltip: 'Reload replicas & personas',
+                  onPressed: () => _loadApis(forceRefresh: true),
+                ),
+            ],
+          ),
+        ),
+        AvatarStrip(
+          replicas: _replicas,
+          selectedId: _replicaId,
+          onSelect: (id) => setState(() => _replicaId = id),
+        ),
+        AppleDisclosureRow(
+          leading: const AppleIconBadge(
+              icon: Icons.psychology_outlined, color: Color(0xFF6366F1)),
+          title: 'Persona',
+          value: _personaLabel,
+          onTap: _pickPersona,
+        ),
+        AppleDisclosureRow(
+          leading: const AppleIconBadge(
+              icon: Icons.tag, color: Color(0xFF64748B)),
+          title: 'Replica ID',
+          value: replicaValue,
+          onTap: _editReplicaId,
+        ),
+      ],
+    );
+  }
+
+  // Saved drafts group; each row loads its draft, trailing button deletes it.
+  Widget _buildDraftsGroup(AppStore store) {
+    return AppleGroup(
+      header: 'Saved Drafts',
+      footer: 'Tap a draft to load its avatar, questions and settings.',
+      dividerIndent: 58,
+      children: [
+        for (final draft in store.drafts)
+          AppleRow(
+            leading: const AppleIconBadge(
+                icon: Icons.description_outlined, color: Color(0xFF0EA5E9)),
+            title: draft.name,
+            subtitle: '${draft.questions.length} questions',
+            onTap: () => _loadDraft(draft),
+            trailing: IconButton(
+              icon: Icon(Icons.delete_outline,
+                  size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              onPressed: () {
+                store.deleteDraft(draft.id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Draft deleted')),
+                );
+              },
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -618,48 +528,36 @@ class _SetupPageState extends State<SetupPage> {
     final store = Provider.of<AppStore>(context);
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Center(
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Welcome Hero
-                const SizedBox(height: 16),
-                Text(
-                  'Kick off your',
-                  style: theme.textTheme.headlineLarge?.copyWith(
-                    fontWeight: FontWeight.w300,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    height: 0.95,
-                  ),
-                ),
-                Text(
-                  'Interview Session',
-                  style: theme.textTheme.displayMedium?.copyWith(
-                    fontSize: 40,
-                    fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.onSurface,
-                    height: 1.0,
-                    letterSpacing: -1,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Pick your AI avatar and launch. Prompt, questions and session '
-                  'properties live in Settings.',
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 20),
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            // Full-bleed welcoming marquee of moving cards across the top.
+            const Padding(
+              padding: EdgeInsets.only(top: 12, bottom: 4),
+              child: SetupWelcomeMarquee(),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                // Primary actions
                 Row(
                   children: [
-                    CustomButton(
-                      text: 'Launch Session',
-                      onPressed: _showLaunchDialog,
-                      isLoading: _isLaunching,
+                    Expanded(
+                      child: CustomButton(
+                        text: 'Launch Session',
+                        onPressed: _showLaunchDialog,
+                        isLoading: _isLaunching,
+                        icon: const Icon(Icons.videocam_rounded,
+                            size: 18, color: Color(0xFF060709)),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     CustomButton(
@@ -669,17 +567,21 @@ class _SetupPageState extends State<SetupPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 28),
 
-                // Saved Drafts
-                _buildSavedDrafts(store),
-                const SizedBox(height: 16),
+                        _buildAvatarGroup(theme),
 
-                // Avatar picker
-                _buildAvatarCard(),
-              ],
+                        if (store.drafts.isNotEmpty) ...[
+                          const SizedBox(height: 28),
+                          _buildDraftsGroup(store),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

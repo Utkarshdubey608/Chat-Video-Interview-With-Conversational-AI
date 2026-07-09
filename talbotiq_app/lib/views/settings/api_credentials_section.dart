@@ -8,6 +8,7 @@ import '../../core/services/tavus_service.dart';
 import '../../core/services/deepgram_service.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
+import '../../widgets/apple_ui.dart';
 
 /// Settings category: API keys, the AWS Rekognition proxy URL, connection
 /// tests, and a reset-to-defaults action. Owns its own controllers and Save.
@@ -386,23 +387,12 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'API Credentials',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Keys are stored locally on this device and never sent to TalbotIQ servers.',
-                  style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-                ),
-                const SizedBox(height: 20),
-
+        AppleSectionCard(
+          title: 'API Credentials',
+          subtitle: 'Keys are stored locally on this device and never sent to TalbotIQ servers.',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
                 _buildKeyField(
                   label: 'Tavus API Key',
                   hint: 'Required — from tavus.io → Settings → API Keys',
@@ -504,8 +494,7 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
                   controller: _awsProxyUrlController,
                   hint: 'Optional — Lambda function URL (production) or http://localhost:3002/analyze-face (local dev). Enables facial analysis. The AWS secret stays server-side in the proxy, never in the app.',
                 ),
-              ],
-            ),
+            ],
           ),
         ),
         const SizedBox(height: 24),

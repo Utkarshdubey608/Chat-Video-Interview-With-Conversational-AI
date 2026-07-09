@@ -38,12 +38,13 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final store = Provider.of<AppStore>(context);
     return MaterialApp(
       title: 'TalbotIQ AI Screenings',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark, // Default to Dark mode matching premium React look
+      themeMode: store.themeMode,
       home: const MainLayout(),
     );
   }

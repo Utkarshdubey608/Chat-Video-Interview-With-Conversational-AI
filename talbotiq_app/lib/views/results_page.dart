@@ -947,7 +947,7 @@ class _ResultsPageState extends State<ResultsPage> {
     final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           SingleChildScrollView(

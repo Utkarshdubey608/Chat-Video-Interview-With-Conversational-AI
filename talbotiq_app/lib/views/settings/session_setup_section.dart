@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_store.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
+import '../../widgets/apple_ui.dart';
 
 /// Settings category: the conversation prompt/greeting/callback, session
 /// properties (language, pipeline, timeouts, toggles) and the interview
@@ -91,22 +92,12 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
 
   // Conversation-level config: name, system prompt, greeting, callback URL.
   Widget _buildConversationCard() {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Avatar & Conversation',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'Prompt and greeting that drive the Tavus conversational agent',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
+    return AppleSectionCard(
+      title: 'Avatar & Conversation',
+      subtitle: 'Prompt and greeting that drive the Tavus conversational agent',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             CustomInputField(
               label: 'Conversation Name',
               placeholder: 'e.g. Senior Front-End Engineer Screening',
@@ -133,8 +124,7 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
               placeholder: 'https://api.yourcompany.com/tavus-events',
               controller: _callbackUrlController,
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -142,21 +132,12 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
   // Session properties: language, pipeline, duration, timeouts and toggles.
   Widget _buildPropertiesCard() {
     final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Session Properties',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'All values map to the Tavus conversation properties object',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
+    return AppleSectionCard(
+      title: 'Session Properties',
+      subtitle: 'All values map to the Tavus conversation properties object',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             _buildResponsiveInputRow(
               context,
               [
@@ -251,8 +232,7 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
                 controller: _backgroundUrlController,
               ),
             ],
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -260,22 +240,12 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
   // Editable list of interview questions, backed directly by the store.
   Widget _buildQuestionsCard(AppStore store) {
     final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Interview Questions',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${store.questions.length} questions configured',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 16),
+    return AppleSectionCard(
+      title: 'Interview Questions',
+      subtitle: '${store.questions.length} questions configured',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             ListView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -346,8 +316,7 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
                 style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

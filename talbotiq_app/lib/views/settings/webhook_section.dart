@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/app_store.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
+import '../../widgets/apple_ui.dart';
 
 /// Settings category: the Tavus event webhook URL.
 class WebhookSection extends StatefulWidget {
@@ -43,34 +44,17 @@ class _WebhookSectionState extends State<WebhookSection> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Webhook Configuration',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Receives real-time conversation events from Tavus',
-                  style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-                ),
-                const SizedBox(height: 20),
-                CustomInputField(
-                  label: 'Webhook URL',
-                  placeholder: 'https://api.yourcompany.com/webhook/tavus',
-                  controller: _webhookController,
-                  hint: 'Receives: conversation.started, conversation.ended, transcription, participant events, errors',
-                ),
-              ],
-            ),
+        AppleSectionCard(
+          title: 'Webhook Configuration',
+          subtitle: 'Receives real-time conversation events from Tavus',
+          child: CustomInputField(
+            label: 'Webhook URL',
+            placeholder: 'https://api.yourcompany.com/webhook/tavus',
+            controller: _webhookController,
+            hint: 'Receives: conversation.started, conversation.ended, transcription, participant events, errors',
           ),
         ),
         const SizedBox(height: 24),

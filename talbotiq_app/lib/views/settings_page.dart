@@ -1,11 +1,14 @@
 // lib/views/settings_page.dart
 import 'package:flutter/material.dart';
+import '../widgets/apple_ui.dart';
 import 'settings/api_credentials_section.dart';
 import 'settings/session_setup_section.dart';
 import 'settings/recording_storage_section.dart';
 import 'settings/webhook_section.dart';
+import 'settings/appearance_section.dart';
 
-/// Settings shell. Keeps this file small: a header, a category selector and the
+/// Settings shell. Keeps this file small: an Apple-style large title, a category
+/// navigator (sidebar rail on wide screens, scrollable pills on narrow) and the
 /// active category section. Each category lives in its own file under
 /// `views/settings/` and owns its own controllers + Save action.
 class SettingsPage extends StatefulWidget {
@@ -20,10 +23,20 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // Category metadata; index maps 1:1 to the sections kept alive below.
   static const List<_CategoryMeta> _categories = [
-    _CategoryMeta('API Credentials', Icons.vpn_key_outlined),
-    _CategoryMeta('Session Setup', Icons.tune),
-    _CategoryMeta('Recording & Storage', Icons.videocam_outlined),
-    _CategoryMeta('Webhook', Icons.webhook_outlined),
+    _CategoryMeta('API Credentials', Icons.vpn_key_outlined, Color(0xFF0EA5E9)),
+    _CategoryMeta('Session Setup', Icons.tune, Color(0xFF6366F1)),
+    _CategoryMeta('Recording & Storage', Icons.videocam_outlined, Color(0xFFEF4444)),
+    _CategoryMeta('Webhook', Icons.webhook_outlined, Color(0xFFA855F7)),
+    _CategoryMeta('Appearance', Icons.palette_outlined, Color(0xFFF59E0B)),
+  ];
+
+  // The live section widgets, kept alive so unsaved edits survive switching.
+  static const List<Widget> _sections = [
+    ApiCredentialsSection(),
+    SessionSetupSection(),
+    RecordingStorageSection(),
+    WebhookSection(),
+    AppearanceSection(),
   ];
 
   @override
@@ -31,131 +44,169 @@ class _SettingsPageState extends State<SettingsPage> {
     final theme = Theme.of(context);
     return Scaffold(
       backgroundColor: theme.colorScheme.background,
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Center(
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 700),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(theme),
-                  const SizedBox(height: 24),
-                  _buildCategorySelector(theme),
-                  const SizedBox(height: 24),
-                  // Keep every section alive so unsaved edits survive switching.
-                  IndexedStack(
-                    index: _category,
-                    children: const [
-                      ApiCredentialsSection(),
-                      SessionSetupSection(),
-                      RecordingStorageSection(),
-                      WebhookSection(),
-                    ],
-                  ),
-                ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final bool isWide = constraints.maxWidth > 840;
+          return SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 40),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppleLargeTitle(
+                      eyebrow: 'Platform Config',
+                      title: 'Settings',
+                      subtitle: isWide
+                          ? 'Manage credentials and platform behaviour by category.'
+                          : null,
+                    ),
+                    const SizedBox(height: 24),
+                    if (isWide) _buildWide(theme) else _buildNarrow(theme),
+                  ],
+                ),
               ),
             ),
+          );
+        },
+      ),
+    );
+  }
+
+  // Wide layout: fixed sidebar rail + the active section.
+  Widget _buildWide(ThemeData theme) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 232, child: _buildRail(theme)),
+        const SizedBox(width: 28),
+        Expanded(
+          child: IndexedStack(index: _category, children: _sections),
+        ),
+      ],
+    );
+  }
+
+  // Narrow layout: horizontal category pills stacked above the active section.
+  Widget _buildNarrow(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 40,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: _categories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (_, i) => _buildPill(theme, i),
           ),
+        ),
+        const SizedBox(height: 24),
+        IndexedStack(index: _category, children: _sections),
+      ],
+    );
+  }
+
+  // Sidebar rail: a grouped list of selectable category rows (macOS style).
+  Widget _buildRail(ThemeData theme) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.6)),
+      ),
+      child: Column(
+        children: [
+          for (int i = 0; i < _categories.length; i++)
+            _buildRailRow(theme, i),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRailRow(ThemeData theme, int i) {
+    final meta = _categories[i];
+    final selected = i == _category;
+    return InkWell(
+      onTap: () => setState(() => _category = i),
+      child: Container(
+        color: selected ? theme.colorScheme.primary.withOpacity(0.10) : null,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        child: Row(
+          children: [
+            AppleIconBadge(icon: meta.icon, color: meta.color, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                meta.label,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+            if (selected)
+              Icon(Icons.chevron_right,
+                  size: 18, color: theme.colorScheme.primary.withOpacity(0.7)),
+          ],
         ),
       ),
     );
   }
 
-  // Page title block.
-  Widget _buildHeader(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Platform Config',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.secondary,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.5,
+  // A single category pill for the narrow layout.
+  Widget _buildPill(ThemeData theme, int i) {
+    final meta = _categories[i];
+    final selected = i == _category;
+    return GestureDetector(
+      onTap: () => setState(() => _category = i),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outline.withOpacity(0.6),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Settings',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontSize: 32,
-            fontWeight: FontWeight.w700,
-            color: theme.colorScheme.onSurface,
-            letterSpacing: -1,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Manage API credentials and platform behaviour by category.',
-          style: theme.textTheme.bodyMedium,
-          softWrap: true,
-        ),
-      ],
-    );
-  }
-
-  // Dropdown that switches the visible settings category.
-  Widget _buildCategorySelector(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Category',
-          style: theme.textTheme.titleSmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            color: theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surfaceVariant,
-            border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2), width: 1),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          alignment: Alignment.center,
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<int>(
-              value: _category,
-              isExpanded: true,
-              dropdownColor: theme.colorScheme.surfaceVariant,
-              icon: Icon(Icons.arrow_drop_down, color: theme.colorScheme.onSurfaceVariant),
-              onChanged: (val) => setState(() => _category = val ?? 0),
-              items: [
-                for (int i = 0; i < _categories.length; i++)
-                  DropdownMenuItem<int>(
-                    value: i,
-                    child: Row(
-                      children: [
-                        Icon(_categories[i].icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 12),
-                        Text(
-                          _categories[i].label,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: theme.colorScheme.onSurface,
-                            fontFamily: 'Inter',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
+        child: Row(
+          children: [
+            Icon(meta.icon,
+                size: 16,
+                color: selected
+                    ? theme.colorScheme.onPrimary
+                    : theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Text(
+              meta.label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: selected
+                    ? theme.colorScheme.onPrimary
+                    : theme.colorScheme.onSurface,
+              ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
 
-// Label + icon pair for one settings category.
+// Label + icon + accent colour for one settings category.
 class _CategoryMeta {
   final String label;
   final IconData icon;
-  const _CategoryMeta(this.label, this.icon);
+  final Color color;
+  const _CategoryMeta(this.label, this.icon, this.color);
 }

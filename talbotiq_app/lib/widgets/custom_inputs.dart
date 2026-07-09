@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
-import '../core/constants/colors.dart';
 
 class CustomInputField extends StatelessWidget {
   final String label;
@@ -174,10 +173,10 @@ class InputButtonDecorator extends StatelessWidget {
       decoration: BoxDecoration(
         color: theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surfaceVariant,
         border: Border.all(
-          color: theme.colorScheme.outline.withOpacity(0.2),
+          color: theme.colorScheme.outline.withOpacity(0.12),
           width: 1,
         ),
-        borderRadius: BorderRadius.circular(12), // Matches input borders
+        borderRadius: BorderRadius.circular(16), // Matches input borders (16px)
       ),
       alignment: Alignment.center,
       child: child,

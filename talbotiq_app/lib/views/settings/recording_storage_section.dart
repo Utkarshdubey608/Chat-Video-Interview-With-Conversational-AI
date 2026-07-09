@@ -7,6 +7,7 @@ import '../../providers/app_store.dart';
 import '../../core/services/recording_service.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
+import '../../widgets/apple_ui.dart';
 
 /// Settings category: cloud recording (Tavus S3 destination) plus the on-device
 /// recording library. S3 fields are part of the session config; the local
@@ -181,22 +182,12 @@ class _RecordingStorageSectionState extends State<RecordingStorageSection> {
 
   // Cloud recording: enable toggle + S3 destination fields.
   Widget _buildCloudCard() {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Cloud Recording (S3)',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'Save the full session video to your own AWS S3 bucket',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 8),
+    return AppleSectionCard(
+      title: 'Cloud Recording (S3)',
+      subtitle: 'Save the full session video to your own AWS S3 bucket',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             CustomToggle(
               label: 'Enable Recording',
               description: 'Record the session and upload it to S3',
@@ -231,8 +222,7 @@ class _RecordingStorageSectionState extends State<RecordingStorageSection> {
                 controller: _roleArnController,
               ),
             ],
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -240,22 +230,12 @@ class _RecordingStorageSectionState extends State<RecordingStorageSection> {
   // On-device recording library: toggle + playable/deletable list.
   Widget _buildLocalCard(AppStore store) {
     final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Interview Recordings',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Audio recordings are stored only on this device.',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 8),
+    return AppleSectionCard(
+      title: 'Interview Recordings',
+      subtitle: 'Audio recordings are stored only on this device.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Save interview recordings'),
@@ -280,8 +260,7 @@ class _RecordingStorageSectionState extends State<RecordingStorageSection> {
               )
             else
               ...store.recordings.map(_buildRecordingRow),
-          ],
-        ),
+        ],
       ),
     );
   }

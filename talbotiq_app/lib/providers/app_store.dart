@@ -1,6 +1,6 @@
 // lib/providers/app_store.dart
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/app_models.dart';
 import '../core/services/tavus_service.dart';
@@ -11,6 +11,9 @@ import '../core/services/gemini_service.dart';
 class AppStore extends ChangeNotifier {
   // SharedPreferences keys
   static const String _kStoreKey = 'talbotiq_store';
+
+  // Theme Mode
+  ThemeMode _themeMode = ThemeMode.dark;
 
   // API credentials
   String _tavusKey = '';
@@ -93,6 +96,7 @@ class AppStore extends ChangeNotifier {
   }
 
   // Getters
+  ThemeMode get themeMode => _themeMode;
   String get tavusKey => _tavusKey;
   String get deepgramKey => _deepgramKey;
   String get humeKey => _humeKey;
@@ -206,6 +210,14 @@ class AppStore extends ChangeNotifier {
     _storeLocalRecordings = enable;
     _saveToPrefs();
     notifyListeners();
+  }
+
+  void setThemeMode(ThemeMode mode) {
+    if (_themeMode != mode) {
+      _themeMode = mode;
+      _saveToPrefs();
+      notifyListeners();
+    }
   }
 
   void setDefaultReplicaId(String id) {
@@ -413,6 +425,15 @@ class AppStore extends ChangeNotifier {
 
       final Map<String, dynamic> data = jsonDecode(rawData);
 
+      if (data['themeMode'] != null) {
+        _themeMode = ThemeMode.values.firstWhere(
+          (e) => e.name == data['themeMode'],
+          orElse: () => ThemeMode.dark,
+        );
+      } else {
+        _themeMode = ThemeMode.dark;
+      }
+
       _tavusKey = data['tavusKey'] ?? '';
       _deepgramKey = data['deepgramKey'] ?? '';
       _humeKey = data['humeKey'] ?? '';
@@ -483,6 +504,7 @@ class AppStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final Map<String, dynamic> data = {
+        'themeMode': _themeMode.name,
         'tavusKey': _tavusKey,
         'deepgramKey': _deepgramKey,
         'humeKey': _humeKey,
@@ -513,6 +535,7 @@ class AppStore extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kStoreKey);
     reset();
+    _themeMode = ThemeMode.dark;
     _tavusKey = '';
     _deepgramKey = '';
     _humeKey = '';
