@@ -26,6 +26,10 @@ class AppStore extends ChangeNotifier {
   String _defaultReplicaId = '';
   String _defaultPersonaId = '';
 
+  // Persisted session configuration (edited in Settings, consumed by Setup at
+  // launch). Holds everything except the per-session candidate name.
+  DraftForm _sessionConfig = DraftForm.defaults();
+
   // Active Session
   TavusConversation? _currentConversation;
   List<String> _questions = [
@@ -100,6 +104,8 @@ class AppStore extends ChangeNotifier {
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
+
+  DraftForm get sessionConfig => _sessionConfig;
 
   TavusConversation? get currentConversation => _currentConversation;
   List<String> get questions => _questions;
@@ -210,6 +216,14 @@ class AppStore extends ChangeNotifier {
 
   void setDefaultPersonaId(String id) {
     _defaultPersonaId = id;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  // Persists the full session configuration. Each settings section merges its
+  // own fields via DraftForm.copyWith before calling this.
+  void setSessionConfig(DraftForm config) {
+    _sessionConfig = config;
     _saveToPrefs();
     notifyListeners();
   }
@@ -412,6 +426,16 @@ class AppStore extends ChangeNotifier {
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
       _defaultPersonaId = data['defaultPersonaId'] ?? '';
 
+      // Restore saved session config, else seed it with the default replica/persona.
+      if (data['sessionConfig'] != null) {
+        _sessionConfig = DraftForm.fromJson(data['sessionConfig']);
+      } else {
+        _sessionConfig = DraftForm.defaults().copyWith(
+          replicaId: _defaultReplicaId,
+          personaId: _defaultPersonaId,
+        );
+      }
+
       if (data['questions'] != null) {
         _questions = List<String>.from(data['questions']);
       }
@@ -469,6 +493,7 @@ class AppStore extends ChangeNotifier {
         'webhookUrl': _webhookUrl,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
+        'sessionConfig': _sessionConfig.toJson(),
         'storeLocalRecordings': _storeLocalRecordings,
         'questions': _questions,
         'drafts': _drafts.map((d) => d.toJson()).toList(),
@@ -498,6 +523,7 @@ class AppStore extends ChangeNotifier {
     _webhookUrl = '';
     _defaultReplicaId = '';
     _defaultPersonaId = '';
+    _sessionConfig = DraftForm.defaults();
     _questions = [
       'Tell me about yourself and your background.',
       'Describe a challenging problem you solved recently.',

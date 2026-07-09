@@ -1,14 +1,17 @@
 // lib/views/setup_page.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../core/constants/colors.dart';
 import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
 import '../widgets/custom_buttons.dart';
 import '../widgets/custom_inputs.dart';
-import '../widgets/response_widgets.dart';
+import 'setup/launch_payload.dart';
 
+/// Meeting kickoff page. Kept intentionally minimal: pick the avatar
+/// (replica/persona) and launch. Everything else (prompt, greeting, session
+/// properties, questions, storage) is configured on the Settings page and read
+/// from [AppStore.sessionConfig] at launch time.
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
 
@@ -17,37 +20,16 @@ class SetupPage extends StatefulWidget {
 }
 
 class _SetupPageState extends State<SetupPage> {
-  // Form controllers
+  // Working state for the avatar selection on this page.
   final _replicaIdController = TextEditingController();
-  final _personaIdController = TextEditingController();
-  final _convNameController = TextEditingController();
-  final _contextController = TextEditingController();
-  final _greetingController = TextEditingController();
-  final _callbackUrlController = TextEditingController();
+  String _personaId = '';
 
-  // S3 storage
-  final _bucketController = TextEditingController();
-  final _regionController = TextEditingController();
-  final _roleArnController = TextEditingController();
-
-  // Session Properties
-  String _selectedLanguage = 'English';
-  String _selectedPipelineMode = 'full';
-  double _maxCallDuration = 900.0;
-  int _participantLeftTimeout = 60;
-  int _participantAbsentTimeout = 300;
-  bool _enableRecording = false;
-  bool _enableTranscription = true;
-  bool _applyConversationOverride = false;
-  bool _applyGreenscreen = false;
-  final _backgroundUrlController = TextEditingController();
-
-  // Replicas & Personas dropdown options
+  // Replicas & Personas dropdown options.
   List<TavusReplica> _replicas = [];
   List<TavusPersona> _personas = [];
   bool _isLaunching = false;
 
-  // Loading state for replicas/personas fetch
+  // Loading state for replicas/personas fetch.
   bool _isLoadingTavus = false;
   String? _tavusLoadError;
 
@@ -55,36 +37,25 @@ class _SetupPageState extends State<SetupPage> {
   void initState() {
     super.initState();
     final store = Provider.of<AppStore>(context, listen: false);
-    _replicaIdController.text = store.defaultReplicaId;
-    _personaIdController.text = store.defaultPersonaId;
-    _convNameController.text = 'TalbotIQ Interview';
-    _contextController.text =
-        'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview. Maintain a warm, professional tone.';
-    _greetingController.text = 'Hello, welcome to your TalbotIQ interview.';
+    _replicaIdController.text = store.sessionConfig.replicaId;
+    _personaId = store.sessionConfig.personaId;
     _loadApis();
   }
 
   @override
   void dispose() {
     _replicaIdController.dispose();
-    _personaIdController.dispose();
-    _convNameController.dispose();
-    _contextController.dispose();
-    _greetingController.dispose();
-    _callbackUrlController.dispose();
-    _bucketController.dispose();
-    _regionController.dispose();
-    _roleArnController.dispose();
-    _backgroundUrlController.dispose();
     super.dispose();
   }
 
+  // Fetches the available replicas & personas from Tavus (cached in the store).
   Future<void> _loadApis({bool forceRefresh = false}) async {
     final store = Provider.of<AppStore>(context, listen: false);
     final key = store.tavusKey;
     if (key.isEmpty) {
       setState(() {
-        _tavusLoadError = 'No Tavus API key set. Add it in Settings to load replicas & personas.';
+        _tavusLoadError =
+            'No Tavus API key set. Add it in Settings to load replicas & personas.';
       });
       return;
     }
@@ -132,91 +103,15 @@ class _SetupPageState extends State<SetupPage> {
     }
   }
 
-  // Helper to build the same JSON request preview payload sent to Tavus
-  Map<String, dynamic> _buildPayload(String candidateName) {
-    final store = Provider.of<AppStore>(context, listen: false);
-    final validQs = store.questions.where((q) => q.trim().isNotEmpty).toList();
-    
-    // Numbered questions list
-    String numbered = '';
-    for (int i = 0; i < validQs.length; i++) {
-      numbered += '${i + 1}. ${validQs[i]}\n';
-    }
-
-    final systemPrompt = _contextController.text.trim().isNotEmpty
-        ? _contextController.text.trim()
-        : 'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview with $candidateName. Maintain a warm, professional tone.';
-
-    final finalContext = '''
-$systemPrompt
-
-INTERVIEW SCRIPT — STRICT RULES:
-- Ask ONLY the questions listed below, exactly as written, in this exact order.
-- Ask one question at a time and wait for $candidateName to fully finish answering before moving to the next.
-- Do NOT invent, add, skip, reorder, or rephrase any questions.
-- Do NOT ask any follow-up questions that are not in this list.
-- After the final question, briefly thank $candidateName and end the interview.
-
-QUESTIONS:
-$numbered''';
-
-    final greeting = _greetingController.text.trim().isNotEmpty
-        ? _greetingController.text.trim()
-        : "Hello $candidateName, welcome to your TalbotIQ interview. I'm excited to learn more about you today. Are you ready to begin?";
-
-    final Map<String, dynamic> body = {
-      'replica_id': _replicaIdController.text.trim(),
-      'conversation_name': 'TalbotIQ — $candidateName',
-      'conversational_context': finalContext,
-      'custom_greeting': greeting,
-    };
-
-    if (_personaIdController.text.trim().isNotEmpty) {
-      body['persona_id'] = _personaIdController.text.trim();
-    }
-    if (_callbackUrlController.text.trim().isNotEmpty) {
-      body['callback_url'] = _callbackUrlController.text.trim();
-    }
-
-    // Properties
-    final Map<String, dynamic> props = {
-      'max_call_duration': _maxCallDuration.round(),
-      'participant_left_timeout': _participantLeftTimeout,
-      'enable_recording': _enableRecording,
-      'enable_transcription': _enableTranscription,
-    };
-
-    if (_selectedLanguage != 'English') {
-      props['language'] = _selectedLanguage;
-    }
-    if (_participantAbsentTimeout != 300) {
-      props['participant_absent_timeout'] = _participantAbsentTimeout;
-    }
-    if (_applyConversationOverride) {
-      props['apply_conversation_override'] = true;
-    }
-    if (_applyGreenscreen) {
-      props['apply_greenscreen'] = true;
-      if (_backgroundUrlController.text.trim().isNotEmpty) {
-        props['background_url'] = _backgroundUrlController.text.trim();
-      }
-    }
-    if (_enableRecording) {
-      if (_bucketController.text.trim().isNotEmpty) {
-        props['recording_s3_bucket_name'] = _bucketController.text.trim();
-      }
-      if (_regionController.text.trim().isNotEmpty) {
-        props['recording_s3_bucket_region'] = _regionController.text.trim();
-      }
-      if (_roleArnController.text.trim().isNotEmpty) {
-        props['aws_assume_role_arn'] = _roleArnController.text.trim();
-      }
-    }
-
-    body['properties'] = props;
-    return body;
+  // Merges the current avatar selection into the persisted session config.
+  DraftForm _currentConfig(AppStore store) {
+    return store.sessionConfig.copyWith(
+      replicaId: _replicaIdController.text.trim(),
+      personaId: _personaId.trim(),
+    );
   }
 
+  // Clears the previous session's Hume/transcript/metric state before a launch.
   void _resetHumeState(AppStore store) {
     store.setHumeJobId(null);
     store.setHumeJobStatus(null);
@@ -228,6 +123,7 @@ $numbered''';
     store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
   }
 
+  // Validates input, creates the Tavus conversation and navigates to interview.
   Future<void> _confirmLaunch(String candidateName) async {
     if (candidateName.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -246,10 +142,18 @@ $numbered''';
     setState(() => _isLaunching = true);
     try {
       final store = Provider.of<AppStore>(context, listen: false);
-      final payload = _buildPayload(candidateName);
-      
+      final config = _currentConfig(store);
+      // Persist the chosen avatar so Settings & drafts stay in sync.
+      store.setSessionConfig(config);
+
+      final payload = buildConversationPayload(
+        config: config,
+        questions: store.questions,
+        candidateName: candidateName,
+      );
+
       final conv = await tavusService.createConversation(payload);
-      
+
       _resetHumeState(store);
       store.setCurrentConversation(conv);
       store.setInterviewActive(true);
@@ -270,6 +174,7 @@ $numbered''';
     }
   }
 
+  // Prompts for the candidate name, then launches the interview.
   void _showLaunchDialog() {
     final textController = TextEditingController();
     showDialog(
@@ -313,6 +218,7 @@ $numbered''';
     );
   }
 
+  // Saves the current session config + questions as a named, reloadable draft.
   void _showSaveDraftDialog() {
     final textController = TextEditingController();
     showDialog(
@@ -347,31 +253,9 @@ $numbered''';
               onPressed: () {
                 final name = textController.text;
                 if (name.trim().isEmpty) return;
-                
-                final store = Provider.of<AppStore>(context, listen: false);
-                final form = DraftForm(
-                  replicaId: _replicaIdController.text,
-                  personaId: _personaIdController.text,
-                  conversationName: _convNameController.text,
-                  conversationalContext: _contextController.text,
-                  customGreeting: _greetingController.text,
-                  callbackUrl: _callbackUrlController.text,
-                  maxCallDuration: _maxCallDuration.round(),
-                  participantLeftTimeout: _participantLeftTimeout,
-                  participantAbsentTimeout: _participantAbsentTimeout,
-                  enableRecording: _enableRecording,
-                  enableTranscription: _enableTranscription,
-                  applyConversationOverride: _applyConversationOverride,
-                  applyGreenscreen: _applyGreenscreen,
-                  backgroundUrl: _backgroundUrlController.text,
-                  language: _selectedLanguage,
-                  pipelineMode: _selectedPipelineMode,
-                  recordingS3BucketName: _bucketController.text,
-                  recordingS3BucketRegion: _regionController.text,
-                  awsAssumeRoleArn: _roleArnController.text,
-                );
 
-                store.saveDraft(name.trim(), form, store.questions);
+                final store = Provider.of<AppStore>(context, listen: false);
+                store.saveDraft(name.trim(), _currentConfig(store), store.questions);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -387,6 +271,7 @@ $numbered''';
     );
   }
 
+  // Error dialog shown when Tavus rejects the conversation-create request.
   void _showTavusErrorDialog(String message) {
     showDialog(
       context: context,
@@ -403,7 +288,7 @@ $numbered''';
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.error.withOpacity(0.12), 
+                      color: theme.colorScheme.error.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(Icons.error, color: theme.colorScheme.error, size: 20),
@@ -466,32 +351,15 @@ $numbered''';
     );
   }
 
+  // Loads a saved draft into the session config and refreshes the avatar fields.
   void _loadDraft(Draft draft) {
-    final form = draft.form;
-    setState(() {
-      _replicaIdController.text = form.replicaId;
-      _personaIdController.text = form.personaId;
-      _convNameController.text = form.conversationName;
-      _contextController.text = form.conversationalContext;
-      _greetingController.text = form.customGreeting;
-      _callbackUrlController.text = form.callbackUrl;
-      _bucketController.text = form.recordingS3BucketName;
-      _regionController.text = form.recordingS3BucketRegion;
-      _roleArnController.text = form.awsAssumeRoleArn;
-      _selectedLanguage = form.language;
-      _selectedPipelineMode = form.pipelineMode;
-      _maxCallDuration = form.maxCallDuration.toDouble();
-      _participantLeftTimeout = form.participantLeftTimeout;
-      _participantAbsentTimeout = form.participantAbsentTimeout;
-      _enableRecording = form.enableRecording;
-      _enableTranscription = form.enableTranscription;
-      _applyConversationOverride = form.applyConversationOverride;
-      _applyGreenscreen = form.applyGreenscreen;
-      _backgroundUrlController.text = form.backgroundUrl;
-    });
-
     final store = Provider.of<AppStore>(context, listen: false);
+    store.setSessionConfig(draft.form);
     store.setQuestions(draft.questions);
+    setState(() {
+      _replicaIdController.text = draft.form.replicaId;
+      _personaId = draft.form.personaId;
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -501,6 +369,7 @@ $numbered''';
     );
   }
 
+  // Horizontal strip of saved drafts; tapping one loads it.
   Widget _buildSavedDrafts(AppStore store) {
     if (store.drafts.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
@@ -550,8 +419,8 @@ $numbered''';
                                   Text(
                                     draft.name,
                                     style: TextStyle(
-                                      fontSize: 13, 
-                                      fontWeight: FontWeight.bold, 
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
                                       color: theme.colorScheme.onSurface,
                                     ),
                                     maxLines: 1,
@@ -589,7 +458,8 @@ $numbered''';
     );
   }
 
-  Widget _buildTavusConfigCard() {
+  // Avatar picker: replica & persona dropdowns plus a manual replica ID override.
+  Widget _buildAvatarCard() {
     final theme = Theme.of(context);
     final replicaOptions = [
       const DropdownMenuItem<String>(value: '', child: Text('Select a Replica')),
@@ -620,7 +490,7 @@ $numbered''';
               children: [
                 Expanded(
                   child: Text(
-                    'Tavus Configuration',
+                    'Avatar Selection',
                     style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -645,7 +515,7 @@ $numbered''';
             Text(
               _isLoadingTavus
                   ? 'Loading replicas & personas from Tavus…'
-                  : 'Avatar and persona selection for this session',
+                  : 'Pick the AI avatar and persona for this session',
               style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             if (_tavusLoadError != null) ...[
@@ -691,11 +561,9 @@ $numbered''';
                 Expanded(
                   child: CustomSelectDropdown<String>(
                     label: 'Persona',
-                    value: _personas.any((p) => p.personaId == _personaIdController.text)
-                        ? _personaIdController.text
-                        : '',
+                    value: _personas.any((p) => p.personaId == _personaId) ? _personaId : '',
                     items: personaOptions,
-                    onChanged: (val) => setState(() => _personaIdController.text = val ?? ''),
+                    onChanged: (val) => setState(() => _personaId = val ?? ''),
                   ),
                 ),
               ],
@@ -710,317 +578,13 @@ $numbered''';
                   ? '✓ Replica ID: ${_replicaIdController.text}'
                   : '${_replicas.length} replicas found',
             ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Conversation Name',
-              placeholder: 'e.g. Senior Front-End Engineer Screening',
-              controller: _convNameController,
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Conversational Context (System Prompt)',
-              placeholder: 'Type prompt settings…',
-              controller: _contextController,
-              maxLines: 4,
-              hint: 'This prompt drives the Tavus avatar Conversational AI Agent.',
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Custom Greeting',
-              placeholder: 'Hello! I\'m Alex…',
-              controller: _greetingController,
-              hint: 'The very first thing the avatar says when the session starts',
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Callback Webhook URL',
-              placeholder: 'https://api.yourcompany.com/tavus-events',
-              controller: _callbackUrlController,
-            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildQuestionsCard(AppStore store) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Interview Questions',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${store.questions.length} questions configured',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 16),
-
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: store.questions.length,
-              itemBuilder: (context, idx) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withOpacity(0.12), 
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${idx + 1}',
-                          style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: TextEditingController(text: store.questions[idx])
-                            ..selection = TextSelection.collapsed(offset: store.questions[idx].length),
-                          style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-                          decoration: InputDecoration(
-                            hintText: 'Question ${idx + 1}',
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          ),
-                          onChanged: (val) {
-                            final qs = List<String>.from(store.questions);
-                            qs[idx] = val;
-                            store.setQuestions(qs);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
-                        onPressed: () {
-                          final qs = List<String>.from(store.questions);
-                          qs.removeAt(idx);
-                          store.setQuestions(qs);
-                        },
-                        hoverColor: theme.colorScheme.error.withOpacity(0.08),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () {
-                final qs = List<String>.from(store.questions)..add('');
-                store.setQuestions(qs);
-              },
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: theme.colorScheme.outline.withOpacity(0.3)),
-                minimumSize: const Size(double.infinity, 48), // MD3 touch target size
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
-              ),
-              child: Text(
-                '+ Add Question',
-                style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSessionPropertiesCard() {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Session Properties',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'All values map to the Tavus conversation properties object',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Language',
-                    value: _selectedLanguage,
-                    items: [
-                      'English', 'Spanish', 'French', 'German', 'Italian',
-                      'Portuguese', 'Japanese', 'Korean', 'Chinese', 'Hindi', 'Arabic'
-                    ].map((l) => DropdownMenuItem<String>(value: l, child: Text(l))).toList(),
-                    onChanged: (val) => setState(() => _selectedLanguage = val ?? 'English'),
-                  ),
-                ),
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Pipeline Mode',
-                    value: _selectedPipelineMode,
-                    items: const [
-                      DropdownMenuItem(value: 'full', child: Text('Full (audio+video)')),
-                      DropdownMenuItem(value: 'echo', child: Text('Echo (test mode)')),
-                      DropdownMenuItem(value: 'no_audio', child: Text('No Audio')),
-                      DropdownMenuItem(value: 'video_only', child: Text('Video Only')),
-                    ],
-                    onChanged: (val) => setState(() => _selectedPipelineMode = val ?? 'full'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            CustomSlider(
-              label: 'Max Call Duration',
-              min: 60.0,
-              max: 7200.0,
-              divisions: 119,
-              value: _maxCallDuration,
-              onChanged: (val) => setState(() => _maxCallDuration = val),
-              formatValue: (val) => '${(val / 60).round()} mins',
-            ),
-            const SizedBox(height: 16),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Participant Left Timeout (s)',
-                    placeholder: '60',
-                    keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantLeftTimeout = int.tryParse(val) ?? 60,
-                    controller: TextEditingController(text: '$_participantLeftTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantLeftTimeout'.length),
-                  ),
-                ),
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Absent Timeout (s)',
-                    placeholder: '300',
-                    keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantAbsentTimeout = int.tryParse(val) ?? 300,
-                    controller: TextEditingController(text: '$_participantAbsentTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantAbsentTimeout'.length),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
-            const SizedBox(height: 8),
-
-            CustomToggle(
-              label: 'Enable Transcription',
-              description: 'Real-time transcription of candidate speech',
-              checked: _enableTranscription,
-              onChanged: (val) => setState(() => _enableTranscription = val),
-            ),
-            CustomToggle(
-              label: 'Enable Recording',
-              description: 'Save the full session video to storage',
-              checked: _enableRecording,
-              onChanged: (val) => setState(() => _enableRecording = val),
-            ),
-            CustomToggle(
-              label: 'Conversation Override',
-              description: 'Allow text injection prompt updates during call',
-              checked: _applyConversationOverride,
-              onChanged: (val) => setState(() => _applyConversationOverride = val),
-            ),
-            CustomToggle(
-              label: 'Virtual Background',
-              description: 'Replace avatar background image',
-              checked: _applyGreenscreen,
-              onChanged: (val) => setState(() => _applyGreenscreen = val),
-            ),
-            if (_applyGreenscreen) ...[
-              const SizedBox(height: 8),
-              CustomInputField(
-                label: 'Background Image URL',
-                placeholder: 'https://cdn.example.com/office.jpg',
-                controller: _backgroundUrlController,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildS3StorageCard() {
-    if (!_enableRecording) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'S3 Recording Storage',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'Configure AWS S3 bucket details to preserve session recording',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Bucket Name',
-                    placeholder: 'my-talbotiq-bucket',
-                    controller: _bucketController,
-                  ),
-                ),
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Region',
-                    placeholder: 'us-east-1',
-                    controller: _regionController,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'AWS Assume Role ARN',
-              placeholder: 'arn:aws:iam::xxxxxxxxxxxx:role/TavusRole',
-              controller: _roleArnController,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
+  // Lays children in a row on wide screens, stacked column on mobile.
   Widget _buildResponsiveInputRow(BuildContext context, List<Widget> children) {
     final bool isMobile = MediaQuery.of(context).size.width < 600;
     if (isMobile) {
@@ -1052,189 +616,71 @@ $numbered''';
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
-    final payload = _buildPayload('Candidate');
 
     return Scaffold(
       backgroundColor: theme.colorScheme.background,
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 1050;
-
-          final mainForm = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Welcome Hero
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-           
-                  const SizedBox(height: 16),
-                  Text(
-                    'Configure Your',
-                    style: theme.textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.w300, 
-                      color: theme.colorScheme.onSurfaceVariant,
-                      height: 0.95,
-                    ),
-                  ),
-                  Text(
-                    'Interview Session',
-                    style: theme.textTheme.displayMedium?.copyWith(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w700, 
-                      color: theme.colorScheme.onSurface, 
-                      height: 1.0, 
-                      letterSpacing: -1,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Set up your AI avatar, questions, and analysis preferences. Everything is customisable.',
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      CustomButton(
-                        text: 'Launch Session',
-                        onPressed: _showLaunchDialog,
-                        isLoading: _isLaunching,
-                      ),
-                      const SizedBox(width: 12),
-                      CustomButton(
-                        text: 'Save Draft',
-                        variant: ButtonVariant.secondary,
-                        onPressed: _showSaveDraftDialog,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Saved Drafts
-              _buildSavedDrafts(store),
-              const SizedBox(height: 16),
-
-              // Form fields
-              _buildTavusConfigCard(),
-              const SizedBox(height: 16),
-              _buildQuestionsCard(store),
-              const SizedBox(height: 16),
-              _buildSessionPropertiesCard(),
-              const SizedBox(height: 16),
-              _buildS3StorageCard(),
-            ],
-          );
-
-          if (isWide) {
-            return Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: mainForm,
-                    ),
-                  ),
-                  const SizedBox(width: 24),
-                  SizedBox(
-                    width: 380,
-                    child: StickyColumn(
-                      payload: payload,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          } else {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                children: [
-                  mainForm,
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    height: 400,
-                    child: JsonPreviewPane(
-                      data: payload,
-                      title: 'Request Preview',
-                      method: 'POST',
-                      endpoint: '/v2/conversations',
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-        },
-      ),
-    );
-  }
-}
-
-// Side widget helper for Wide Screens
-class StickyColumn extends StatelessWidget {
-  final Map<String, dynamic> payload;
-
-  const StickyColumn({super.key, required this.payload});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 380,
-          child: JsonPreviewPane(
-            data: payload,
-            title: 'Request Preview',
-            method: 'POST',
-            endpoint: '/v2/conversations',
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Center(
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 720),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Welcome Hero
+                const SizedBox(height: 16),
                 Text(
-                  'Quick Reference',
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                  'Kick off your',
+                  style: theme.textTheme.headlineLarge?.copyWith(
+                    fontWeight: FontWeight.w300,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 0.95,
+                  ),
+                ),
+                Text(
+                  'Interview Session',
+                  style: theme.textTheme.displayMedium?.copyWith(
+                    fontSize: 40,
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurface,
+                    height: 1.0,
+                    letterSpacing: -1,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                _buildRefRow(context, 'conversational_context', 'system prompt overrides LLM persona'),
-                _buildRefRow(context, 'custom_greeting', 'the first words spoken by avatar'),
-                _buildRefRow(context, 'greenscreen', 'needs transparent background replica'),
-                _buildRefRow(context, 'callback_url', 'receives conversation event payloads'),
+                Text(
+                  'Pick your AI avatar and launch. Prompt, questions and session '
+                  'properties live in Settings.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    CustomButton(
+                      text: 'Launch Session',
+                      onPressed: _showLaunchDialog,
+                      isLoading: _isLaunching,
+                    ),
+                    const SizedBox(width: 12),
+                    CustomButton(
+                      text: 'Save Draft',
+                      variant: ButtonVariant.secondary,
+                      onPressed: _showSaveDraftDialog,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 24),
+
+                // Saved Drafts
+                _buildSavedDrafts(store),
+                const SizedBox(height: 16),
+
+                // Avatar picker
+                _buildAvatarCard(),
               ],
             ),
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _buildRefRow(BuildContext context, String term, String desc) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            term,
-            style: TextStyle(fontSize: 11, fontFamily: 'Courier', color: theme.colorScheme.secondary, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            desc,
-            style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
-          ),
-        ],
       ),
     );
   }
