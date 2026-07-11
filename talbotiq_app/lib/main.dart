@@ -5,7 +5,7 @@ import 'providers/app_store.dart';
 import 'features/recruiter/store/recruiter_store.dart';
 import 'features/recruiter/services/recruiter_gemini_service.dart';
 import 'core/theme/app_theme.dart';
-import 'views/main_layout.dart';
+import 'views/splash_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,7 +45,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: store.themeMode,
-      home: const MainLayout(),
+      home: const SplashPage(),
     );
   }
 }

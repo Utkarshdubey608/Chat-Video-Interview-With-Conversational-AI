@@ -164,7 +164,7 @@ class MainLayout extends StatelessWidget {
         : [Icons.tune_rounded, Icons.video_call_outlined, Icons.analytics_outlined, Icons.settings_outlined];
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: PreferredSize(
         preferredSize: Size.fromHeight(isMobile ? 64 : 72),
         child: Container(
@@ -262,16 +262,11 @@ class MainLayout extends StatelessWidget {
                     if (store.tavusKey.isEmpty) ...[
                       OutlinedButton(
                         onPressed: () => _goSettings(context, isRecruiter, store, recruiter),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.amber.withOpacity(0.05),
-                          side: BorderSide(color: Colors.amber.withOpacity(0.4)),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
+                       
                         child: Text(
                           isMobile ? 'Key Required' : 'Add API Key →',
                           style: TextStyle(
-                            color: theme.brightness == Brightness.dark ? Colors.amber.shade300 : Colors.amber.shade900,
+                            color: theme.brightness == Brightness.dark ? const Color.fromARGB(255, 236, 111, 111) : const Color.fromARGB(255, 253, 82, 60),
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                           ),

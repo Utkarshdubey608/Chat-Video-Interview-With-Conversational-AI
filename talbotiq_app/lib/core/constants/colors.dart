@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 
 class AppColors {
   // Material Design 3 Restrained Dark Palette - Premium Neutrals
-  static const Color background = Color(0xFF0A0B0E);       // Calming rich dark navy/black
-  static const Color backgroundDarker = Color(0xFF12141C); // Tonal surface 
-  static const Color backgroundBlack = Color(0xFF060709);  // Deepest black for contrast
-  
+  static const Color background = Color(0xFF000000);       // Pitch black app background
+  static const Color backgroundDarker = Color(0xFF0A0B0E); // Tonal surface (inputs / elevated)
+  static const Color backgroundBlack = Color(0xFF000000);  // Deepest black for contrast
+
   // Clean border and cards
-  static const Color cardBg = Color(0xFF161822);           // Premium slate card background
-  static const Color border = Color(0xFF222632);           // Very subtle dark border
+  static const Color cardBg = Color(0xFF0C0D12);           // Darker slate card background
+  static const Color border = Color(0xFF1C1F29);           // Very subtle dark border
   static const Color borderLight = Color(0x14FFFFFF);      // Translucent light border
   
   // Brand accents (Refined Emerald Green & Premium Indigo)
