@@ -23,6 +23,7 @@ class AppTheme {
         surfaceVariant: AppColors.cardBg,
         onSurfaceVariant: AppColors.textMuted,
         outline: AppColors.border,
+        outlineVariant: AppColors.borderLight,
         error: AppColors.danger,
         onError: AppColors.dangerBg,
       ),
@@ -31,20 +32,20 @@ class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12.0),
+          borderRadius: BorderRadius.circular(24.0),
           side: const BorderSide(color: AppColors.border, width: 1.0),
         ),
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
           fontSize: 32,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: AppColors.textLight,
-          letterSpacing: -0.5,
+          letterSpacing: -0.8,
         ),
         headlineMedium: TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: AppColors.textLight,
           letterSpacing: -0.5,
         ),
@@ -52,6 +53,7 @@ class AppTheme {
           fontSize: 20,
           fontWeight: FontWeight.w600,
           color: AppColors.textLight,
+          letterSpacing: -0.2,
         ),
         titleMedium: TextStyle(
           fontSize: 16,
@@ -67,7 +69,7 @@ class AppTheme {
           fontSize: 16,
           fontWeight: FontWeight.normal,
           color: AppColors.textLight,
-          height: 1.5,
+          height: 1.6,
         ),
         bodyMedium: TextStyle(
           fontSize: 14,
@@ -77,13 +79,13 @@ class AppTheme {
         ),
         labelLarge: TextStyle(
           fontSize: 14,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: AppColors.primary,
           letterSpacing: 0.1,
         ),
         labelSmall: TextStyle(
           fontSize: 11,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: AppColors.accent,
           letterSpacing: 0.5,
         ),
@@ -93,22 +95,53 @@ class AppTheme {
         fillColor: AppColors.backgroundDarker,
         hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
         labelStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.border),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.primary, width: 2.0),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.danger),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: AppColors.danger, width: 1.5),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: AppColors.backgroundBlack,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(100),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Inter',
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.textLight,
+          side: const BorderSide(color: AppColors.border, width: 1.2),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(100),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Inter',
+          ),
         ),
       ),
       buttonTheme: ButtonThemeData(
@@ -124,8 +157,9 @@ class AppTheme {
         ),
         titleTextStyle: const TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: AppColors.textLight,
+          letterSpacing: -0.5,
         ),
         contentTextStyle: const TextStyle(
           fontSize: 14,
@@ -141,15 +175,15 @@ class AppTheme {
   }
 
   static ThemeData get lightTheme {
-    const Color lightBackground = Color(0xFFF9FBF7);
+    const Color lightBackground = Color(0xFFF8F9FB);
     const Color lightSurface = Color(0xFFFFFFFF);
-    const Color lightSurfaceVariant = Color(0xFFEDF1EC);
-    const Color lightBorder = Color(0xFFC0C5BF);
-    const Color lightPrimary = Color(0xFF006D44);
+    const Color lightSurfaceVariant = Color(0xFFF1F3F6);
+    const Color lightBorder = Color(0xFFE5E7EB);
+    const Color lightPrimary = Color(0xFF059669); // Radiant modern emerald green
     const Color lightOnPrimary = Colors.white;
-    const Color lightSecondary = Color(0xFF4F6354);
-    const Color lightText = Color(0xFF191C19);
-    const Color lightTextMuted = Color(0xFF707971);
+    const Color lightSecondary = Color(0xFF4F46E5); // Royal indigo
+    const Color lightText = Color(0xFF111827);
+    const Color lightTextMuted = Color(0xFF6B7280);
 
     return ThemeData(
       useMaterial3: true,
@@ -177,20 +211,20 @@ class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12.0),
+          borderRadius: BorderRadius.circular(24.0),
           side: const BorderSide(color: lightBorder, width: 1.0),
         ),
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(
           fontSize: 32,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: lightText,
-          letterSpacing: -0.5,
+          letterSpacing: -0.8,
         ),
         headlineMedium: TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: lightText,
           letterSpacing: -0.5,
         ),
@@ -198,6 +232,7 @@ class AppTheme {
           fontSize: 20,
           fontWeight: FontWeight.w600,
           color: lightText,
+          letterSpacing: -0.2,
         ),
         titleMedium: TextStyle(
           fontSize: 16,
@@ -213,7 +248,7 @@ class AppTheme {
           fontSize: 16,
           fontWeight: FontWeight.normal,
           color: lightText,
-          height: 1.5,
+          height: 1.6,
         ),
         bodyMedium: TextStyle(
           fontSize: 14,
@@ -223,13 +258,13 @@ class AppTheme {
         ),
         labelLarge: TextStyle(
           fontSize: 14,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: lightPrimary,
           letterSpacing: 0.1,
         ),
         labelSmall: TextStyle(
           fontSize: 11,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: lightSecondary,
           letterSpacing: 0.5,
         ),
@@ -239,22 +274,53 @@ class AppTheme {
         fillColor: lightSurfaceVariant,
         hintStyle: const TextStyle(color: lightTextMuted, fontSize: 14),
         labelStyle: const TextStyle(color: lightTextMuted, fontSize: 14),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: lightBorder),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: lightBorder),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: lightPrimary, width: 2.0),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: lightPrimary, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.red),
+          borderRadius: BorderRadius.circular(16),
+          borderSide: const BorderSide(color: Colors.red, width: 1.5),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: lightPrimary,
+          foregroundColor: lightOnPrimary,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(100),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Inter',
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: lightText,
+          side: const BorderSide(color: lightBorder, width: 1.2),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(100),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Inter',
+          ),
         ),
       ),
       buttonTheme: ButtonThemeData(
@@ -270,8 +336,9 @@ class AppTheme {
         ),
         titleTextStyle: const TextStyle(
           fontSize: 24,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
           color: lightText,
+          letterSpacing: -0.5,
         ),
         contentTextStyle: const TextStyle(
           fontSize: 14,

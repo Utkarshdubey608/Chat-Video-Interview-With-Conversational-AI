@@ -97,7 +97,7 @@ class CustomButton extends StatelessWidget {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(100), // M3 stadium pill shape
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: height >= 48 ? 12 : 6),
         ),
         child: childWidget,
       ),

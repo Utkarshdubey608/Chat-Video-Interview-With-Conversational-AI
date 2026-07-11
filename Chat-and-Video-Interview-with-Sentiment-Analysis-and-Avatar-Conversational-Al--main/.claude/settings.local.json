@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Start-Process \"http://localhost:3000\")",
+      "WebFetch(domain:www.figma.com)",
+      "PowerShell(node --version)",
+      "PowerShell(npm --version)",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\components\\\\ui\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\components\\\\layout\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\components\\\\tavus\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\pages\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\services\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\store\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\hooks\")",
+      "PowerShell(New-Item -ItemType Directory -Force -Path \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\src\\\\types\")",
+      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName | ForEach-Object { $_.FullName.Replace\\(\"c:\\\\Users\\\\thoshith.a\\\\Downloads\\\\Virtual\\\\talbotiq-platform\\\\\", \"\"\\) } | Sort-Object)"
+    ]
+  }
+}

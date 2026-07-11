@@ -1,0 +1,595 @@
+// lib/features/recruiter/services/recruiter_gemini_service.dart
+//
+// Gemini calls for the recruiter module, mirroring lib/core/services/
+// gemini_service.dart exactly (raw REST, JSON response mime type, 4-attempt
+// 503/429 backoff, ```json fence-stripping). The key is the app's existing
+// Gemini key (pushed in from AppStore); when absent, scoring falls back to the
+// heuristic in scoring_engine.dart. Currently implements scoreWithGemini for
+// the fixed/timed track; résumé question-generation is a later addition.
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+import '../models/recruiter_models.dart';
+import '../engine/scoring_engine.dart';
+
+/// Clamp helper mirroring the backend's `clampInt`.
+int clampInt(num? v, int min, int max, int fallback) {
+  if (v == null) return fallback;
+  final n = v.round();
+  return n.clamp(min, max);
+}
+
+/// Total question count for a given style, mirroring the backend.
+int resumeQuestionTotal(String style, int technicalCount, int nonTechnicalCount) {
+  if (style == QuestionStyle.mix) return technicalCount + nonTechnicalCount;
+  if (style == QuestionStyle.technical) return technicalCount;
+  return nonTechnicalCount;
+}
+
+// ── Conversational-track DTOs ────────────────────────────────────────────────
+
+/// One interviewer decision in the adaptive conversational track (mirrors the
+/// web backend's `TurnDecision`).
+class TurnDecision {
+  final String message;
+  final String action; // 'next_question' | 'follow_up' | 'end_interview'
+  const TurnDecision({required this.message, required this.action});
+
+  static const String actionNext = 'next_question';
+  static const String actionFollowUp = 'follow_up';
+  static const String actionEnd = 'end_interview';
+}
+
+/// Raw per-primary-question conversation score (keyed by q-index) as returned
+/// by the Gemini conversation scorer.
+class RawConvQuestionScore {
+  final int questionIndex;
+  final Map<String, double> scores; // kpiId → 0-100
+  final String feedback;
+  const RawConvQuestionScore(this.questionIndex, this.scores, this.feedback);
+}
+
+class RawConversationScore {
+  final List<RawConvQuestionScore> perQuestion;
+  final String summary;
+  final List<String> strengths;
+  final List<String> improvements;
+  final String? recommendation;
+  const RawConversationScore({
+    required this.perQuestion,
+    required this.summary,
+    required this.strengths,
+    required this.improvements,
+    this.recommendation,
+  });
+}
+
+class RecruiterGeminiService {
+  String _apiKey = '';
+  final String _model = 'gemini-2.5-flash';
+
+  void setKey(String key) => _apiKey = key;
+  String getKey() => _apiKey;
+  bool get enabled => _apiKey.isNotEmpty;
+
+  /// Generate interview questions from a résumé PDF (sent inline as base64,
+  /// mirroring the web backend — no local PDF parsing). Enforces the exact
+  /// technical/non-technical split for the "mix" style.
+  Future<List<GeneratedInterviewQuestion>> generateQuestionsFromPdf({
+    required String pdfBase64,
+    required String style,
+    required int technicalCount,
+    required int nonTechnicalCount,
+    required String difficulty,
+    String? role,
+  }) async {
+    if (_apiKey.isEmpty) {
+      throw Exception(
+          'No Gemini API key configured. Add one in Settings to generate questions.');
+    }
+    final total = resumeQuestionTotal(style, technicalCount, nonTechnicalCount);
+
+    final styleLine = style == QuestionStyle.technical
+        ? 'Every question must be TECHNICAL — grounded in the specific technologies, tools, projects, and seniority shown in the resume.'
+        : style == QuestionStyle.nonTechnical
+            ? 'Every question must be NON-TECHNICAL (behavioral, situational, culture-fit) — grounded in the candidate\'s actual roles and experience.'
+            : 'Produce EXACTLY $technicalCount technical and $nonTechnicalCount non-technical questions.';
+    final difficultyLine = difficulty == DifficultyChoice.mixed
+        ? 'Use a balanced mix of easy, medium, and hard difficulty.'
+        : 'All questions should be $difficulty difficulty.';
+
+    final prompt = '''
+Read the attached candidate résumé and generate exactly $total interview questions${role != null && role.isNotEmpty ? ' for a $role role' : ''}.
+$styleLine
+$difficultyLine
+Each question MUST be specific to THIS résumé — reference real technologies, projects, or experiences from it. Avoid duplicates and generic filler.
+For each question provide: the question text, its type ("technical" or "non_technical"), a category (e.g. coding, system_design, behavioral, situational, culture_fit), a difficulty (easy|medium|hard), a skillTag (the résumé skill/topic it targets), and a one-sentence rationale for why it fits this candidate.
+
+Respond ONLY with valid JSON (no markdown) in this exact shape:
+{ "questions": [ { "text": "...", "type": "technical"|"non_technical", "category": "...", "difficulty": "easy"|"medium"|"hard", "skillTag": "...", "rationale": "..." } ] }
+''';
+
+    final body = {
+      'systemInstruction': {
+        'parts': [
+          {
+            'text':
+                'You are an expert technical interviewer. You read a candidate résumé and produce sharp, specific interview questions tailored to that exact person. You never produce generic, copy-paste questions, and you never repeat yourself.'
+          }
+        ]
+      },
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
+            {
+              'inlineData': {'mimeType': 'application/pdf', 'data': pdfBase64}
+            },
+            {'text': prompt},
+          ],
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.4,
+        'maxOutputTokens': 8000,
+        'responseMimeType': 'application/json',
+      },
+    };
+
+    final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent?key=$_apiKey');
+
+    http.Response? response;
+    const attempts = 4;
+    for (int i = 0; i < attempts; i++) {
+      try {
+        response = await http.post(url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body));
+        if (response.statusCode == 200) break;
+        if (response.statusCode == 503 || response.statusCode == 429) {
+          await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+          continue;
+        }
+        break;
+      } catch (e) {
+        if (i == attempts - 1) rethrow;
+        await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+      }
+    }
+
+    if (response == null || response.statusCode != 200) {
+      throw Exception(_friendlyError(response?.statusCode, response?.body));
+    }
+
+    final data = jsonDecode(response.body);
+    final rawText =
+        data['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
+    if (rawText == null || rawText.isEmpty) {
+      throw Exception('Gemini returned an empty response.');
+    }
+    final cleaned = rawText
+        .replaceFirst(RegExp(r'^```json\s*'), '')
+        .replaceFirst(RegExp(r'^```\s*'), '')
+        .replaceFirst(RegExp(r'```\s*$'), '')
+        .trim();
+    final decoded = jsonDecode(cleaned) as Map<String, dynamic>;
+    final all = ((decoded['questions'] as List?) ?? [])
+        .map((q) => GeneratedInterviewQuestion.fromJson(q))
+        .toList();
+
+    if (style != QuestionStyle.mix) return all.take(total).toList();
+    // Enforce the exact technical / non-technical split for "mix".
+    final tech = all
+        .where((q) => q.type == 'technical')
+        .take(technicalCount)
+        .toList();
+    final nonTech = all
+        .where((q) => q.type == 'non_technical')
+        .take(nonTechnicalCount)
+        .toList();
+    return [...tech, ...nonTech];
+  }
+
+  String _friendlyError(int? status, String? body) {
+    final msg = (body ?? '').toLowerCase();
+    if (status == 400 && (msg.contains('api key') || msg.contains('api_key'))) {
+      return 'Gemini rejected the API key. Make sure it is a valid Google AI Studio key (they start with "AIza").';
+    }
+    if (status == 429 || msg.contains('quota') || msg.contains('rate')) {
+      return 'Gemini rate limit / quota exceeded. Wait a moment and try again.';
+    }
+    if (msg.contains('safety') || msg.contains('blocked')) {
+      return 'Gemini blocked this request for safety reasons. Try a different résumé.';
+    }
+    return 'Gemini request failed (${status ?? 'no response'}). Please try again.';
+  }
+
+  Future<RawScore> scoreWithGemini(
+      InterviewSession session, InterviewTemplate template) async {
+    if (_apiKey.isEmpty) {
+      throw Exception('Gemini key not set');
+    }
+    final enabledKpis = template.rubric.kpis.where((k) => k.enabled).toList();
+
+    final qBlocks = session.questions.asMap().entries.map((e) {
+      final q = e.value;
+      return '''
+--- QUESTION (id: ${q.id}) ---
+Question: "${q.text}"
+${q.idealAnswerNotes != null ? 'Ideal-answer notes (for your reference only): ${q.idealAnswerNotes}' : ''}
+Candidate answer: ${q.answerText != null && q.answerText!.trim().isNotEmpty ? '"${q.answerText}"' : '(no answer provided)'}
+''';
+    }).join('\n');
+
+    final kpiList =
+        enabledKpis.map((k) => '- ${k.id}: ${k.label} — ${k.description}').join('\n');
+
+    final prompt = '''
+You are an expert technical interviewer scoring a candidate for the role of "${template.role}"${template.seniority != null ? ' (${template.seniority})' : ''}.
+
+Score each answer on every KPI from 0-100. Be fair, evidence-based, and conservative when the answer is thin. If an answer is empty, score it 0.
+
+KPIs (use these exact ids as keys):
+$kpiList
+
+INTERVIEW:
+$qBlocks
+
+Respond ONLY with valid JSON (no markdown, no prose) in this exact shape:
+{
+  "perQuestion": [
+    { "questionId": "<the id above>", "scores": { "<kpiId>": <0-100>, ... }, "feedback": "<1-2 sentences of specific, evidence-based feedback>" }
+  ],
+  "summary": "<3-4 sentence overall assessment>",
+  "recommendation": "strong_yes" | "yes" | "maybe" | "no"
+}
+''';
+
+    final body = {
+      'contents': [
+        {
+          'parts': [
+            {'text': prompt}
+          ]
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.1,
+        'topK': 1,
+        'topP': 0.8,
+        'maxOutputTokens': 8000,
+        'responseMimeType': 'application/json',
+      },
+    };
+
+    final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent?key=$_apiKey');
+
+    http.Response? response;
+    const attempts = 4;
+    for (int i = 0; i < attempts; i++) {
+      try {
+        response = await http.post(url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body));
+        if (response.statusCode == 200) break;
+        if (response.statusCode == 503 || response.statusCode == 429) {
+          await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+          continue;
+        }
+        break;
+      } catch (e) {
+        if (i == attempts - 1) rethrow;
+        await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+      }
+    }
+
+    if (response == null || response.statusCode != 200) {
+      throw Exception(
+          'Gemini scoring error: ${response?.statusCode} - ${response?.body}');
+    }
+
+    final data = jsonDecode(response.body);
+    final rawText =
+        data['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
+    if (rawText == null || rawText.isEmpty) {
+      throw Exception('Gemini returned an empty response.');
+    }
+
+    final cleaned = rawText
+        .replaceFirst(RegExp(r'^```json\s*'), '')
+        .replaceFirst(RegExp(r'^```\s*'), '')
+        .replaceFirst(RegExp(r'```\s*$'), '')
+        .trim();
+    final decoded = jsonDecode(cleaned) as Map<String, dynamic>;
+
+    final perQuestion = <RawQuestionScore>[];
+    for (final p in (decoded['perQuestion'] as List? ?? [])) {
+      final scores = <String, double>{};
+      final rawScores = p['scores'];
+      if (rawScores is Map) {
+        rawScores.forEach((k, v) {
+          if (v is num) scores[k as String] = v.toDouble();
+        });
+      }
+      perQuestion.add(RawQuestionScore(
+        p['questionId'] ?? '',
+        scores,
+        p['feedback'] ?? '',
+      ));
+    }
+
+    return RawScore(
+      perQuestion: perQuestion,
+      summary: decoded['summary'] ?? '',
+      recommendation: decoded['recommendation'],
+    );
+  }
+
+  // ── Conversational (chatbot) track ────────────────────────────────────────
+
+  /// Extract the plain text of a résumé PDF via Gemini (no local PDF parsing).
+  /// Used to ground the adaptive conversational interviewer.
+  Future<String> extractResumeText({required String pdfBase64}) async {
+    if (_apiKey.isEmpty) {
+      throw Exception(
+          'No Gemini API key configured. Add one in Settings to use résumé-grounded interviews.');
+    }
+    final body = {
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
+            {
+              'inlineData': {'mimeType': 'application/pdf', 'data': pdfBase64}
+            },
+            {
+              'text':
+                  'Extract the full plain text of this résumé. Return ONLY the text content — no commentary, no markdown, no headings you invent.'
+            },
+          ],
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.0,
+        'maxOutputTokens': 8000,
+      },
+    };
+    final raw = await _callGemini(body);
+    return raw.trim();
+  }
+
+  /// Produce the next interviewer turn for the adaptive conversational track.
+  /// Mirrors the web backend's `generateAdaptiveTurn` prompt and budgets.
+  Future<TurnDecision> generateAdaptiveTurn({
+    required AdaptiveConfig adaptive,
+    required List<Turn> transcript,
+    required String resumeText,
+    required bool isFirst,
+    required int followBudgetLeft,
+    required int primariesLeft,
+  }) async {
+    if (_apiKey.isEmpty) throw Exception('Gemini key not set');
+    final a = adaptive;
+    final resume = resumeText.length > 14000
+        ? resumeText.substring(0, 14000)
+        : resumeText;
+
+    final style = a.style ?? QuestionStyle.mix;
+    final techN = a.technicalCount ?? (a.numberOfQuestions / 2).ceil();
+    final nonTechN = a.nonTechnicalCount ?? (a.numberOfQuestions / 2).floor();
+    final styleLine = style == QuestionStyle.technical
+        ? 'Ask ONLY technical questions, grounded in the specific technologies, tools, and projects in the résumé.'
+        : style == QuestionStyle.nonTechnical
+            ? 'Ask ONLY non-technical questions (behavioral, situational, culture-fit), grounded in the candidate\'s experience.'
+            : 'Ask a MIX of technical and non-technical questions (about $techN technical and $nonTechN non-technical across the whole interview).';
+
+    final system = [
+      'You are ${a.interviewerTone ?? 'a warm, professional'} interviewer running a ${a.difficulty} interview for a ${a.seniority != null ? '${a.seniority} ' : ''}${a.role} role${a.language != null ? ', conducted in ${a.language}' : ''}.',
+      "You have the candidate's résumé and the conversation so far. Ask ONE question per message, grounded in the résumé and role.",
+      styleLine,
+      a.focusTopics.isNotEmpty
+          ? 'Emphasize these topics when relevant: ${a.focusTopics.join(', ')}.'
+          : '',
+      "Briefly acknowledge the candidate's previous answer, then either ask a sharp FOLLOW-UP that drills into it or move to the NEXT primary question. 1–3 sentences per message. Natural and conversational, but professional.",
+      'Never reveal upcoming questions, the plan, or how many remain. Never ask more than one question at a time.',
+      isFirst
+          ? 'This is the FIRST message: greet the candidate briefly and ask the first primary question. Use action "next_question".'
+          : 'Budget — follow-ups left for the current question: $followBudgetLeft; primary questions left after this one: $primariesLeft. If follow-ups left is 0, do not follow up. You MUST NOT use "end_interview" while any primary questions remain — keep going until primary questions left reaches 0, then close warmly with "end_interview".',
+      !a.allowFollowUps
+          ? 'Follow-ups are DISABLED — always use "next_question" or "end_interview".'
+          : '',
+    ].where((s) => s.isNotEmpty).join('\n');
+
+    final contents = <Map<String, dynamic>>[];
+    if (isFirst) {
+      contents.add({
+        'role': 'user',
+        'parts': [
+          {'text': 'CANDIDATE RÉSUMÉ:\n"""$resume"""\n\nBegin the interview now.'}
+        ],
+      });
+    } else {
+      contents.add({
+        'role': 'user',
+        'parts': [
+          {'text': 'CANDIDATE RÉSUMÉ (context):\n"""$resume"""'}
+        ],
+      });
+      for (final t in transcript) {
+        contents.add({
+          'role': t.role == 'interviewer' ? 'model' : 'user',
+          'parts': [
+            {'text': t.content}
+          ],
+        });
+      }
+    }
+
+    final body = {
+      'systemInstruction': {
+        'parts': [
+          {'text': system}
+        ]
+      },
+      'contents': contents,
+      'generationConfig': {
+        'temperature': 0.6,
+        'maxOutputTokens': 1200,
+        'responseMimeType': 'application/json',
+        'responseSchema': {
+          'type': 'OBJECT',
+          'properties': {
+            'message': {'type': 'STRING'},
+            'action': {
+              'type': 'STRING',
+              'enum': [
+                TurnDecision.actionNext,
+                TurnDecision.actionFollowUp,
+                TurnDecision.actionEnd,
+              ],
+            },
+          },
+          'required': ['message', 'action'],
+        },
+      },
+    };
+
+    final raw = await _callGemini(body);
+    final decoded = jsonDecode(_stripFences(raw)) as Map<String, dynamic>;
+    final msg = (decoded['message'] as String?)?.trim();
+    final action = decoded['action'] as String?;
+    return TurnDecision(
+      message: (msg == null || msg.isEmpty)
+          ? 'Thanks — could you tell me more about that?'
+          : msg,
+      action: action ?? TurnDecision.actionNext,
+    );
+  }
+
+  /// Score a conversational transcript (mirrors the web `scoreConversationWithGemini`).
+  Future<RawConversationScore> scoreConversationWithGemini(
+      InterviewSession session, InterviewTemplate template) async {
+    if (_apiKey.isEmpty) throw Exception('Gemini key not set');
+    final kpis = template.rubric.kpis.where((k) => k.enabled).toList();
+    final rubricText =
+        kpis.map((k) => '- ${k.id} (${k.label}): ${k.description}').join('\n');
+    final transcriptText = (session.transcript ?? [])
+        .map((t) =>
+            '${t.role == 'interviewer' ? 'INTERVIEWER' : 'CANDIDATE'}'
+            '${t.questionIndex != null ? ' [q${t.questionIndex}${t.isFollowUp == true ? ' · follow-up' : ''}]' : ''}: ${t.content}')
+        .join('\n');
+
+    final prompt =
+        '''You are a fair but rigorous interview scorer. Below is a conversational interview transcript. Score each PRIMARY question (identified by its q-index) on a 0–100 scale against the rubric KPIs, judging only what the candidate actually said (fold any follow-ups into that question's score).
+Use ONLY these KPI ids: ${kpis.map((k) => k.id).join(', ')}.
+
+RUBRIC:
+$rubricText
+
+TRANSCRIPT:
+$transcriptText
+
+For each primary question return its questionIndex, a score (0–100) for every KPI id, and one or two sentences of specific feedback. Then give an overall summary, 2–4 concise strengths, 2–4 concise improvement areas, and a recommendation that is exactly one of: strong_yes, yes, maybe, no.
+
+Respond ONLY with valid JSON (no markdown) in this exact shape:
+{ "perQuestion": [ { "questionIndex": <int>, "scores": [ { "kpiId": "<id>", "score": <0-100> } ], "feedback": "..." } ], "summary": "...", "strengths": ["..."], "improvements": ["..."], "recommendation": "strong_yes"|"yes"|"maybe"|"no" }''';
+
+    final body = {
+      'contents': [
+        {
+          'parts': [
+            {'text': prompt}
+          ]
+        }
+      ],
+      'generationConfig': {
+        'temperature': 0.1,
+        'topK': 1,
+        'topP': 0.8,
+        'maxOutputTokens': 8000,
+        'responseMimeType': 'application/json',
+      },
+    };
+
+    final raw = await _callGemini(body);
+    final decoded = jsonDecode(_stripFences(raw)) as Map<String, dynamic>;
+
+    final perQuestion = <RawConvQuestionScore>[];
+    for (final p in (decoded['perQuestion'] as List? ?? [])) {
+      final scores = <String, double>{};
+      final rawScores = p['scores'];
+      if (rawScores is List) {
+        for (final s in rawScores) {
+          if (s is Map && s['kpiId'] != null && s['score'] is num) {
+            scores[s['kpiId'] as String] = (s['score'] as num).toDouble();
+          }
+        }
+      } else if (rawScores is Map) {
+        rawScores.forEach((k, v) {
+          if (v is num) scores[k as String] = v.toDouble();
+        });
+      }
+      perQuestion.add(RawConvQuestionScore(
+        (p['questionIndex'] as num?)?.toInt() ?? 0,
+        scores,
+        p['feedback'] ?? '',
+      ));
+    }
+
+    List<String> strList(dynamic v) =>
+        v is List ? v.map((e) => e.toString()).toList() : const [];
+
+    return RawConversationScore(
+      perQuestion: perQuestion,
+      summary: decoded['summary'] ?? '',
+      strengths: strList(decoded['strengths']),
+      improvements: strList(decoded['improvements']),
+      recommendation: decoded['recommendation'],
+    );
+  }
+
+  // ── Shared REST plumbing (4-attempt 503/429 backoff, matching this file) ──
+  String _stripFences(String raw) => raw
+      .replaceFirst(RegExp(r'^```json\s*'), '')
+      .replaceFirst(RegExp(r'^```\s*'), '')
+      .replaceFirst(RegExp(r'```\s*$'), '')
+      .trim();
+
+  Future<String> _callGemini(Map<String, dynamic> body) async {
+    final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent?key=$_apiKey');
+    http.Response? response;
+    const attempts = 4;
+    for (int i = 0; i < attempts; i++) {
+      try {
+        response = await http.post(url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body));
+        if (response.statusCode == 200) break;
+        if (response.statusCode == 503 || response.statusCode == 429) {
+          await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+          continue;
+        }
+        break;
+      } catch (e) {
+        if (i == attempts - 1) rethrow;
+        await Future.delayed(Duration(milliseconds: 800 * (i + 1)));
+      }
+    }
+    if (response == null || response.statusCode != 200) {
+      throw Exception(_friendlyError(response?.statusCode, response?.body));
+    }
+    final data = jsonDecode(response.body);
+    final rawText =
+        data['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
+    if (rawText == null || rawText.isEmpty) {
+      throw Exception('Gemini returned an empty response.');
+    }
+    return rawText;
+  }
+}
+
+final recruiterGeminiService = RecruiterGeminiService();

@@ -1,6 +1,6 @@
 // lib/providers/app_store.dart
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/app_models.dart';
 import '../core/services/tavus_service.dart';
@@ -11,6 +11,9 @@ import '../core/services/gemini_service.dart';
 class AppStore extends ChangeNotifier {
   // SharedPreferences keys
   static const String _kStoreKey = 'talbotiq_store';
+
+  // Theme Mode
+  ThemeMode _themeMode = ThemeMode.dark;
 
   // API credentials
   String _tavusKey = '';
@@ -25,6 +28,10 @@ class AppStore extends ChangeNotifier {
   // Defaults
   String _defaultReplicaId = '';
   String _defaultPersonaId = '';
+
+  // Persisted session configuration (edited in Settings, consumed by Setup at
+  // launch). Holds everything except the per-session candidate name.
+  DraftForm _sessionConfig = DraftForm.defaults();
 
   // Active Session
   TavusConversation? _currentConversation;
@@ -89,6 +96,7 @@ class AppStore extends ChangeNotifier {
   }
 
   // Getters
+  ThemeMode get themeMode => _themeMode;
   String get tavusKey => _tavusKey;
   String get deepgramKey => _deepgramKey;
   String get humeKey => _humeKey;
@@ -100,6 +108,8 @@ class AppStore extends ChangeNotifier {
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
+
+  DraftForm get sessionConfig => _sessionConfig;
 
   TavusConversation? get currentConversation => _currentConversation;
   List<String> get questions => _questions;
@@ -202,6 +212,14 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setThemeMode(ThemeMode mode) {
+    if (_themeMode != mode) {
+      _themeMode = mode;
+      _saveToPrefs();
+      notifyListeners();
+    }
+  }
+
   void setDefaultReplicaId(String id) {
     _defaultReplicaId = id;
     _saveToPrefs();
@@ -210,6 +228,14 @@ class AppStore extends ChangeNotifier {
 
   void setDefaultPersonaId(String id) {
     _defaultPersonaId = id;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  // Persists the full session configuration. Each settings section merges its
+  // own fields via DraftForm.copyWith before calling this.
+  void setSessionConfig(DraftForm config) {
+    _sessionConfig = config;
     _saveToPrefs();
     notifyListeners();
   }
@@ -399,6 +425,15 @@ class AppStore extends ChangeNotifier {
 
       final Map<String, dynamic> data = jsonDecode(rawData);
 
+      if (data['themeMode'] != null) {
+        _themeMode = ThemeMode.values.firstWhere(
+          (e) => e.name == data['themeMode'],
+          orElse: () => ThemeMode.dark,
+        );
+      } else {
+        _themeMode = ThemeMode.dark;
+      }
+
       _tavusKey = data['tavusKey'] ?? '';
       _deepgramKey = data['deepgramKey'] ?? '';
       _humeKey = data['humeKey'] ?? '';
@@ -411,6 +446,16 @@ class AppStore extends ChangeNotifier {
 
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
       _defaultPersonaId = data['defaultPersonaId'] ?? '';
+
+      // Restore saved session config, else seed it with the default replica/persona.
+      if (data['sessionConfig'] != null) {
+        _sessionConfig = DraftForm.fromJson(data['sessionConfig']);
+      } else {
+        _sessionConfig = DraftForm.defaults().copyWith(
+          replicaId: _defaultReplicaId,
+          personaId: _defaultPersonaId,
+        );
+      }
 
       if (data['questions'] != null) {
         _questions = List<String>.from(data['questions']);
@@ -459,6 +504,7 @@ class AppStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final Map<String, dynamic> data = {
+        'themeMode': _themeMode.name,
         'tavusKey': _tavusKey,
         'deepgramKey': _deepgramKey,
         'humeKey': _humeKey,
@@ -469,6 +515,7 @@ class AppStore extends ChangeNotifier {
         'webhookUrl': _webhookUrl,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
+        'sessionConfig': _sessionConfig.toJson(),
         'storeLocalRecordings': _storeLocalRecordings,
         'questions': _questions,
         'drafts': _drafts.map((d) => d.toJson()).toList(),
@@ -488,6 +535,7 @@ class AppStore extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kStoreKey);
     reset();
+    _themeMode = ThemeMode.dark;
     _tavusKey = '';
     _deepgramKey = '';
     _humeKey = '';
@@ -498,6 +546,7 @@ class AppStore extends ChangeNotifier {
     _webhookUrl = '';
     _defaultReplicaId = '';
     _defaultPersonaId = '';
+    _sessionConfig = DraftForm.defaults();
     _questions = [
       'Tell me about yourself and your background.',
       'Describe a challenging problem you solved recently.',
