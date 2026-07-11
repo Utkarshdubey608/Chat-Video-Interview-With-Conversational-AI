@@ -1,30 +1,46 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Lightweight widget smoke tests for the recruiter design-system widgets.
+// (Replaces the stock `flutter create` counter test, which targeted a counter
+// UI this app never had.) These render plugin-free widgets so they stay fast
+// and deterministic in CI.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 
-import 'package:talbotiq/main.dart';
+Widget _host(Widget child) => MaterialApp(
+      theme: ThemeData.dark(),
+      home: Scaffold(body: SingleChildScrollView(child: child)),
+    );
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('RecruiterPageHeader renders its title, kicker and action',
+      (tester) async {
+    await tester.pumpWidget(_host(const RecruiterPageHeader(
+      kicker: 'AI Interview',
+      title: 'Sessions',
+      subtitle: 'Create and review candidate interviews.',
+      action: Icon(Icons.add),
+    )));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('AI INTERVIEW'), findsOneWidget); // kicker upper-cased
+    expect(find.text('Sessions'), findsOneWidget);
+    expect(find.byIcon(Icons.add), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('RecruiterEmptyState renders title + description', (tester) async {
+    await tester.pumpWidget(_host(const RecruiterEmptyState(
+      icon: Icons.mic_none,
+      title: 'No sessions yet',
+      description: 'Create a session to run an interview on this device.',
+    )));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('No sessions yet'), findsOneWidget);
+    expect(find.byIcon(Icons.mic_none), findsOneWidget);
+  });
+
+  testWidgets('RecruiterBadge renders its label', (tester) async {
+    await tester.pumpWidget(
+        _host(const RecruiterBadge(text: 'Completed', color: Colors.green)));
+    expect(find.text('Completed'), findsOneWidget);
   });
 }

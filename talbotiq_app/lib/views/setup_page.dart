@@ -1,14 +1,20 @@
 // lib/views/setup_page.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../core/constants/colors.dart';
 import '../models/app_models.dart';
 import '../providers/app_store.dart';
 import '../core/services/tavus_service.dart';
 import '../widgets/custom_buttons.dart';
 import '../widgets/custom_inputs.dart';
-import '../widgets/response_widgets.dart';
+import '../widgets/apple_ui.dart';
+import 'setup/launch_payload.dart';
+import 'setup/avatar_picker.dart';
+import 'setup/welcome_marquee.dart';
 
+/// Meeting kickoff page. Kept intentionally minimal and Apple-clean: pick the
+/// avatar (replica/persona) and launch. Everything else (prompt, greeting,
+/// session properties, questions, storage) is configured on the Settings page
+/// and read from [AppStore.sessionConfig] at launch time.
 class SetupPage extends StatefulWidget {
   const SetupPage({super.key});
 
@@ -17,37 +23,16 @@ class SetupPage extends StatefulWidget {
 }
 
 class _SetupPageState extends State<SetupPage> {
-  // Form controllers
-  final _replicaIdController = TextEditingController();
-  final _personaIdController = TextEditingController();
-  final _convNameController = TextEditingController();
-  final _contextController = TextEditingController();
-  final _greetingController = TextEditingController();
-  final _callbackUrlController = TextEditingController();
+  // Working state for the avatar selection on this page.
+  String _replicaId = '';
+  String _personaId = '';
 
-  // S3 storage
-  final _bucketController = TextEditingController();
-  final _regionController = TextEditingController();
-  final _roleArnController = TextEditingController();
-
-  // Session Properties
-  String _selectedLanguage = 'English';
-  String _selectedPipelineMode = 'full';
-  double _maxCallDuration = 900.0;
-  int _participantLeftTimeout = 60;
-  int _participantAbsentTimeout = 300;
-  bool _enableRecording = false;
-  bool _enableTranscription = true;
-  bool _applyConversationOverride = false;
-  bool _applyGreenscreen = false;
-  final _backgroundUrlController = TextEditingController();
-
-  // Replicas & Personas dropdown options
+  // Replicas & Personas dropdown options.
   List<TavusReplica> _replicas = [];
   List<TavusPersona> _personas = [];
   bool _isLaunching = false;
 
-  // Loading state for replicas/personas fetch
+  // Loading state for replicas/personas fetch.
   bool _isLoadingTavus = false;
   String? _tavusLoadError;
 
@@ -55,36 +40,19 @@ class _SetupPageState extends State<SetupPage> {
   void initState() {
     super.initState();
     final store = Provider.of<AppStore>(context, listen: false);
-    _replicaIdController.text = store.defaultReplicaId;
-    _personaIdController.text = store.defaultPersonaId;
-    _convNameController.text = 'TalbotIQ Interview';
-    _contextController.text =
-        'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview. Maintain a warm, professional tone.';
-    _greetingController.text = 'Hello, welcome to your TalbotIQ interview.';
+    _replicaId = store.sessionConfig.replicaId;
+    _personaId = store.sessionConfig.personaId;
     _loadApis();
   }
 
-  @override
-  void dispose() {
-    _replicaIdController.dispose();
-    _personaIdController.dispose();
-    _convNameController.dispose();
-    _contextController.dispose();
-    _greetingController.dispose();
-    _callbackUrlController.dispose();
-    _bucketController.dispose();
-    _regionController.dispose();
-    _roleArnController.dispose();
-    _backgroundUrlController.dispose();
-    super.dispose();
-  }
-
+  // Fetches the available replicas & personas from Tavus (cached in the store).
   Future<void> _loadApis({bool forceRefresh = false}) async {
     final store = Provider.of<AppStore>(context, listen: false);
     final key = store.tavusKey;
     if (key.isEmpty) {
       setState(() {
-        _tavusLoadError = 'No Tavus API key set. Add it in Settings to load replicas & personas.';
+        _tavusLoadError =
+            'No Tavus API key set. Add it in Settings to load replicas & personas.';
       });
       return;
     }
@@ -132,91 +100,22 @@ class _SetupPageState extends State<SetupPage> {
     }
   }
 
-  // Helper to build the same JSON request preview payload sent to Tavus
-  Map<String, dynamic> _buildPayload(String candidateName) {
-    final store = Provider.of<AppStore>(context, listen: false);
-    final validQs = store.questions.where((q) => q.trim().isNotEmpty).toList();
-    
-    // Numbered questions list
-    String numbered = '';
-    for (int i = 0; i < validQs.length; i++) {
-      numbered += '${i + 1}. ${validQs[i]}\n';
-    }
-
-    final systemPrompt = _contextController.text.trim().isNotEmpty
-        ? _contextController.text.trim()
-        : 'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview with $candidateName. Maintain a warm, professional tone.';
-
-    final finalContext = '''
-$systemPrompt
-
-INTERVIEW SCRIPT — STRICT RULES:
-- Ask ONLY the questions listed below, exactly as written, in this exact order.
-- Ask one question at a time and wait for $candidateName to fully finish answering before moving to the next.
-- Do NOT invent, add, skip, reorder, or rephrase any questions.
-- Do NOT ask any follow-up questions that are not in this list.
-- After the final question, briefly thank $candidateName and end the interview.
-
-QUESTIONS:
-$numbered''';
-
-    final greeting = _greetingController.text.trim().isNotEmpty
-        ? _greetingController.text.trim()
-        : "Hello $candidateName, welcome to your TalbotIQ interview. I'm excited to learn more about you today. Are you ready to begin?";
-
-    final Map<String, dynamic> body = {
-      'replica_id': _replicaIdController.text.trim(),
-      'conversation_name': 'TalbotIQ — $candidateName',
-      'conversational_context': finalContext,
-      'custom_greeting': greeting,
-    };
-
-    if (_personaIdController.text.trim().isNotEmpty) {
-      body['persona_id'] = _personaIdController.text.trim();
-    }
-    if (_callbackUrlController.text.trim().isNotEmpty) {
-      body['callback_url'] = _callbackUrlController.text.trim();
-    }
-
-    // Properties
-    final Map<String, dynamic> props = {
-      'max_call_duration': _maxCallDuration.round(),
-      'participant_left_timeout': _participantLeftTimeout,
-      'enable_recording': _enableRecording,
-      'enable_transcription': _enableTranscription,
-    };
-
-    if (_selectedLanguage != 'English') {
-      props['language'] = _selectedLanguage;
-    }
-    if (_participantAbsentTimeout != 300) {
-      props['participant_absent_timeout'] = _participantAbsentTimeout;
-    }
-    if (_applyConversationOverride) {
-      props['apply_conversation_override'] = true;
-    }
-    if (_applyGreenscreen) {
-      props['apply_greenscreen'] = true;
-      if (_backgroundUrlController.text.trim().isNotEmpty) {
-        props['background_url'] = _backgroundUrlController.text.trim();
-      }
-    }
-    if (_enableRecording) {
-      if (_bucketController.text.trim().isNotEmpty) {
-        props['recording_s3_bucket_name'] = _bucketController.text.trim();
-      }
-      if (_regionController.text.trim().isNotEmpty) {
-        props['recording_s3_bucket_region'] = _regionController.text.trim();
-      }
-      if (_roleArnController.text.trim().isNotEmpty) {
-        props['aws_assume_role_arn'] = _roleArnController.text.trim();
-      }
-    }
-
-    body['properties'] = props;
-    return body;
+  // Merges the current avatar selection into the persisted session config.
+  DraftForm _currentConfig(AppStore store) {
+    return store.sessionConfig.copyWith(
+      replicaId: _replicaId.trim(),
+      personaId: _personaId.trim(),
+    );
   }
 
+  // Human-readable label for the currently selected persona.
+  String get _personaLabel {
+    if (_personaId.isEmpty) return 'None';
+    final match = _personas.where((p) => p.personaId == _personaId);
+    return match.isNotEmpty ? match.first.personaName : _personaId;
+  }
+
+  // Clears the previous session's Hume/transcript/metric state before a launch.
   void _resetHumeState(AppStore store) {
     store.setHumeJobId(null);
     store.setHumeJobStatus(null);
@@ -228,6 +127,7 @@ $numbered''';
     store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
   }
 
+  // Validates input, creates the Tavus conversation and navigates to interview.
   Future<void> _confirmLaunch(String candidateName) async {
     if (candidateName.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -236,7 +136,7 @@ $numbered''';
       return;
     }
 
-    if (_replicaIdController.text.trim().isEmpty) {
+    if (_replicaId.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Select or enter a Replica ID to start a session'), backgroundColor: Colors.red),
       );
@@ -246,10 +146,18 @@ $numbered''';
     setState(() => _isLaunching = true);
     try {
       final store = Provider.of<AppStore>(context, listen: false);
-      final payload = _buildPayload(candidateName);
-      
+      final config = _currentConfig(store);
+      // Persist the chosen avatar so Settings & drafts stay in sync.
+      store.setSessionConfig(config);
+
+      final payload = buildConversationPayload(
+        config: config,
+        questions: store.questions,
+        candidateName: candidateName,
+      );
+
       final conv = await tavusService.createConversation(payload);
-      
+
       _resetHumeState(store);
       store.setCurrentConversation(conv);
       store.setInterviewActive(true);
@@ -270,6 +178,7 @@ $numbered''';
     }
   }
 
+  // Prompts for the candidate name, then launches the interview.
   void _showLaunchDialog() {
     final textController = TextEditingController();
     showDialog(
@@ -313,6 +222,7 @@ $numbered''';
     );
   }
 
+  // Saves the current session config + questions as a named, reloadable draft.
   void _showSaveDraftDialog() {
     final textController = TextEditingController();
     showDialog(
@@ -347,31 +257,9 @@ $numbered''';
               onPressed: () {
                 final name = textController.text;
                 if (name.trim().isEmpty) return;
-                
-                final store = Provider.of<AppStore>(context, listen: false);
-                final form = DraftForm(
-                  replicaId: _replicaIdController.text,
-                  personaId: _personaIdController.text,
-                  conversationName: _convNameController.text,
-                  conversationalContext: _contextController.text,
-                  customGreeting: _greetingController.text,
-                  callbackUrl: _callbackUrlController.text,
-                  maxCallDuration: _maxCallDuration.round(),
-                  participantLeftTimeout: _participantLeftTimeout,
-                  participantAbsentTimeout: _participantAbsentTimeout,
-                  enableRecording: _enableRecording,
-                  enableTranscription: _enableTranscription,
-                  applyConversationOverride: _applyConversationOverride,
-                  applyGreenscreen: _applyGreenscreen,
-                  backgroundUrl: _backgroundUrlController.text,
-                  language: _selectedLanguage,
-                  pipelineMode: _selectedPipelineMode,
-                  recordingS3BucketName: _bucketController.text,
-                  recordingS3BucketRegion: _regionController.text,
-                  awsAssumeRoleArn: _roleArnController.text,
-                );
 
-                store.saveDraft(name.trim(), form, store.questions);
+                final store = Provider.of<AppStore>(context, listen: false);
+                store.saveDraft(name.trim(), _currentConfig(store), store.questions);
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -387,6 +275,7 @@ $numbered''';
     );
   }
 
+  // Error dialog shown when Tavus rejects the conversation-create request.
   void _showTavusErrorDialog(String message) {
     showDialog(
       context: context,
@@ -403,7 +292,7 @@ $numbered''';
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.error.withOpacity(0.12), 
+                      color: theme.colorScheme.error.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(Icons.error, color: theme.colorScheme.error, size: 20),
@@ -466,32 +355,15 @@ $numbered''';
     );
   }
 
+  // Loads a saved draft into the session config and refreshes the avatar fields.
   void _loadDraft(Draft draft) {
-    final form = draft.form;
-    setState(() {
-      _replicaIdController.text = form.replicaId;
-      _personaIdController.text = form.personaId;
-      _convNameController.text = form.conversationName;
-      _contextController.text = form.conversationalContext;
-      _greetingController.text = form.customGreeting;
-      _callbackUrlController.text = form.callbackUrl;
-      _bucketController.text = form.recordingS3BucketName;
-      _regionController.text = form.recordingS3BucketRegion;
-      _roleArnController.text = form.awsAssumeRoleArn;
-      _selectedLanguage = form.language;
-      _selectedPipelineMode = form.pipelineMode;
-      _maxCallDuration = form.maxCallDuration.toDouble();
-      _participantLeftTimeout = form.participantLeftTimeout;
-      _participantAbsentTimeout = form.participantAbsentTimeout;
-      _enableRecording = form.enableRecording;
-      _enableTranscription = form.enableTranscription;
-      _applyConversationOverride = form.applyConversationOverride;
-      _applyGreenscreen = form.applyGreenscreen;
-      _backgroundUrlController.text = form.backgroundUrl;
-    });
-
     final store = Provider.of<AppStore>(context, listen: false);
+    store.setSessionConfig(draft.form);
     store.setQuestions(draft.questions);
+    setState(() {
+      _replicaId = draft.form.replicaId;
+      _personaId = draft.form.personaId;
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -501,740 +373,216 @@ $numbered''';
     );
   }
 
-  Widget _buildSavedDrafts(AppStore store) {
-    if (store.drafts.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Saved Drafts',
-              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              '${store.drafts.length} draft(s) — click to load',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 72,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: store.drafts.length,
-                itemBuilder: (context, index) {
-                  final draft = store.drafts[index];
-                  return Container(
-                    margin: const EdgeInsets.only(right: 12),
-                    child: InkWell(
-                      onTap: () => _loadDraft(draft),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        width: 220,
-                        decoration: BoxDecoration(
-                          border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    draft.name,
-                                    style: TextStyle(
-                                      fontSize: 13, 
-                                      fontWeight: FontWeight.bold, 
-                                      color: theme.colorScheme.onSurface,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${draft.questions.length} questions',
-                                    style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: Icon(Icons.close, size: 14, color: theme.colorScheme.onSurfaceVariant),
-                              onPressed: () {
-                                store.deleteDraft(draft.id);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Draft deleted')),
-                                );
-                              },
-                              hoverColor: theme.colorScheme.error.withOpacity(0.08),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+  // Opens the persona picker sheet.
+  Future<void> _pickPersona() async {
+    final options = <AppleOption<String>>[
+      const AppleOption('', 'None'),
+      ..._personas.map((p) => AppleOption(p.personaId, p.personaName)),
+    ];
+    final picked = await showAppleOptions<String>(
+      context,
+      title: 'Choose Persona',
+      options: options,
+      selected: _personaId,
     );
+    if (picked != null) setState(() => _personaId = picked);
   }
 
-  Widget _buildTavusConfigCard() {
-    final theme = Theme.of(context);
-    final replicaOptions = [
-      const DropdownMenuItem<String>(value: '', child: Text('Select a Replica')),
-      ..._replicas.map((r) => DropdownMenuItem<String>(
-            value: r.replicaId,
-            child: Text(
-              '${r.replicaName} (${r.replicaType == 'stock' ? '[Stock] ' : ''}${r.status})',
-              overflow: TextOverflow.ellipsis,
-            ),
-          )),
-    ];
-
-    final personaOptions = [
-      const DropdownMenuItem<String>(value: '', child: Text('None')),
-      ..._personas.map((p) => DropdownMenuItem<String>(
-            value: p.personaId,
-            child: Text(p.personaName, overflow: TextOverflow.ellipsis),
-          )),
-    ];
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Tavus Configuration',
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                if (_isLoadingTavus)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 8),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 18),
-                    color: theme.colorScheme.onSurfaceVariant,
-                    tooltip: 'Reload replicas & personas',
-                    onPressed: () => _loadApis(forceRefresh: true),
-                  ),
-              ],
-            ),
-            Text(
-              _isLoadingTavus
-                  ? 'Loading replicas & personas from Tavus…'
-                  : 'Avatar and persona selection for this session',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            if (_tavusLoadError != null) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: theme.colorScheme.error.withOpacity(0.3)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _tavusLoadError!,
-                        style: TextStyle(fontSize: 12, color: theme.colorScheme.error),
-                      ),
-                    ),
-                  ],
-                ),
+  // Text dialog to manually type/override a replica ID.
+  Future<void> _editReplicaId() async {
+    final controller = TextEditingController(text: _replicaId);
+    await showDialog(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: const Text('Replica ID'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Paste a Replica ID to use one that isn\'t in the list above.',
+                style: theme.textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              CustomInputField(
+                label: 'Replica ID',
+                placeholder: 'e.g. r5f0577fc829',
+                controller: controller,
+                autofocus: true,
               ),
             ],
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Replica (optional)',
-                    value: _replicas.any((r) => r.replicaId == _replicaIdController.text)
-                        ? _replicaIdController.text
-                        : '',
-                    items: replicaOptions,
-                    onChanged: (val) => setState(() => _replicaIdController.text = val ?? ''),
-                  ),
-                ),
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Persona',
-                    value: _personas.any((p) => p.personaId == _personaIdController.text)
-                        ? _personaIdController.text
-                        : '',
-                    items: personaOptions,
-                    onChanged: (val) => setState(() => _personaIdController.text = val ?? ''),
-                  ),
-                ),
-              ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancel', style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
             ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Replica ID (Manual Override)',
-              placeholder: 'e.g. r5f0577fc829',
-              controller: _replicaIdController,
-              hint: _replicaIdController.text.isNotEmpty
-                  ? '✓ Replica ID: ${_replicaIdController.text}'
-                  : '${_replicas.length} replicas found',
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Conversation Name',
-              placeholder: 'e.g. Senior Front-End Engineer Screening',
-              controller: _convNameController,
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Conversational Context (System Prompt)',
-              placeholder: 'Type prompt settings…',
-              controller: _contextController,
-              maxLines: 4,
-              hint: 'This prompt drives the Tavus avatar Conversational AI Agent.',
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Custom Greeting',
-              placeholder: 'Hello! I\'m Alex…',
-              controller: _greetingController,
-              hint: 'The very first thing the avatar says when the session starts',
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'Callback Webhook URL',
-              placeholder: 'https://api.yourcompany.com/tavus-events',
-              controller: _callbackUrlController,
+            CustomButton(
+              text: 'Set',
+              onPressed: () {
+                setState(() => _replicaId = controller.text.trim());
+                Navigator.pop(context);
+              },
             ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildQuestionsCard(AppStore store) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Interview Questions',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '${store.questions.length} questions configured',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 16),
+  // Avatar group: header row with refresh, the avatar strip, persona picker and
+  // manual replica-ID override.
+  Widget _buildAvatarGroup(ThemeData theme) {
+    final replicaValue = _replicaId.isEmpty ? 'Not set' : _replicaId;
+    return AppleGroup(
+      header: 'Avatar',
+      dividerIndent: 16,
+      footer: _tavusLoadError ??
+          (_isLoadingTavus
+              ? 'Loading replicas & personas from Tavus…'
+              : '${_replicas.length} replica(s) available · tap a face to select'),
+      children: [
+        // Strip header with refresh control.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Choose who runs the interview',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w500),
+                ),
+              ),
+              if (_isLoadingTavus)
+                const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 20),
+                  color: theme.colorScheme.onSurfaceVariant,
+                  tooltip: 'Reload replicas & personas',
+                  onPressed: () => _loadApis(forceRefresh: true),
+                ),
+            ],
+          ),
+        ),
+        AvatarStrip(
+          replicas: _replicas,
+          selectedId: _replicaId,
+          onSelect: (id) => setState(() => _replicaId = id),
+        ),
+        AppleDisclosureRow(
+          leading: const AppleIconBadge(
+              icon: Icons.psychology_outlined, color: Color(0xFF6366F1)),
+          title: 'Persona',
+          value: _personaLabel,
+          onTap: _pickPersona,
+        ),
+        AppleDisclosureRow(
+          leading: const AppleIconBadge(
+              icon: Icons.tag, color: Color(0xFF64748B)),
+          title: 'Replica ID',
+          value: replicaValue,
+          onTap: _editReplicaId,
+        ),
+      ],
+    );
+  }
 
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: store.questions.length,
-              itemBuilder: (context, idx) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withOpacity(0.12), 
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${idx + 1}',
-                          style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: TextEditingController(text: store.questions[idx])
-                            ..selection = TextSelection.collapsed(offset: store.questions[idx].length),
-                          style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-                          decoration: InputDecoration(
-                            hintText: 'Question ${idx + 1}',
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          ),
-                          onChanged: (val) {
-                            final qs = List<String>.from(store.questions);
-                            qs[idx] = val;
-                            store.setQuestions(qs);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
-                        onPressed: () {
-                          final qs = List<String>.from(store.questions);
-                          qs.removeAt(idx);
-                          store.setQuestions(qs);
-                        },
-                        hoverColor: theme.colorScheme.error.withOpacity(0.08),
-                      ),
-                    ],
-                  ),
+  // Saved drafts group; each row loads its draft, trailing button deletes it.
+  Widget _buildDraftsGroup(AppStore store) {
+    return AppleGroup(
+      header: 'Saved Drafts',
+      footer: 'Tap a draft to load its avatar, questions and settings.',
+      dividerIndent: 58,
+      children: [
+        for (final draft in store.drafts)
+          AppleRow(
+            leading: const AppleIconBadge(
+                icon: Icons.description_outlined, color: Color(0xFF0EA5E9)),
+            title: draft.name,
+            subtitle: '${draft.questions.length} questions',
+            onTap: () => _loadDraft(draft),
+            trailing: IconButton(
+              icon: Icon(Icons.delete_outline,
+                  size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              onPressed: () {
+                store.deleteDraft(draft.id);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Draft deleted')),
                 );
               },
             ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () {
-                final qs = List<String>.from(store.questions)..add('');
-                store.setQuestions(qs);
-              },
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: theme.colorScheme.outline.withOpacity(0.3)),
-                minimumSize: const Size(double.infinity, 48), // MD3 touch target size
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
-              ),
-              child: Text(
-                '+ Add Question',
-                style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+      ],
     );
-  }
-
-  Widget _buildSessionPropertiesCard() {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Session Properties',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'All values map to the Tavus conversation properties object',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Language',
-                    value: _selectedLanguage,
-                    items: [
-                      'English', 'Spanish', 'French', 'German', 'Italian',
-                      'Portuguese', 'Japanese', 'Korean', 'Chinese', 'Hindi', 'Arabic'
-                    ].map((l) => DropdownMenuItem<String>(value: l, child: Text(l))).toList(),
-                    onChanged: (val) => setState(() => _selectedLanguage = val ?? 'English'),
-                  ),
-                ),
-                Expanded(
-                  child: CustomSelectDropdown<String>(
-                    label: 'Pipeline Mode',
-                    value: _selectedPipelineMode,
-                    items: const [
-                      DropdownMenuItem(value: 'full', child: Text('Full (audio+video)')),
-                      DropdownMenuItem(value: 'echo', child: Text('Echo (test mode)')),
-                      DropdownMenuItem(value: 'no_audio', child: Text('No Audio')),
-                      DropdownMenuItem(value: 'video_only', child: Text('Video Only')),
-                    ],
-                    onChanged: (val) => setState(() => _selectedPipelineMode = val ?? 'full'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            CustomSlider(
-              label: 'Max Call Duration',
-              min: 60.0,
-              max: 7200.0,
-              divisions: 119,
-              value: _maxCallDuration,
-              onChanged: (val) => setState(() => _maxCallDuration = val),
-              formatValue: (val) => '${(val / 60).round()} mins',
-            ),
-            const SizedBox(height: 16),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Participant Left Timeout (s)',
-                    placeholder: '60',
-                    keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantLeftTimeout = int.tryParse(val) ?? 60,
-                    controller: TextEditingController(text: '$_participantLeftTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantLeftTimeout'.length),
-                  ),
-                ),
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Absent Timeout (s)',
-                    placeholder: '300',
-                    keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantAbsentTimeout = int.tryParse(val) ?? 300,
-                    controller: TextEditingController(text: '$_participantAbsentTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantAbsentTimeout'.length),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
-            const SizedBox(height: 8),
-
-            CustomToggle(
-              label: 'Enable Transcription',
-              description: 'Real-time transcription of candidate speech',
-              checked: _enableTranscription,
-              onChanged: (val) => setState(() => _enableTranscription = val),
-            ),
-            CustomToggle(
-              label: 'Enable Recording',
-              description: 'Save the full session video to storage',
-              checked: _enableRecording,
-              onChanged: (val) => setState(() => _enableRecording = val),
-            ),
-            CustomToggle(
-              label: 'Conversation Override',
-              description: 'Allow text injection prompt updates during call',
-              checked: _applyConversationOverride,
-              onChanged: (val) => setState(() => _applyConversationOverride = val),
-            ),
-            CustomToggle(
-              label: 'Virtual Background',
-              description: 'Replace avatar background image',
-              checked: _applyGreenscreen,
-              onChanged: (val) => setState(() => _applyGreenscreen = val),
-            ),
-            if (_applyGreenscreen) ...[
-              const SizedBox(height: 8),
-              CustomInputField(
-                label: 'Background Image URL',
-                placeholder: 'https://cdn.example.com/office.jpg',
-                controller: _backgroundUrlController,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildS3StorageCard() {
-    if (!_enableRecording) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'S3 Recording Storage',
-              style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'Configure AWS S3 bucket details to preserve session recording',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            const SizedBox(height: 20),
-
-            _buildResponsiveInputRow(
-              context,
-              [
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Bucket Name',
-                    placeholder: 'my-talbotiq-bucket',
-                    controller: _bucketController,
-                  ),
-                ),
-                Expanded(
-                  child: CustomInputField(
-                    label: 'Region',
-                    placeholder: 'us-east-1',
-                    controller: _regionController,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            CustomInputField(
-              label: 'AWS Assume Role ARN',
-              placeholder: 'arn:aws:iam::xxxxxxxxxxxx:role/TavusRole',
-              controller: _roleArnController,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildResponsiveInputRow(BuildContext context, List<Widget> children) {
-    final bool isMobile = MediaQuery.of(context).size.width < 600;
-    if (isMobile) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: children.map((child) {
-          Widget unwrapped = child;
-          if (child is Expanded) {
-            unwrapped = child.child;
-          }
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: unwrapped,
-          );
-        }).toList(),
-      );
-    } else {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: children.map((child) {
-          if (child is Expanded) return child;
-          return Expanded(child: child);
-        }).toList().expand((child) => [child, const SizedBox(width: 16)]).toList()..removeLast(),
-      );
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
-    final payload = _buildPayload('Candidate');
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 1050;
-
-          final mainForm = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Welcome Hero
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-           
-                  const SizedBox(height: 16),
-                  Text(
-                    'Configure Your',
-                    style: theme.textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.w300, 
-                      color: theme.colorScheme.onSurfaceVariant,
-                      height: 0.95,
-                    ),
-                  ),
-                  Text(
-                    'Interview Session',
-                    style: theme.textTheme.displayMedium?.copyWith(
-                      fontSize: 40,
-                      fontWeight: FontWeight.w700, 
-                      color: theme.colorScheme.onSurface, 
-                      height: 1.0, 
-                      letterSpacing: -1,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Set up your AI avatar, questions, and analysis preferences. Everything is customisable.',
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      CustomButton(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            // Full-bleed welcoming marquee of moving cards across the top.
+            const Padding(
+              padding: EdgeInsets.only(top: 12, bottom: 4),
+              child: SetupWelcomeMarquee(),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                // Primary actions
+                Row(
+                  children: [
+                    Expanded(
+                      child: CustomButton(
                         text: 'Launch Session',
                         onPressed: _showLaunchDialog,
                         isLoading: _isLaunching,
+                        icon: const Icon(Icons.videocam_rounded,
+                            size: 18, color: Color(0xFF060709)),
                       ),
-                      const SizedBox(width: 12),
-                      CustomButton(
-                        text: 'Save Draft',
-                        variant: ButtonVariant.secondary,
-                        onPressed: _showSaveDraftDialog,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-
-              // Saved Drafts
-              _buildSavedDrafts(store),
-              const SizedBox(height: 16),
-
-              // Form fields
-              _buildTavusConfigCard(),
-              const SizedBox(height: 16),
-              _buildQuestionsCard(store),
-              const SizedBox(height: 16),
-              _buildSessionPropertiesCard(),
-              const SizedBox(height: 16),
-              _buildS3StorageCard(),
-            ],
-          );
-
-          if (isWide) {
-            return Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: mainForm,
                     ),
-                  ),
-                  const SizedBox(width: 24),
-                  SizedBox(
-                    width: 380,
-                    child: StickyColumn(
-                      payload: payload,
+                    const SizedBox(width: 12),
+                    CustomButton(
+                      text: 'Save Draft',
+                      variant: ButtonVariant.secondary,
+                      onPressed: _showSaveDraftDialog,
                     ),
-                  ),
-                ],
-              ),
-            );
-          } else {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                children: [
-                  mainForm,
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    height: 400,
-                    child: JsonPreviewPane(
-                      data: payload,
-                      title: 'Request Preview',
-                      method: 'POST',
-                      endpoint: '/v2/conversations',
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-        },
-      ),
-    );
-  }
-}
-
-// Side widget helper for Wide Screens
-class StickyColumn extends StatelessWidget {
-  final Map<String, dynamic> payload;
-
-  const StickyColumn({super.key, required this.payload});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 380,
-          child: JsonPreviewPane(
-            data: payload,
-            title: 'Request Preview',
-            method: 'POST',
-            endpoint: '/v2/conversations',
-          ),
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Quick Reference',
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _buildRefRow(context, 'conversational_context', 'system prompt overrides LLM persona'),
-                _buildRefRow(context, 'custom_greeting', 'the first words spoken by avatar'),
-                _buildRefRow(context, 'greenscreen', 'needs transparent background replica'),
-                _buildRefRow(context, 'callback_url', 'receives conversation event payloads'),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+                const SizedBox(height: 28),
 
-  Widget _buildRefRow(BuildContext context, String term, String desc) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            term,
-            style: TextStyle(fontSize: 11, fontFamily: 'Courier', color: theme.colorScheme.secondary, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            desc,
-            style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
-          ),
-        ],
+                        _buildAvatarGroup(theme),
+
+                        if (store.drafts.isNotEmpty) ...[
+                          const SizedBox(height: 28),
+                          _buildDraftsGroup(store),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -4,6 +4,10 @@ import 'package:provider/provider.dart';
 import '../providers/app_store.dart';
 import '../widgets/custom_buttons.dart';
 import '../core/services/tavus_service.dart';
+import '../features/recruiter/store/recruiter_store.dart';
+import '../features/recruiter/views/sessions_page.dart';
+import '../features/recruiter/views/templates_page.dart';
+import '../features/recruiter/views/question_sets_page.dart';
 import 'setup_page.dart';
 import 'interview_page.dart';
 import 'results_page.dart';
@@ -54,74 +58,121 @@ class MainLayout extends StatelessWidget {
     }
   }
 
-  Widget _buildNavLink(BuildContext context, String label, String route, AppStore store) {
-    final theme = Theme.of(context);
-    final String currentRoute = store.currentRoute;
-    final bool isActive = currentRoute == route;
+  int _getCurrentIndex(String route) {
+    switch (route) {
+      case '/setup': return 0;
+      case '/interview': return 1;
+      case '/results': return 2;
+      case '/settings': return 3;
+      default: return 0;
+    }
+  }
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      height: 48, // Standardised touch target height
-      alignment: Alignment.center,
+  void _goHome(BuildContext context, bool isRecruiter, AppStore store, RecruiterStore recruiter) {
+    if (isRecruiter) {
+      recruiter.setRecruiterTabIndex(0);
+    } else {
+      _handleNavigate(context, '/setup', store);
+    }
+  }
+
+  void _goSettings(BuildContext context, bool isRecruiter, AppStore store, RecruiterStore recruiter) {
+    if (isRecruiter) {
+      recruiter.setRecruiterTabIndex(3);
+    } else {
+      _handleNavigate(context, '/settings', store);
+    }
+  }
+
+  void _onTabSelected(BuildContext context, int index, bool isRecruiter, AppStore store, RecruiterStore recruiter) {
+    if (isRecruiter) {
+      recruiter.setRecruiterTabIndex(index);
+    } else {
+      const routes = ['/setup', '/interview', '/results', '/settings'];
+      _handleNavigate(context, routes[index], store);
+    }
+  }
+
+  void _switchPlatform(BuildContext context, bool toRecruiter, AppStore store, RecruiterStore recruiter) {
+    if (toRecruiter) {
+      recruiter.setSlot0Feature(FeatureSlot.recruiter);
+      recruiter.setRecruiterTabIndex(0);
+    } else {
+      recruiter.setSlot0Feature(FeatureSlot.videoInterview);
+      store.navigateTo('/setup');
+    }
+  }
+
+  Widget _navPill(BuildContext context, String label, IconData icon, bool isActive, VoidCallback onTap) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: InkWell(
-        onTap: () {
-          if (!isActive) {
-            _handleNavigate(context, route, store);
-          }
-        },
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
-            color: isActive ? theme.colorScheme.primary.withOpacity(0.12) : Colors.transparent,
-            borderRadius: BorderRadius.circular(24),
+            color: isActive ? theme.colorScheme.primaryContainer.withOpacity(0.4) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-              color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                  color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  int _getCurrentIndex(String route) {
-    switch (route) {
-      case '/setup':
-        return 0;
-      case '/interview':
-        return 1;
-      case '/results':
-        return 2;
-      case '/settings':
-        return 3;
-      default:
-        return 0;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
-    final String currentRoute = store.currentRoute;
+    final recruiter = Provider.of<RecruiterStore>(context);
+    final bool isRecruiter = recruiter.slot0Feature == FeatureSlot.recruiter;
     final double width = MediaQuery.of(context).size.width;
     final bool isMobile = width < 800;
 
+    final int selectedIndex = isRecruiter ? recruiter.recruiterTabIndex : _getCurrentIndex(store.currentRoute);
+
+    final List<Widget> pages = isRecruiter
+        ? const [SessionsPage(), TemplatesPage(), QuestionSetsPage(), SettingsPage()]
+        : const [SetupPage(), InterviewPage(), ResultsPage(), SettingsPage()];
+
+    final List<String> navLabels = isRecruiter
+        ? ['Sessions', 'Templates', 'Question Sets', 'Settings']
+        : ['Setup', 'Interview', 'Results', 'Settings'];
+    final List<IconData> navIcons = isRecruiter
+        ? [Icons.dashboard_outlined, Icons.dashboard_customize_outlined, Icons.library_books_outlined, Icons.settings_outlined]
+        : [Icons.tune_rounded, Icons.video_call_outlined, Icons.analytics_outlined, Icons.settings_outlined];
+
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: PreferredSize(
-        preferredSize: Size.fromHeight(isMobile ? 64 : 80),
+        preferredSize: Size.fromHeight(isMobile ? 64 : 72),
         child: Container(
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
+            color: Colors.transparent,
             border: Border(
               bottom: BorderSide(
-                color: theme.colorScheme.outline.withOpacity(0.12),
+                color: theme.colorScheme.outlineVariant.withOpacity(0.4),
                 width: 1.0,
               ),
             ),
@@ -132,69 +183,62 @@ class MainLayout extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Brand Logo wordmark
                 InkWell(
-                  onTap: () => _handleNavigate(context, '/setup', store),
+                  onTap: () => _goHome(context, isRecruiter, store, recruiter),
                   borderRadius: BorderRadius.circular(8),
                   child: Padding(
                     padding: const EdgeInsets.all(4.0),
                     child: Row(
                       children: [
-                        CircleAvatar(
-                          radius: 20,
-                          backgroundColor: Colors.transparent,
-                          backgroundImage: const AssetImage('assets/logo.jpg'),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'TalbotIQ',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onSurface,
-                            letterSpacing: -0.3,
+ 
+                          const SizedBox(width: 10),
+                          Text(
+                            'TalbotIQ',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: theme.colorScheme.onSurface,
+                              letterSpacing: -0.5,
+                            ),
                           ),
-                        ),
+                    
                       ],
                     ),
                   ),
                 ),
-
-                // Nav Links pills row (only on desktop)
                 if (!isMobile)
                   Expanded(
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _buildNavLink(context, 'Setup', '/setup', store),
-                        _buildNavLink(context, 'Interview', '/interview', store),
-                        _buildNavLink(context, 'Results', '/results', store),
-                        _buildNavLink(context, 'Settings', '/settings', store),
+                        for (int i = 0; i < navLabels.length; i++)
+                          _navPill(
+                            context,
+                            navLabels[i],
+                            navIcons[i],
+                            selectedIndex == i,
+                            () => _onTabSelected(context, i, isRecruiter, store, recruiter),
+                          ),
                       ],
                     ),
                   )
                 else
                   const Spacer(),
-
-                // Right stats
                 Row(
                   children: [
                     if (store.interviewActive) ...[
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.error.withOpacity(0.1),
-                          border: Border.all(
-                            color: theme.colorScheme.error.withOpacity(0.3),
-                          ),
-                          borderRadius: BorderRadius.circular(20),
+                          color: theme.colorScheme.errorContainer.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
-                              width: 8,
-                              height: 8,
+                              width: 6,
+                              height: 6,
                               decoration: BoxDecoration(
                                 color: theme.colorScheme.error,
                                 shape: BoxShape.circle,
@@ -204,7 +248,7 @@ class MainLayout extends StatelessWidget {
                             Text(
                               'LIVE',
                               style: TextStyle(
-                                color: theme.colorScheme.error,
+                                color: theme.colorScheme.onErrorContainer,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                                 letterSpacing: 0.5,
@@ -213,49 +257,27 @@ class MainLayout extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                     ],
-
                     if (store.tavusKey.isEmpty) ...[
                       OutlinedButton(
-                        onPressed: () => _handleNavigate(context, '/settings', store),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.amber.shade900.withOpacity(0.08),
-                          side: BorderSide(color: Colors.amber.shade700.withOpacity(0.3)),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        ),
+                        onPressed: () => _goSettings(context, isRecruiter, store, recruiter),
+                       
                         child: Text(
                           isMobile ? 'Key Required' : 'Add API Key →',
                           style: TextStyle(
-                            color: theme.brightness == Brightness.dark 
-                                ? Colors.amber.shade300 
-                                : Colors.amber.shade900, 
-                            fontSize: 12, 
-                            fontWeight: FontWeight.bold,
+                            color: theme.brightness == Brightness.dark ? const Color.fromARGB(255, 236, 111, 111) : const Color.fromARGB(255, 253, 82, 60),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                     ],
-
-                    // Profile avatar initial circle
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withOpacity(0.12),
-                        shape: BoxShape.circle,
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        'TE',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                    _PlatformToggle(
+                      isRecruiter: isRecruiter,
+                      compact: isMobile,
+                      onSelect: (toRecruiter) => _switchPlatform(context, toRecruiter, store, recruiter),
                     ),
                   ],
                 ),
@@ -265,28 +287,217 @@ class MainLayout extends StatelessWidget {
         ),
       ),
       bottomNavigationBar: isMobile
-          ? NavigationBar(
-              selectedIndex: _getCurrentIndex(currentRoute),
-              onDestinationSelected: (index) {
-                final routes = ['/setup', '/interview', '/results', '/settings'];
-                _handleNavigate(context, routes[index], store);
-              },
-              destinations: const [
-                NavigationDestination(icon: Icon(Icons.tune), label: 'Setup'),
-                NavigationDestination(icon: Icon(Icons.video_call), label: 'Interview'),
-                NavigationDestination(icon: Icon(Icons.analytics), label: 'Results'),
-                NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
-              ],
+          ? FloatingBottomNavBar(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: (index) => _onTabSelected(context, index, isRecruiter, store, recruiter),
+              labels: navLabels,
+              icons: navIcons,
             )
           : null,
-      body: IndexedStack(
-        index: _getCurrentIndex(currentRoute),
-        children: const [
-          SetupPage(),
-          InterviewPage(),
-          ResultsPage(),
-          SettingsPage(),
+      body: FadeIndexedStack(
+        index: selectedIndex,
+        children: pages,
+      ),
+    );
+  }
+}
+
+class _PlatformToggle extends StatelessWidget {
+  final bool isRecruiter;
+  final bool compact;
+  final ValueChanged<bool> onSelect;
+
+  const _PlatformToggle({
+    required this.isRecruiter,
+    required this.compact,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _segment(theme, Icons.videocam_rounded, 'Interview', !isRecruiter, () => onSelect(false)),
+          _segment(theme, Icons.work_outline_rounded, 'Recruiter', isRecruiter, () => onSelect(true)),
         ],
+      ),
+    );
+  }
+
+  Widget _segment(ThemeData theme, IconData icon, String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? theme.colorScheme.surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          boxShadow: selected
+              ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 4, offset: const Offset(0, 2))]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+            ),
+            if (!compact) ...[
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class FloatingBottomNavBar extends StatelessWidget {
+  final int selectedIndex;
+  final Function(int) onDestinationSelected;
+  final List<String> labels;
+  final List<IconData> icons;
+
+  const FloatingBottomNavBar({
+    super.key,
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+    required this.labels,
+    required this.icons,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+        height: 64,
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(24),
+         
+        ),
+        child: Row(
+          children: List.generate(4, (index) {
+            final bool isActive = selectedIndex == index;
+            return Expanded(
+              child: InkWell(
+                onTap: () => onDestinationSelected(index),
+                // Completely strips out native ink splashes/borders around items
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: const BoxDecoration(
+                        color: Colors.transparent, // Ensures no hidden backgrounds create box shapes
+                      ),
+                      child: Icon(
+                        icons[index],
+                        color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      labels[index],
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                        color: isActive ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
+class FadeIndexedStack extends StatefulWidget {
+  final int index;
+  final List<Widget> children;
+  final Duration duration;
+
+  const FadeIndexedStack({
+    super.key,
+    required this.index,
+    required this.children,
+    this.duration = const Duration(milliseconds: 200),
+  });
+
+  @override
+  State<FadeIndexedStack> createState() => _FadeIndexedStackState();
+}
+
+class _FadeIndexedStackState extends State<FadeIndexedStack> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: widget.duration);
+    _controller.forward();
+  }
+
+  @override
+  void didUpdateWidget(FadeIndexedStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Trigger cross-fades clean when moving tabs or changing platform architecture sets
+    if (oldWidget.index != widget.index || oldWidget.children != widget.children) {
+      _controller.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: IndexedStack(
+        index: widget.index,
+        children: widget.children,
       ),
     );
   }

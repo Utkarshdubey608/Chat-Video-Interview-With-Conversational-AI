@@ -106,25 +106,7 @@ class AtsAssessmentCard extends StatelessWidget {
 
     // Loading indicator when Gemini is running synthesis
     if (geminiLoading) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(40.0),
-          child: Center(
-            child: Column(
-              children: [
-                CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation(theme.colorScheme.primary),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Gemini is synthesizing transcript analytics…',
-                  style: theme.textTheme.bodyMedium,
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      return const AtsScorecardSkeleton();
     }
 
     // Fallback if there is no scorecard but we aren't loading
@@ -304,6 +286,200 @@ class FitBadge extends StatelessWidget {
           color: fg,
           letterSpacing: 0.5,
         ),
+      ),
+    );
+  }
+}
+
+class SkeletonPulsar extends StatefulWidget {
+  final Widget child;
+  const SkeletonPulsar({super.key, required this.child});
+
+  @override
+  State<SkeletonPulsar> createState() => _SkeletonPulsarState();
+}
+
+class _SkeletonPulsarState extends State<SkeletonPulsar> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.4, end: 0.75).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _animation.value,
+          child: widget.child,
+        );
+      },
+    );
+  }
+}
+
+class AtsScorecardSkeleton extends StatelessWidget {
+  const AtsScorecardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final baseColor = isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05);
+
+    return SkeletonPulsar(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 240,
+            height: 20,
+            decoration: BoxDecoration(
+              color: baseColor,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 220,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: baseColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            width: 140,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: baseColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        width: 80,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: baseColor,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Divider(color: theme.colorScheme.outline.withOpacity(0.08)),
+                  const SizedBox(height: 20),
+                  Container(
+                    width: 180,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: baseColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: baseColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: baseColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 260,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: baseColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    width: 120,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(Icons.check, color: theme.colorScheme.primary.withOpacity(0.3), size: 14),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 200,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: baseColor,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.check, color: theme.colorScheme.primary.withOpacity(0.3), size: 14),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 180,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: baseColor,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

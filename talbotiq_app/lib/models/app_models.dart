@@ -322,6 +322,82 @@ class DraftForm {
     'recording_s3_bucket_region': recordingS3BucketRegion,
     'aws_assume_role_arn': awsAssumeRoleArn,
   };
+
+  // Sensible starting values for a fresh interview session config.
+  factory DraftForm.defaults() => DraftForm(
+        replicaId: '',
+        personaId: '',
+        conversationName: 'TalbotIQ Interview',
+        conversationalContext:
+            'You are Alex, a Senior Talent Specialist at TalbotIQ conducting a screening interview. Maintain a warm, professional tone.',
+        customGreeting: 'Hello, welcome to your TalbotIQ interview.',
+        callbackUrl: '',
+        maxCallDuration: 900,
+        participantLeftTimeout: 60,
+        participantAbsentTimeout: 300,
+        enableRecording: false,
+        enableTranscription: true,
+        applyConversationOverride: false,
+        applyGreenscreen: false,
+        backgroundUrl: '',
+        language: 'English',
+        pipelineMode: 'full',
+        recordingS3BucketName: '',
+        recordingS3BucketRegion: '',
+        awsAssumeRoleArn: '',
+      );
+
+  // Returns a copy with only the provided fields overridden. Lets each
+  // settings section update its own fields without clobbering the rest.
+  DraftForm copyWith({
+    String? replicaId,
+    String? personaId,
+    String? conversationName,
+    String? conversationalContext,
+    String? customGreeting,
+    String? callbackUrl,
+    int? maxCallDuration,
+    int? participantLeftTimeout,
+    int? participantAbsentTimeout,
+    bool? enableRecording,
+    bool? enableTranscription,
+    bool? applyConversationOverride,
+    bool? applyGreenscreen,
+    String? backgroundUrl,
+    String? language,
+    String? pipelineMode,
+    String? recordingS3BucketName,
+    String? recordingS3BucketRegion,
+    String? awsAssumeRoleArn,
+  }) {
+    return DraftForm(
+      replicaId: replicaId ?? this.replicaId,
+      personaId: personaId ?? this.personaId,
+      conversationName: conversationName ?? this.conversationName,
+      conversationalContext:
+          conversationalContext ?? this.conversationalContext,
+      customGreeting: customGreeting ?? this.customGreeting,
+      callbackUrl: callbackUrl ?? this.callbackUrl,
+      maxCallDuration: maxCallDuration ?? this.maxCallDuration,
+      participantLeftTimeout:
+          participantLeftTimeout ?? this.participantLeftTimeout,
+      participantAbsentTimeout:
+          participantAbsentTimeout ?? this.participantAbsentTimeout,
+      enableRecording: enableRecording ?? this.enableRecording,
+      enableTranscription: enableTranscription ?? this.enableTranscription,
+      applyConversationOverride:
+          applyConversationOverride ?? this.applyConversationOverride,
+      applyGreenscreen: applyGreenscreen ?? this.applyGreenscreen,
+      backgroundUrl: backgroundUrl ?? this.backgroundUrl,
+      language: language ?? this.language,
+      pipelineMode: pipelineMode ?? this.pipelineMode,
+      recordingS3BucketName:
+          recordingS3BucketName ?? this.recordingS3BucketName,
+      recordingS3BucketRegion:
+          recordingS3BucketRegion ?? this.recordingS3BucketRegion,
+      awsAssumeRoleArn: awsAssumeRoleArn ?? this.awsAssumeRoleArn,
+    );
+  }
 }
 
 // ── Draft ──
