@@ -1,0 +1,77 @@
+rules_version = '2';
+
+// TalbotIQ Firestore security rules.
+//
+// Model:
+//   users/{uid}          — one doc per account, holds { email, role, name }
+//   interviews/{id}      — a recruiter-created interview assigned to a candidate
+//   app_config/global    — shared org API keys (recruiter-managed)
+//
+// Deploy with: firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The signed-in user's role, read from their users doc.
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isRecruiter() {
+      return isSignedIn() && myRole() == 'recruiter';
+    }
+
+    // The auth token's email, normalized for candidate-assignment matching.
+    function myEmailLower() {
+      return request.auth.token.email.lower();
+    }
+
+    // users: a user may read/write only their own profile doc.
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // interviews:
+    //   - recruiters manage the interviews they created
+    //   - candidates may read + update (status/result) interviews assigned to
+    //     their email; they cannot create or delete
+    match /interviews/{id} {
+      allow read: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid
+                  || (isSignedIn()
+                     && resource.data.candidateEmailLower == myEmailLower());
+
+      allow create: if isRecruiter()
+                     && request.resource.data.recruiterId == request.auth.uid;
+
+      // Recruiter (owner) may change anything, incl. publishing results.
+      // Candidate (assignee) may write their submission/status/attempts but must
+      // NOT flip resultPublished — only the recruiter releases results.
+      allow update: if (isRecruiter()
+                        && resource.data.recruiterId == request.auth.uid)
+                    || (isSignedIn()
+                        && resource.data.candidateEmailLower == myEmailLower()
+                        && request.resource.data.resultPublished
+                           == resource.data.resultPublished);
+
+      allow delete: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid;
+    }
+
+    // recruiter_keys/{recruiterId}: each recruiter's API keys. Only that
+    // recruiter may write. A candidate's device must read them at launch to
+    // create the conversation, so reads are allowed for any signed-in user —
+    // the app never surfaces these to the candidate UI, but note this is
+    // app-side hiding, not cryptographic secrecy (see app_config_service.dart).
+    match /recruiter_keys/{recruiterId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == recruiterId;
+    }
+  }
+}

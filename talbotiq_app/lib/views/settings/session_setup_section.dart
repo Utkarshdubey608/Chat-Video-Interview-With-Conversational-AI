@@ -6,10 +6,14 @@ import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
 import '../../widgets/apple_ui.dart';
 
-/// Settings category: the conversation prompt/greeting/callback, session
-/// properties (language, pipeline, timeouts, toggles) and the interview
-/// questions. Edits are held locally until "Save Session Setup" writes them
-/// back into [AppStore.sessionConfig] (via copyWith, preserving other fields).
+/// Settings category: global session properties (language, pipeline, duration,
+/// timeouts, toggles) used as launch defaults for every interview.
+///
+/// The per-interview prompt, greeting, questions and avatar are NOT edited here
+/// anymore — a recruiter configures those when creating an interview
+/// (see features/interviews/recruiter/create_interview_page.dart). Edits are
+/// held locally until "Save" writes them back into [AppStore.sessionConfig]
+/// (via copyWith, preserving other fields).
 class SessionSetupSection extends StatefulWidget {
   const SessionSetupSection({super.key});
 
@@ -18,10 +22,6 @@ class SessionSetupSection extends StatefulWidget {
 }
 
 class _SessionSetupSectionState extends State<SessionSetupSection> {
-  final _convNameController = TextEditingController();
-  final _contextController = TextEditingController();
-  final _greetingController = TextEditingController();
-  final _callbackUrlController = TextEditingController();
   final _backgroundUrlController = TextEditingController();
 
   String _selectedLanguage = 'English';
@@ -38,10 +38,6 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
     super.initState();
     // Seed the controls from the persisted session config.
     final cfg = Provider.of<AppStore>(context, listen: false).sessionConfig;
-    _convNameController.text = cfg.conversationName;
-    _contextController.text = cfg.conversationalContext;
-    _greetingController.text = cfg.customGreeting;
-    _callbackUrlController.text = cfg.callbackUrl;
     _backgroundUrlController.text = cfg.backgroundUrl;
     _selectedLanguage = cfg.language;
     _selectedPipelineMode = cfg.pipelineMode;
@@ -55,10 +51,6 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
 
   @override
   void dispose() {
-    _convNameController.dispose();
-    _contextController.dispose();
-    _greetingController.dispose();
-    _callbackUrlController.dispose();
     _backgroundUrlController.dispose();
     super.dispose();
   }
@@ -67,10 +59,6 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
   void _save() {
     final store = Provider.of<AppStore>(context, listen: false);
     store.setSessionConfig(store.sessionConfig.copyWith(
-      conversationName: _convNameController.text,
-      conversationalContext: _contextController.text,
-      customGreeting: _greetingController.text,
-      callbackUrl: _callbackUrlController.text,
       backgroundUrl: _backgroundUrlController.text,
       language: _selectedLanguage,
       pipelineMode: _selectedPipelineMode,
@@ -90,51 +78,12 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
     );
   }
 
-  // Conversation-level config: name, system prompt, greeting, callback URL.
-  Widget _buildConversationCard() {
-    return AppleSectionCard(
-      title: 'Avatar & Conversation',
-      subtitle: 'Prompt and greeting that drive the Tavus conversational agent',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-            CustomInputField(
-              label: 'Conversation Name',
-              placeholder: 'e.g. Senior Front-End Engineer Screening',
-              controller: _convNameController,
-            ),
-            const SizedBox(height: 16),
-            CustomInputField(
-              label: 'Conversational Context (System Prompt)',
-              placeholder: 'Type prompt settings…',
-              controller: _contextController,
-              maxLines: 4,
-              hint: 'This prompt drives the Tavus avatar Conversational AI Agent.',
-            ),
-            const SizedBox(height: 16),
-            CustomInputField(
-              label: 'Custom Greeting',
-              placeholder: 'Hello! I\'m Alex…',
-              controller: _greetingController,
-              hint: 'The very first thing the avatar says when the session starts',
-            ),
-            const SizedBox(height: 16),
-            CustomInputField(
-              label: 'Callback Webhook URL',
-              placeholder: 'https://api.yourcompany.com/tavus-events',
-              controller: _callbackUrlController,
-            ),
-        ],
-      ),
-    );
-  }
-
   // Session properties: language, pipeline, duration, timeouts and toggles.
   Widget _buildPropertiesCard() {
     final theme = Theme.of(context);
     return AppleSectionCard(
       title: 'Session Properties',
-      subtitle: 'All values map to the Tavus conversation properties object',
+      subtitle: 'Global launch defaults — map to the Tavus properties object',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -237,90 +186,6 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
     );
   }
 
-  // Editable list of interview questions, backed directly by the store.
-  Widget _buildQuestionsCard(AppStore store) {
-    final theme = Theme.of(context);
-    return AppleSectionCard(
-      title: 'Interview Questions',
-      subtitle: '${store.questions.length} questions configured',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: store.questions.length,
-              itemBuilder: (context, idx) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${idx + 1}',
-                          style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: TextEditingController(text: store.questions[idx])
-                            ..selection = TextSelection.collapsed(offset: store.questions[idx].length),
-                          style: TextStyle(fontSize: 14, color: theme.colorScheme.onSurface),
-                          decoration: InputDecoration(
-                            hintText: 'Question ${idx + 1}',
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          ),
-                          onChanged: (val) {
-                            final qs = List<String>.from(store.questions);
-                            qs[idx] = val;
-                            store.setQuestions(qs);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.delete_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
-                        onPressed: () {
-                          final qs = List<String>.from(store.questions);
-                          qs.removeAt(idx);
-                          store.setQuestions(qs);
-                        },
-                        hoverColor: theme.colorScheme.error.withOpacity(0.08),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: () {
-                final qs = List<String>.from(store.questions)..add('');
-                store.setQuestions(qs);
-              },
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: theme.colorScheme.outline.withOpacity(0.3)),
-                minimumSize: const Size(double.infinity, 48),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
-              ),
-              child: Text(
-                '+ Add Question',
-                style: TextStyle(color: theme.colorScheme.primary, fontSize: 13, fontWeight: FontWeight.bold),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   // Lays children in a row on wide screens, stacked column on mobile.
   Widget _buildResponsiveInputRow(BuildContext context, List<Widget> children) {
     final bool isMobile = MediaQuery.of(context).size.width < 600;
@@ -351,15 +216,10 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
 
   @override
   Widget build(BuildContext context) {
-    final store = Provider.of<AppStore>(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildConversationCard(),
-        const SizedBox(height: 16),
         _buildPropertiesCard(),
-        const SizedBox(height: 16),
-        _buildQuestionsCard(store),
         const SizedBox(height: 24),
         CustomButton(text: 'Save Session Setup', onPressed: _save),
       ],

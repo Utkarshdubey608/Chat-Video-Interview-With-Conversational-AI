@@ -1,6 +1,6 @@
 // lib/views/splash_page.dart
 import 'package:flutter/material.dart';
-import 'main_layout.dart';
+import '../features/auth/auth_gate.dart';
 
 /// A clean, modern splash screen.
 ///
@@ -61,7 +61,7 @@ class _SplashPageState extends State<SplashPage>
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 500),
-        pageBuilder: (_, __, ___) => const MainLayout(),
+        pageBuilder: (_, __, ___) => const AuthGate(),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
       ),

@@ -23,6 +23,17 @@ class ConversationRunnerController extends ChangeNotifier
   final InterviewTemplate template;
   final RecruiterStore store;
 
+  /// When set, these questions are used instead of looking up the template's
+  /// fixedQuestionSetId in [store]. Lets a caller (e.g. the candidate flow
+  /// launching a Firestore Interview) run the chat engine without persisting a
+  /// QuestionSet into the recruiter store.
+  final List<FixedQuestion>? fixedQuestionsOverride;
+
+  /// Optional hook fired once scoring completes, with the finished session and
+  /// its report — used to mirror results to another store (e.g. Firestore).
+  final void Function(InterviewSession completedSession, ResultReport report)?
+      onFinished;
+
   late ConversationEngine engine;
   ConvStage stage = ConvStage.welcome;
 
@@ -43,16 +54,25 @@ class ConversationRunnerController extends ChangeNotifier
     required this.session,
     required this.template,
     required this.store,
+    this.fixedQuestionsOverride,
+    this.onFinished,
   }) : _resumeText = session.resumeText ?? '' {
-    final set = template.fixedQuestionSetId != null
-        ? store.questionSetById(template.fixedQuestionSetId!)
-        : null;
     engine = ConversationEngine(
       template: template,
-      fixedQuestions: set?.questions ?? const [],
+      fixedQuestions: _resolveFixedQuestions(),
       resumeText: _resumeText,
     );
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// Fixed questions for the engine: the caller-provided override if any,
+  /// otherwise the template's referenced question set from [store].
+  List<FixedQuestion> _resolveFixedQuestions() {
+    if (fixedQuestionsOverride != null) return fixedQuestionsOverride!;
+    final set = template.fixedQuestionSetId != null
+        ? store.questionSetById(template.fixedQuestionSetId!)
+        : null;
+    return set?.questions ?? const [];
   }
 
   int get _now => DateTime.now().millisecondsSinceEpoch;
@@ -94,12 +114,9 @@ class ConversationRunnerController extends ChangeNotifier
   void setResumeText(String text) {
     _resumeText = text.trim();
     // Rebuild the engine with the résumé bound in.
-    final set = template.fixedQuestionSetId != null
-        ? store.questionSetById(template.fixedQuestionSetId!)
-        : null;
     engine = ConversationEngine(
       template: template,
-      fixedQuestions: set?.questions ?? const [],
+      fixedQuestions: _resolveFixedQuestions(),
       resumeText: _resumeText,
     );
     stage = ConvStage.systemCheck;
@@ -207,6 +224,7 @@ class ConversationRunnerController extends ChangeNotifier
 
     store.putReport(result);
     report = result;
+    onFinished?.call(completedSession, result);
     stage = ConvStage.finished;
     notifyListeners();
   }

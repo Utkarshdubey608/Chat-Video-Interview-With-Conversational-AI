@@ -12,6 +12,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../../../widgets/custom_buttons.dart';
 import '../../../../widgets/custom_inputs.dart';
@@ -26,10 +27,25 @@ import '../widgets/recruiter_ui.dart';
 class ConversationRunnerPage extends StatefulWidget {
   final InterviewSession session;
   final InterviewTemplate template;
+
+  /// Optional: run with these questions instead of the template's stored set
+  /// (used by the candidate flow launching a Firestore Interview).
+  final List<FixedQuestion>? fixedQuestionsOverride;
+
+  /// Optional: fired when scoring completes (e.g. to mirror results to Firestore).
+  final void Function(InterviewSession completedSession, ResultReport report)?
+      onFinished;
+
+  /// Candidate mode hides the result on completion (recruiter publishes it).
+  final bool candidateMode;
+
   const ConversationRunnerPage({
     super.key,
     required this.session,
     required this.template,
+    this.fixedQuestionsOverride,
+    this.onFinished,
+    this.candidateMode = false,
   });
 
   @override
@@ -49,6 +65,8 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
       session: widget.session,
       template: widget.template,
       store: Provider.of<RecruiterStore>(context, listen: false),
+      fixedQuestionsOverride: widget.fixedQuestionsOverride,
+      onFinished: widget.onFinished,
     );
   }
 
@@ -113,6 +131,7 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
               return _CompletionScreen(
                 sessionId: widget.session.id,
                 degraded: c.report?.degraded == true,
+                candidateMode: widget.candidateMode,
               );
           }
         },
@@ -461,6 +480,13 @@ class _ChatStage extends StatelessWidget {
 
     final canType = !c.sending && !thinking;
 
+    // The question the candidate is answering now, kept out of the history feed
+    // so it can be shown large + bold in the hero card.
+    final current = engine.awaitingInterviewer;
+    final history = engine.transcript
+        .where((t) => current == null || t.id != current.id)
+        .toList();
+
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: SafeArea(
@@ -468,7 +494,7 @@ class _ChatStage extends StatelessWidget {
           children: [
             // Header
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -478,53 +504,164 @@ class _ChatStage extends StatelessWidget {
                     color: theme.colorScheme.secondary,
                   ),
                   if (timed && phase != null)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                            thinking ? Icons.lightbulb_outline : Icons.timer,
-                            size: 16,
-                            color: warning
-                                ? theme.colorScheme.error
-                                : theme.colorScheme.primary),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${thinking ? 'Think' : 'Answer'} · ${remaining}s',
-                          style: TextStyle(
-                              fontFamily: 'Courier',
-                              fontWeight: FontWeight.bold,
-                              color: warning
-                                  ? theme.colorScheme.error
-                                  : theme.colorScheme.primary),
-                        ),
-                      ],
+                    _TimerPill(
+                      thinking: thinking,
+                      warning: warning,
+                      remaining: remaining,
                     ),
                 ],
               ),
             ),
             if (timed && phase != null && total > 0)
-              LinearProgressIndicator(
-                value: (remaining / total).clamp(0.0, 1.0),
-                minHeight: 3,
-                backgroundColor:
-                    theme.colorScheme.onSurface.withValues(alpha: 0.06),
-                valueColor: AlwaysStoppedAnimation(
-                    warning ? theme.colorScheme.error : theme.colorScheme.primary),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: (remaining / total).clamp(0.0, 1.0),
+                    minHeight: 4,
+                    backgroundColor:
+                        theme.colorScheme.onSurface.withValues(alpha: 0.06),
+                    valueColor: AlwaysStoppedAnimation(warning
+                        ? theme.colorScheme.error
+                        : theme.colorScheme.primary),
+                  ),
+                ),
               ),
-            // Transcript
+            // Hero: the current question, large + bold.
+            _questionCard(context, current, c.sending),
+            // History: previous exchanges, quieter.
             Expanded(
-              child: ListView(
-                reverse: true,
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                children: [
-                  if (c.sending) _typingBubble(context),
-                  ...engine.transcript.reversed
-                      .map((t) => _bubble(context, t)),
-                ],
-              ),
+              child: history.isEmpty
+                  ? _emptyHistory(context)
+                  : ListView(
+                      reverse: true,
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                      children: history.reversed
+                          .map((t) => _bubble(context, t))
+                          .toList(),
+                    ),
             ),
             // Input
-            _inputBar(context, canType, thinking, warning),
+            _ChatInputBar(
+              controller: controller,
+              template: template,
+              answerCtrl: answerCtrl,
+              canType: canType,
+              thinking: thinking,
+              warning: warning,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _questionCard(
+      BuildContext context, ConvTurn? current, bool sending) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final showTyping = sending || current == null;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.colorScheme.primaryContainer
+                .withValues(alpha: isDark ? 0.45 : 0.7),
+            theme.colorScheme.secondaryContainer
+                .withValues(alpha: isDark ? 0.35 : 0.5),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+            color: theme.colorScheme.primary.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: theme.colorScheme.primary,
+                child: Icon(Icons.record_voice_over,
+                    size: 16, color: theme.colorScheme.onPrimary),
+              ),
+              const SizedBox(width: 10),
+              Text('INTERVIEWER',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.5,
+                      color: theme.colorScheme.onSurfaceVariant)),
+              if (current?.isFollowUp == true) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondary.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text('FOLLOW-UP',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          color: theme.colorScheme.secondary)),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (showTyping)
+            Row(
+              children: [
+                SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: theme.colorScheme.primary)),
+                const SizedBox(width: 12),
+                Text('Preparing the next question…',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              ],
+            )
+          else
+            Text(
+              current.content,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                height: 1.3,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyHistory(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.forum_outlined,
+                size: 32,
+                color: theme.colorScheme.onSurfaceVariant
+                    .withValues(alpha: 0.5)),
+            const SizedBox(height: 8),
+            Text('Your answers will appear here.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant)),
           ],
         ),
       ),
@@ -576,40 +713,154 @@ class _ChatStage extends StatelessWidget {
     );
   }
 
-  Widget _typingBubble(BuildContext context) {
+}
+
+/// Countdown pill shown in the chat header during timed conversational mode.
+class _TimerPill extends StatelessWidget {
+  final bool thinking;
+  final bool warning;
+  final int remaining;
+  const _TimerPill(
+      {required this.thinking, required this.warning, required this.remaining});
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: theme.colorScheme.secondary)),
-            const SizedBox(width: 10),
-            Text('Interviewer is typing…',
-                style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12)),
-          ],
-        ),
+    final color =
+        warning ? theme.colorScheme.error : theme.colorScheme.primary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(thinking ? Icons.lightbulb_outline : Icons.timer,
+              size: 16, color: color),
+          const SizedBox(width: 6),
+          Text('${thinking ? 'Think' : 'Answer'} · ${remaining}s',
+              style: TextStyle(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  fontWeight: FontWeight.bold,
+                  color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Answer input with a voice (speech-to-text) mic. While listening, recognized
+/// words stream into the answer field; the candidate can still type/edit.
+class _ChatInputBar extends StatefulWidget {
+  final ConversationRunnerController controller;
+  final InterviewTemplate template;
+  final TextEditingController answerCtrl;
+  final bool canType;
+  final bool thinking;
+  final bool warning;
+
+  const _ChatInputBar({
+    required this.controller,
+    required this.template,
+    required this.answerCtrl,
+    required this.canType,
+    required this.thinking,
+    required this.warning,
+  });
+
+  @override
+  State<_ChatInputBar> createState() => _ChatInputBarState();
+}
+
+class _ChatInputBarState extends State<_ChatInputBar> {
+  final SpeechToText _speech = SpeechToText();
+  bool _speechReady = false;
+  bool _listening = false;
+  String _base = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    try {
+      _speechReady = await _speech.initialize(
+        onStatus: (s) {
+          if ((s == 'done' || s == 'notListening') && mounted) {
+            setState(() => _listening = false);
+          }
+        },
+        onError: (_) {
+          if (mounted) setState(() => _listening = false);
+        },
+      );
+    } catch (_) {
+      _speechReady = false;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleMic() async {
+    if (_listening) {
+      await _speech.stop();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    if (!_speechReady) {
+      _speechReady = await _speech.initialize();
+      if (!_speechReady) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Voice input isn\'t available on this device.')));
+        }
+        return;
+      }
+    }
+    _base = widget.answerCtrl.text.trimRight();
+    setState(() => _listening = true);
+    await _speech.listen(
+      onResult: (result) {
+        final words = result.recognizedWords;
+        final combined = _base.isEmpty ? words : '$_base $words';
+        widget.answerCtrl.value = TextEditingValue(
+          text: combined,
+          selection: TextSelection.collapsed(offset: combined.length),
+        );
+        widget.controller.saveDraft(combined);
+      },
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        listenMode: ListenMode.dictation,
       ),
     );
   }
 
-  Widget _inputBar(
-      BuildContext context, bool canType, bool thinking, bool warning) {
+  @override
+  void dispose() {
+    _speech.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final integrity = template.integrity;
+    final integrity = widget.template.integrity;
+    final canType = widget.canType;
+    final thinking = widget.thinking;
+
+    // Stop listening if answering is no longer allowed.
+    if (!canType && _listening) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _listening) _toggleMic();
+      });
+    }
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
@@ -633,34 +884,60 @@ class _ChatStage extends StatelessWidget {
                             fontSize: 12,
                             color: theme.colorScheme.onSurfaceVariant)),
                   ),
-                  if (template.conversationTiming?.allowSkipThinking == true)
+                  if (widget.template.conversationTiming?.allowSkipThinking ==
+                      true)
                     TextButton(
-                      onPressed: controller.skipThinking,
+                      onPressed: widget.controller.skipThinking,
                       child: const Text('Start now'),
                     ),
+                ],
+              ),
+            ),
+          if (_listening)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.graphic_eq,
+                      size: 16, color: theme.colorScheme.error),
+                  const SizedBox(width: 8),
+                  Text('Listening… speak your answer',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                          fontWeight: FontWeight.w600)),
                 ],
               ),
             ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              _MicButton(
+                listening: _listening,
+                enabled: canType && _speechReady,
+                onTap: _toggleMic,
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: TextField(
-                  controller: answerCtrl,
+                  controller: widget.answerCtrl,
                   enabled: canType,
                   minLines: 1,
                   maxLines: 5,
+                  style: theme.textTheme.bodyLarge,
                   textCapitalization: TextCapitalization.sentences,
                   enableInteractiveSelection: !integrity.disableCopy,
                   contextMenuBuilder: integrity.disablePasteInAnswers
                       ? (ctx, state) => const SizedBox.shrink()
                       : null,
-                  onChanged: controller.saveDraft,
+                  onChanged: widget.controller.saveDraft,
                   decoration: InputDecoration(
-                    hintText: thinking
-                        ? 'Thinking time…'
-                        : 'Type your answer…',
+                    hintText:
+                        thinking ? 'Thinking time…' : 'Type or speak your answer…',
                     filled: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                 ),
               ),
@@ -668,13 +945,13 @@ class _ChatStage extends StatelessWidget {
               _SendButton(
                 enabled: canType,
                 onSend: () {
-                  final text = answerCtrl.text;
-                  controller.submit(text);
+                  if (_listening) _speech.stop();
+                  widget.controller.submit(widget.answerCtrl.text);
                 },
               ),
             ],
           ),
-          if (warning)
+          if (widget.warning)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text('Time almost up — your answer will auto-submit.',
@@ -684,6 +961,42 @@ class _ChatStage extends StatelessWidget {
                       fontWeight: FontWeight.w600)),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Circular mic toggle; pulses red while listening.
+class _MicButton extends StatelessWidget {
+  final bool listening;
+  final bool enabled;
+  final VoidCallback onTap;
+  const _MicButton(
+      {required this.listening, required this.enabled, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final bg = listening
+        ? theme.colorScheme.error
+        : (enabled
+            ? theme.colorScheme.primary.withValues(alpha: 0.12)
+            : theme.colorScheme.onSurface.withValues(alpha: 0.06));
+    final fg = listening
+        ? theme.colorScheme.onError
+        : (enabled
+            ? theme.colorScheme.primary
+            : theme.colorScheme.onSurfaceVariant);
+    return Material(
+      color: bg,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: enabled ? onTap : null,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Icon(listening ? Icons.mic : Icons.mic_none, color: fg),
+        ),
       ),
     );
   }
@@ -740,7 +1053,15 @@ class _ScoringScreen extends StatelessWidget {
 class _CompletionScreen extends StatelessWidget {
   final String sessionId;
   final bool degraded;
-  const _CompletionScreen({required this.sessionId, required this.degraded});
+
+  /// In candidate mode the result is hidden — it's shown only after the
+  /// recruiter reviews and publishes it.
+  final bool candidateMode;
+  const _CompletionScreen({
+    required this.sessionId,
+    required this.degraded,
+    this.candidateMode = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -761,23 +1082,29 @@ class _CompletionScreen extends StatelessWidget {
                     style: theme.textTheme.headlineSmall
                         ?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
-                Text('The conversation has been scored.',
+                Text(
+                    candidateMode
+                        ? 'Your responses have been submitted. Results will be '
+                            'available once the recruiter publishes them.'
+                        : 'The conversation has been scored.',
+                    textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium),
                 const SizedBox(height: 24),
-                CustomButton(
-                  text: 'View report',
-                  onPressed: () {
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => ReportPage(sessionId: sessionId),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 10),
+                if (!candidateMode)
+                  CustomButton(
+                    text: 'View report',
+                    onPressed: () {
+                      Navigator.of(context).pushReplacement(
+                        MaterialPageRoute(
+                          builder: (_) => ReportPage(sessionId: sessionId),
+                        ),
+                      );
+                    },
+                  ),
+                if (!candidateMode) const SizedBox(height: 10),
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text('Back to sessions',
+                  child: Text(candidateMode ? 'Done' : 'Back to sessions',
                       style: TextStyle(
                           color: theme.colorScheme.onSurfaceVariant)),
                 ),

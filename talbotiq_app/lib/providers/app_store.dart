@@ -206,6 +206,54 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies API keys to memory + service singletons WITHOUT persisting. Used to
+  /// run a recruiter's (org) interview with their keys on a candidate device
+  /// without storing them: they never hit prefs/Settings and are undone by
+  /// [reloadApiKeysFromPrefs] when the session ends (or on restart).
+  void applyEphemeralApiKeys({
+    String? tavus,
+    String? gemini,
+    String? hume,
+    String? deepgram,
+  }) {
+    if (tavus != null) {
+      _tavusKey = tavus;
+      tavusService.setKey(tavus);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+    }
+    if (gemini != null) {
+      _geminiKey = gemini;
+      geminiService.setKey(gemini);
+    }
+    if (hume != null) {
+      _humeKey = hume;
+      humeService.setKey(hume);
+    }
+    if (deepgram != null) {
+      _deepgramKey = deepgram;
+      deepgramService.setKey(deepgram);
+    }
+    notifyListeners();
+  }
+
+  /// Restores the device's own persisted API keys (undoing ephemeral org keys).
+  Future<void> reloadApiKeysFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kStoreKey);
+    final Map<String, dynamic> data =
+        raw == null ? const {} : jsonDecode(raw) as Map<String, dynamic>;
+    _tavusKey = data['tavusKey'] ?? '';
+    _deepgramKey = data['deepgramKey'] ?? '';
+    _humeKey = data['humeKey'] ?? '';
+    _geminiKey = data['geminiKey'] ?? '';
+    tavusService.setKey(_tavusKey);
+    deepgramService.setKey(_deepgramKey);
+    humeService.setKey(_humeKey);
+    geminiService.setKey(_geminiKey);
+    notifyListeners();
+  }
+
   void setStoreLocalRecordings(bool enable) {
     _storeLocalRecordings = enable;
     _saveToPrefs();
