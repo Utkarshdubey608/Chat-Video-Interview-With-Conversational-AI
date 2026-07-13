@@ -171,8 +171,11 @@ class _LoginPageState extends State<LoginPage> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.errorContainer.withOpacity(0.5),
+                      color: theme.colorScheme.error.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: theme.colorScheme.error.withOpacity(0.4),
+                      ),
                     ),
                     child: Row(
                       children: [
@@ -183,7 +186,8 @@ class _LoginPageState extends State<LoginPage> {
                           child: Text(
                             _error!,
                             style: TextStyle(
-                              color: theme.colorScheme.onErrorContainer,
+                              color: theme.colorScheme.error,
+                              fontWeight: FontWeight.w500,
                               fontSize: 13,
                             ),
                           ),

@@ -16,6 +16,7 @@ import '../../../core/services/tavus_service.dart';
 import '../../../views/setup/avatar_picker.dart';
 import '../../../widgets/custom_buttons.dart';
 import '../../../widgets/custom_inputs.dart';
+import '../../recruiter/views/widgets/question_templates_bar.dart';
 import 'video_launch.dart';
 
 class PracticePage extends StatefulWidget {
@@ -91,6 +92,19 @@ class _PracticePageState extends State<PracticePage> {
   void _removeQuestion(int i) {
     if (_questionControllers.length == 1) return;
     setState(() => _questionControllers.removeAt(i).dispose());
+  }
+
+  /// Replaces the practice questions with a saved template's questions.
+  void _applyTemplate(List<String> questions, {String? title}) {
+    setState(() {
+      for (final c in _questionControllers) {
+        c.dispose();
+      }
+      _questionControllers
+        ..clear()
+        ..addAll((questions.isEmpty ? [''] : questions)
+            .map((q) => TextEditingController(text: q)));
+    });
   }
 
   List<String> get _questions => _questionControllers
@@ -226,9 +240,24 @@ class _PracticePageState extends State<PracticePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Questions (optional)',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text('Questions (optional)',
+                style: theme.textTheme.labelLarge
+                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: QuestionTemplatesBar(
+                  currentQuestions: () => _questions,
+                  onApply: _applyTemplate,
+                ),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         for (int i = 0; i < _questionControllers.length; i++)
           Padding(

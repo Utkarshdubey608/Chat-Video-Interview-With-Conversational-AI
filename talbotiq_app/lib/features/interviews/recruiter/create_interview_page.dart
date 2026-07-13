@@ -15,6 +15,7 @@ import '../../../core/services/tavus_service.dart';
 import '../../../widgets/custom_buttons.dart';
 import '../../../widgets/custom_inputs.dart';
 import '../../auth/auth_service.dart';
+import '../../recruiter/views/widgets/question_templates_bar.dart';
 import '../models/interview.dart';
 import '../services/interview_repository.dart';
 
@@ -181,6 +182,25 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       .map((c) => c.text.trim())
       .where((t) => t.isNotEmpty)
       .toList();
+
+  /// Replaces the question list with a saved template's questions. When the
+  /// title is still empty and the template supplied one, it seeds the title too.
+  void _applyTemplate(List<String> questions, {String? title}) {
+    setState(() {
+      for (final c in _questionControllers) {
+        c.dispose();
+      }
+      _questionControllers
+        ..clear()
+        ..addAll((questions.isEmpty ? [''] : questions)
+            .map((q) => TextEditingController(text: q)));
+      if (title != null &&
+          title.trim().isNotEmpty &&
+          _titleController.text.trim().isEmpty) {
+        _titleController.text = title.trim();
+      }
+    });
+  }
 
   /// Non-empty per-test key overrides, or an empty map when custom keys are
   /// off. Blank fields are omitted so they fall back to the recruiter's keys.
@@ -771,9 +791,25 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Questions',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text('Questions',
+                style: theme.textTheme.labelLarge
+                    ?.copyWith(fontWeight: FontWeight.w600)),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: QuestionTemplatesBar(
+                  currentQuestions: () => _questions,
+                  onApply: _applyTemplate,
+                  includeInterviewTemplates: true,
+                ),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 8),
         for (int i = 0; i < _questionControllers.length; i++)
           Padding(
