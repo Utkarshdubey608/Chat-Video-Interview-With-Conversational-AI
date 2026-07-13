@@ -71,8 +71,9 @@ class _CandidateHomeState extends State<CandidateHome> {
       // only — never persisted, never shown in the candidate's Settings. Each
       // launch re-establishes the right org's keys, so one org's interview
       // never uses another org's credentials.
-      final hasKey =
-          await appConfig.applyForRecruiter(interview.recruiterId, store);
+      final hasKey = await appConfig.applyForRecruiter(
+          interview.recruiterId, store,
+          overrides: interview.keyOverrides);
       if (!mounted) return;
       if (!hasKey) {
         messenger.showSnackBar(const SnackBar(
@@ -114,7 +115,9 @@ class _CandidateHomeState extends State<CandidateHome> {
     final recruiterStore = context.read<RecruiterStore>();
     final store = context.read<AppStore>();
     // Apply the org's Gemini key (for scoring) in-memory before running.
-    await context.read<AppConfigService>().applyForRecruiter(interview.recruiterId, store);
+    await context.read<AppConfigService>().applyForRecruiter(
+        interview.recruiterId, store,
+        overrides: interview.keyOverrides);
     if (!mounted) return;
     repo.incrementAttempt(interview.id); // count this attempt
     await Navigator.of(context).push(

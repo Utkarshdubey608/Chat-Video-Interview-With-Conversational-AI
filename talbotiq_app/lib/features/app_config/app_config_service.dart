@@ -51,12 +51,21 @@ class AppConfigService {
   /// Returns true if a usable Tavus key was found (callers guard video launch
   /// on this). Each call fully re-establishes the org's keys, so switching
   /// between interviews from different recruiters never mixes credentials.
-  Future<bool> applyForRecruiter(String recruiterId, AppStore store) async {
+  ///
+  /// [overrides] are per-test key overrides (from `Interview.keyOverrides`):
+  /// any non-empty entry wins over the recruiter's stored key, so a recruiter
+  /// can run a specific test on different credentials than their Settings.
+  Future<bool> applyForRecruiter(
+    String recruiterId,
+    AppStore store, {
+    Map<String, String> overrides = const {},
+  }) async {
     final snap = await _doc(recruiterId).get();
-    final d = snap.data();
-    if (d == null) return false;
+    final d = snap.data() ?? const <String, dynamic>{};
 
     String k(String key) {
+      final o = overrides[key];
+      if (o != null && o.trim().isNotEmpty) return o.trim();
       final v = d[key];
       return v is String ? v.trim() : '';
     }

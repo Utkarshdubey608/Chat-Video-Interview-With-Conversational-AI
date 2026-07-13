@@ -104,6 +104,13 @@ class Interview {
   final int durationMinutes;
   final InterviewStatus status;
 
+  /// Per-test API key overrides. When a candidate launches this interview, any
+  /// key present here is used INSTEAD of the recruiter's Settings key; blank/
+  /// absent keys fall back to the recruiter's own keys (recruiter_keys doc).
+  /// Only non-empty entries are stored. Recognized keys: tavusKey, geminiKey,
+  /// humeKey, deepgramKey. See AppConfigService.applyForRecruiter.
+  final Map<String, String> keyOverrides;
+
   /// Optional access window. The candidate can only launch between
   /// [availableFrom] (if set) and [expiresAt] (if set).
   final DateTime? availableFrom;
@@ -144,6 +151,7 @@ class Interview {
     required this.avatar,
     required this.durationMinutes,
     required this.status,
+    this.keyOverrides = const {},
     this.availableFrom,
     this.expiresAt,
     this.maxAttempts,
@@ -169,6 +177,17 @@ class Interview {
   /// The candidate may launch only within the window AND with attempts left.
   bool get isAccessible => isWithinWindow && hasAttemptsLeft;
 
+  /// Coerces a stored `keyOverrides` map to `Map<String, String>`, dropping
+  /// null/blank values so callers can treat "present" as "use this key".
+  static Map<String, String> _readKeyOverrides(Object? raw) {
+    if (raw is! Map) return const {};
+    final out = <String, String>{};
+    raw.forEach((k, v) {
+      if (v is String && v.trim().isNotEmpty) out[k.toString()] = v.trim();
+    });
+    return out;
+  }
+
   factory Interview.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final d = doc.data() ?? const {};
     return Interview(
@@ -191,6 +210,7 @@ class Interview {
       avatar: AvatarConfig.fromMap(d['avatar'] as Map<String, dynamic>?),
       durationMinutes: (d['durationMinutes'] as num?)?.toInt() ?? 15,
       status: InterviewStatusX.fromWire(d['status'] as String?),
+      keyOverrides: _readKeyOverrides(d['keyOverrides']),
       availableFrom: (d['availableFrom'] as Timestamp?)?.toDate(),
       expiresAt: (d['expiresAt'] as Timestamp?)?.toDate(),
       maxAttempts: (d['maxAttempts'] as num?)?.toInt(),
@@ -221,6 +241,7 @@ class Interview {
         'avatar': avatar.toMap(),
         'durationMinutes': durationMinutes,
         'status': status.wire,
+        'keyOverrides': keyOverrides,
         'availableFrom':
             availableFrom == null ? null : Timestamp.fromDate(availableFrom!),
         'expiresAt': expiresAt == null ? null : Timestamp.fromDate(expiresAt!),
@@ -241,6 +262,7 @@ class Interview {
         'questions': questions,
         'avatar': avatar.toMap(),
         'durationMinutes': durationMinutes,
+        'keyOverrides': keyOverrides,
         'availableFrom':
             availableFrom == null ? null : Timestamp.fromDate(availableFrom!),
         'expiresAt': expiresAt == null ? null : Timestamp.fromDate(expiresAt!),
