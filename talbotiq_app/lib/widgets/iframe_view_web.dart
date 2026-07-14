@@ -3,10 +3,15 @@ import 'dart:ui_web' as ui_web;
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
-// Cache to keep track of registered view types
+// Monotonic counter used to mint a unique view type per iframe instance.
+// Keying by url.hashCode risked collisions (two different URLs sharing a hash
+// would reuse the wrong registered factory / cached element).
+int _viewTypeCounter = 0;
+
+// Registered view types (guards against double-registration).
 final Set<String> _registeredViews = {};
 
-// Cache to keep track of IFrameElement instances by URL
+// Cache of IFrameElement instances, keyed by their unique view type.
 final Map<String, html.IFrameElement> _iframeCache = {};
 
 Widget buildIframe(String url) {
@@ -27,7 +32,7 @@ class _WebIframeViewState extends State<WebIframeView> {
   @override
   void initState() {
     super.initState();
-    _viewType = 'tavus-iframe-${widget.url.hashCode}';
+    _viewType = 'tavus-iframe-${_viewTypeCounter++}';
     _registerViewFactory();
   }
 
@@ -36,7 +41,7 @@ class _WebIframeViewState extends State<WebIframeView> {
     _registeredViews.add(_viewType);
 
     ui_web.platformViewRegistry.registerViewFactory(_viewType, (int viewId) {
-      return _iframeCache.putIfAbsent(widget.url, () {
+      return _iframeCache.putIfAbsent(_viewType, () {
         return html.IFrameElement()
           ..src = widget.url
           ..style.border = 'none'
@@ -45,6 +50,16 @@ class _WebIframeViewState extends State<WebIframeView> {
           ..allow = 'camera; microphone; autoplay; display-capture; fullscreen';
       });
     });
+  }
+
+  @override
+  void dispose() {
+    // Evict this instance's cached iframe + registration so they don't leak for
+    // the lifetime of the app. The view type is unique per instance, so it is
+    // never re-registered after removal.
+    _iframeCache.remove(_viewType);
+    _registeredViews.remove(_viewType);
+    super.dispose();
   }
 
   @override

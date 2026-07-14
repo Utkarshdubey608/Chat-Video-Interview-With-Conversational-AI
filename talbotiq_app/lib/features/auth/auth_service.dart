@@ -70,6 +70,11 @@ class AuthService {
 
   Future<void> signOut() => _auth.signOut();
 
+  /// Sends a password-reset email to [email]. Used by the login screen's
+  /// "Forgot password?" action.
+  Future<void> sendPasswordReset(String email) =>
+      _auth.sendPasswordResetEmail(email: email.trim());
+
   /// Reads the role recorded at sign-up. Defaults to candidate if the doc is
   /// missing (e.g. an account created outside the app).
   Future<AppRole> roleFor(String uid) async {

@@ -110,16 +110,19 @@ class _CandidateHomeState extends State<CandidateHome> {
   }
 
   Future<void> _launchChat(Interview interview) async {
+    if (_launching) return;
     if (!_guardAccess(interview)) return;
     final repo = context.read<InterviewRepository>();
     final recruiterStore = context.read<RecruiterStore>();
     final store = context.read<AppStore>();
+    setState(() => _launching = true);
     // Apply the org's Gemini key (for scoring) in-memory before running.
     await context.read<AppConfigService>().applyForRecruiter(
         interview.recruiterId, store,
         overrides: interview.keyOverrides);
     if (!mounted) return;
     repo.incrementAttempt(interview.id); // count this attempt
+    if (mounted) setState(() => _launching = false);
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => buildChatRunnerPage(
@@ -171,10 +174,14 @@ class _CandidateHomeState extends State<CandidateHome> {
             stream: repo.watchForCandidate(_email),
             builder: (context, snap) {
               if (snap.hasError) {
-                return _Message(
+                // Never surface the raw error to the candidate — it can leak
+                // Firestore internals and composite-index URLs. Log it for
+                // developers and show a friendly message instead.
+                debugPrint('CandidateHome interviews stream error: ${snap.error}');
+                return const _Message(
                   icon: Icons.error_outline,
                   title: 'Could not load your interviews',
-                  subtitle: '${snap.error}',
+                  subtitle: 'Please check your connection and try again.',
                 );
               }
               if (!snap.hasData) {

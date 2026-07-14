@@ -26,7 +26,10 @@ class DimensionScoresPanel extends StatelessWidget {
     int score,
   ) {
     final theme = Theme.of(context);
-    final color = _getScoreColor(context, score);
+    // Clamp to the valid 0..100 range so both the bar and the numeric label
+    // stay in bounds (derived values can drift below 0 or above 100).
+    final displayScore = score.clamp(0, 100);
+    final color = _getScoreColor(context, displayScore);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12.0),
       child: Row(
@@ -52,7 +55,7 @@ class DimensionScoresPanel extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: FractionallySizedBox(
-                  widthFactor: (score / 100.0).clamp(0.0, 1.0),
+                  widthFactor: (displayScore / 100.0).clamp(0.0, 1.0),
                   child: Container(
                     decoration: BoxDecoration(
                       color: color,
@@ -65,7 +68,7 @@ class DimensionScoresPanel extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           Text(
-            '$score',
+            '$displayScore',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.bold,
@@ -94,6 +97,9 @@ class DimensionScoresPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+            // NOTE: these per-dimension values are derived estimates offset
+            // from the overall score (not independently measured); each is
+            // clamped to 0..100 in _buildDimensionProgress before display.
             _buildDimensionProgress(
               context,
               'Communication',

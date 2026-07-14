@@ -23,6 +23,31 @@ class QuestionSetsPage extends StatelessWidget {
     );
   }
 
+  Future<void> _confirmDelete(
+      BuildContext context, RecruiterStore store, QuestionSet s) async {
+    final theme = Theme.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete question set?'),
+        content: Text('Permanently delete "${s.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel',
+                style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+          ),
+          CustomButton(
+            text: 'Delete',
+            variant: ButtonVariant.danger,
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) store.deleteQuestionSet(s.id);
+  }
+
   QuestionSet _newSet() {
     final now = DateTime.now().toIso8601String();
     return QuestionSet(
@@ -88,7 +113,7 @@ class QuestionSetsPage extends StatelessWidget {
                   set: s,
                   onOpen: () => _openEditor(context, s.id),
                   onDuplicate: () => store.duplicateQuestionSet(s.id),
-                  onDelete: () => store.deleteQuestionSet(s.id),
+                  onDelete: () => _confirmDelete(context, store, s),
                 )),
         ],
       ),
@@ -162,6 +187,7 @@ class _QuestionSetEditorPageState extends State<QuestionSetEditorPage> {
   late TextEditingController _nameController;
   late List<_QuestionDraft> _questions;
   bool _initialized = false;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -202,6 +228,10 @@ class _QuestionSetEditorPageState extends State<QuestionSetEditorPage> {
   }
 
   void _save() {
+    // Re-entrancy guard: a rapid double-tap must not upsert twice or pop the
+    // editor route more than once.
+    if (_saving) return;
+    _saving = true;
     final store = Provider.of<RecruiterStore>(context, listen: false);
     final existing = store.questionSetById(widget.setId);
     final now = DateTime.now().toIso8601String();

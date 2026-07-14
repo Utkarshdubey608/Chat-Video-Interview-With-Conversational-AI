@@ -155,7 +155,7 @@ class AtsAssessmentCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Overall Fit: ${card.overallFitLabel} (${card.overallFitScore}/100)',
+                            'Overall Fit: ${card.overallFitLabel} (${card.overallFitScore ?? '—'}/100)',
                             style: TextStyle(
                               fontSize: 13,
                               color: theme.colorScheme.primary,

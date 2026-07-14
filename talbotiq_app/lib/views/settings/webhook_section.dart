@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_store.dart';
+import '../../core/utils/validators.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
 import '../../widgets/apple_ui.dart';
@@ -16,6 +17,7 @@ class WebhookSection extends StatefulWidget {
 
 class _WebhookSectionState extends State<WebhookSection> {
   late TextEditingController _webhookController;
+  String? _urlError;
 
   @override
   void initState() {
@@ -30,10 +32,20 @@ class _WebhookSectionState extends State<WebhookSection> {
     super.dispose();
   }
 
-  // Persists the webhook URL to the store.
+  // Persists the webhook URL to the store. The URL is optional, but if provided
+  // it must be a safe https(/localhost) URL — this blocks the SSRF / scheme
+  // injection surface (javascript:, file://, metadata IPs) the field accepted.
   void _save() {
     final store = Provider.of<AppStore>(context, listen: false);
-    store.setWebhookUrl(_webhookController.text.trim());
+    final url = _webhookController.text.trim();
+    final error = Validators.httpUrlError(url, required: false);
+    if (error != null) {
+      setState(() => _urlError = error);
+      return;
+    }
+
+    setState(() => _urlError = null);
+    store.setWebhookUrl(url);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Webhook saved'),
@@ -44,17 +56,41 @@ class _WebhookSectionState extends State<WebhookSection> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         AppleSectionCard(
           title: 'Webhook Configuration',
           subtitle: 'Receives real-time conversation events from Tavus',
-          child: CustomInputField(
-            label: 'Webhook URL',
-            placeholder: 'https://api.yourcompany.com/webhook/tavus',
-            controller: _webhookController,
-            hint: 'Receives: conversation.started, conversation.ended, transcription, participant events, errors',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CustomInputField(
+                label: 'Webhook URL',
+                placeholder: 'https://api.yourcompany.com/webhook/tavus',
+                controller: _webhookController,
+                onChanged: (_) {
+                  if (_urlError != null) setState(() => _urlError = null);
+                },
+                hint: 'Receives: conversation.started, conversation.ended, transcription, participant events, errors',
+              ),
+              if (_urlError != null) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _urlError!,
+                        style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
           ),
         ),
         const SizedBox(height: 24),

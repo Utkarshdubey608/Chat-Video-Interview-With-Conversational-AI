@@ -92,29 +92,32 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
       return;
     }
     setState(() => _tavusTestState = 'testing');
+    // Test with the unsaved field value but restore the previously configured
+    // key afterwards, so a test never permanently changes global app state.
+    final previousKey = tavusService.getKey();
     try {
       tavusService.setKey(_tavusController.text.trim());
       final replicas = await tavusService.listReplicas();
+      if (!mounted) return;
       setState(() => _tavusTestState = 'ok');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Connected — ${replicas.length} replica(s) found'),
-            backgroundColor: Theme.of(context).colorScheme.primary,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Connected — ${replicas.length} replica(s) found'),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+      );
     } catch (e) {
       debugPrint('$e');
+      if (!mounted) return;
       setState(() => _tavusTestState = 'fail');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Connection failed: ${e.toString().replaceAll('Exception: ', '')}'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Connection failed: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    } finally {
+      tavusService.setKey(previousKey);
     }
   }
 
@@ -127,40 +130,41 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
       return;
     }
     setState(() => _dgTestState = 'testing');
+    // Test with the unsaved field value but restore the previously configured
+    // key afterwards, so a test never permanently changes global app state.
+    final previousKey = deepgramService.getKey();
     try {
       deepgramService.setKey(_deepgramController.text.trim());
       final res = await deepgramService.testConnection();
+      if (!mounted) return;
       if (res['ok'] == true) {
         setState(() => _dgTestState = 'ok');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Deepgram Nova-3 connected successfully'),
-              backgroundColor: Theme.of(context).colorScheme.primary,
-            ),
-          );
-        }
-      } else {
-        setState(() => _dgTestState = 'fail');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Deepgram connection failed: ${res['message']}'),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      setState(() => _dgTestState = 'fail');
-      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Connection failed: $e'),
+            content: const Text('Deepgram Nova-3 connected successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      } else {
+        setState(() => _dgTestState = 'fail');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deepgram connection failed: ${res['message']}'),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _dgTestState = 'fail');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Connection failed: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    } finally {
+      deepgramService.setKey(previousKey);
     }
   }
 
@@ -178,37 +182,33 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
         Uri.parse('https://api.hume.ai/v0/batch/jobs?limit=1'),
         headers: {'X-Hume-Api-Key': _humeController.text.trim()},
       );
+      if (!mounted) return;
       if (res.statusCode == 200) {
         setState(() => _humeTestState = 'ok');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Hume AI connected successfully'),
-              backgroundColor: Theme.of(context).colorScheme.primary,
-            ),
-          );
-        }
-      } else {
-        setState(() => _humeTestState = 'fail');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Hume returned HTTP ${res.statusCode}'),
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      setState(() => _humeTestState = 'fail');
-      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Hume connection failed: $e'),
+            content: const Text('Hume AI connected successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      } else {
+        setState(() => _humeTestState = 'fail');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Hume returned HTTP ${res.statusCode}'),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _humeTestState = 'fail');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Hume connection failed: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
     }
   }
 
@@ -259,13 +259,12 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
   // Pastes clipboard text into the given field.
   Future<void> _pasteInto(TextEditingController controller) async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
     final text = data?.text?.trim();
     if (text == null || text.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clipboard is empty')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard is empty')),
+      );
       return;
     }
     controller.text = text;

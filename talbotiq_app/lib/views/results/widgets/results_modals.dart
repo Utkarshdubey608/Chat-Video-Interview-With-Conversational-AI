@@ -128,8 +128,11 @@ class _ScheduleInterviewDialogState extends State<ScheduleInterviewDialog> {
                   CustomButton(
                     text: 'Confirm Schedule',
                     onPressed: () {
+                      // Capture the messenger before onClose() disposes this
+                      // widget's context / removes it from the tree.
+                      final messenger = ScaffoldMessenger.of(context);
                       widget.onClose();
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         SnackBar(
                           content: const Text('Technical round scheduled!'),
                           backgroundColor: theme.colorScheme.primary,
@@ -254,9 +257,12 @@ Generated: $today''';
                   CustomButton(
                     text: 'Copy to Clipboard',
                     onPressed: () {
+                      // Capture the messenger before onClose() removes this
+                      // dialog's context from the tree.
+                      final messenger = ScaffoldMessenger.of(context);
                       Clipboard.setData(ClipboardData(text: blockContent));
                       onClose();
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger.showSnackBar(
                         SnackBar(
                           content: const Text('Offer copied to clipboard!'),
                           backgroundColor: theme.colorScheme.primary,

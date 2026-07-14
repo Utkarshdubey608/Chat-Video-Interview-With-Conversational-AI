@@ -22,13 +22,51 @@ class _MobileWebViewState extends State<_MobileWebView> {
   WebViewController? _controller;
   String? _error;
 
+  // Host of the URL we were asked to load. Navigation to any other host (other
+  // than the known Tavus / Daily.co video hosts) is blocked so the locked-down
+  // WebView cannot be steered elsewhere while it holds camera/mic permission.
+  String? _initialHost;
+
   @override
   void initState() {
     super.initState();
     _init();
   }
 
+  /// Allowlist of hosts the interview WebView may navigate to: the initial
+  /// Tavus conversation URL host plus the Tavus / Daily.co video infrastructure
+  /// that a live call relies on.
+  bool _isAllowedHost(String host) {
+    if (host.isEmpty) return false;
+    final h = host.toLowerCase();
+    if (h == _initialHost) return true;
+    const suffixes = <String>['daily.co', 'tavus.io', 'tavusapi.com'];
+    for (final s in suffixes) {
+      if (h == s || h.endsWith('.$s')) return true;
+    }
+    return false;
+  }
+
+  /// Gate every top-level navigation against the host allowlist. In-page
+  /// about:/blob:/data: navigations used internally by the call UI are allowed;
+  /// any other scheme (deep links, tel:, etc.) or off-allowlist host is blocked.
+  NavigationDecision _decideNavigation(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return NavigationDecision.prevent;
+    if (uri.scheme == 'about' || uri.scheme == 'blob' || uri.scheme == 'data') {
+      return NavigationDecision.navigate;
+    }
+    if ((uri.scheme == 'http' || uri.scheme == 'https') &&
+        _isAllowedHost(uri.host)) {
+      return NavigationDecision.navigate;
+    }
+    debugPrint('Blocked WebView navigation to $url');
+    return NavigationDecision.prevent;
+  }
+
   Future<void> _init() async {
+    _initialHost = Uri.tryParse(widget.url)?.host.toLowerCase();
+
     // 1) Ask the OS for camera + microphone like a native app would.
     final statuses = await [Permission.camera, Permission.microphone].request();
     final camOk = statuses[Permission.camera]?.isGranted ?? false;
@@ -52,6 +90,7 @@ class _MobileWebViewState extends State<_MobileWebView> {
     await controller.setBackgroundColor(const Color(0xFF000000));
     await controller.setNavigationDelegate(
       NavigationDelegate(
+        onNavigationRequest: (request) => _decideNavigation(request.url),
         onWebResourceError: (error) {
           debugPrint('Web resource error in Tavus WebView: ${error.description}');
         },
@@ -64,7 +103,21 @@ class _MobileWebViewState extends State<_MobileWebView> {
     if (platform is AndroidWebViewController) {
       await platform.setMediaPlaybackRequiresUserGesture(false);
       await platform.setOnPlatformPermissionRequest((request) {
-        request.grant();
+        // Grant ONLY camera + microphone, and only when the request is limited
+        // to those. Deny anything else the page might ask for (MIDI, protected
+        // media / DRM, etc.). The navigation allowlist above guarantees this
+        // request can only originate from an allowlisted Tavus/Daily.co origin.
+        const allowed = <WebViewPermissionResourceType>{
+          WebViewPermissionResourceType.camera,
+          WebViewPermissionResourceType.microphone,
+        };
+        final onlyCameraAndMic = request.types.isNotEmpty &&
+            request.types.every(allowed.contains);
+        if (onlyCameraAndMic) {
+          request.grant();
+        } else {
+          request.deny();
+        }
       });
     }
 

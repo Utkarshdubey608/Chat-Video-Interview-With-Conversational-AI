@@ -252,11 +252,13 @@ class _ResultsPageState extends State<ResultsPage> {
   void _startHumeProcess() async {
     final store = Provider.of<AppStore>(context, listen: false);
     final hasHumeKey = store.humeKey.isNotEmpty;
-    final hasConvId =
-        store.currentConversation != null &&
-        store.currentConversation!.conversationId.isNotEmpty;
+    // Capture the conversation id up-front. The polling timer below fires long
+    // after this method returns, so relying on a force-unwrapped
+    // store.currentConversation! inside the callback risks a null crash if the
+    // session is reset meanwhile.
+    final convId = store.currentConversation?.conversationId;
 
-    if (!hasHumeKey || !hasConvId) {
+    if (!hasHumeKey || convId == null || convId.isEmpty) {
       _runAtsAnalysis();
       return;
     }
@@ -295,7 +297,6 @@ class _ResultsPageState extends State<ResultsPage> {
       }
 
       try {
-        final convId = store.currentConversation!.conversationId;
         final recordingUri = await tavusService.getConversationRecordingUri(
           convId,
         );
@@ -460,15 +461,19 @@ class _ResultsPageState extends State<ResultsPage> {
         facialSummary: summary,
       );
 
-      setState(() {
-        _atsScorecard = scorecard;
-      });
+      if (mounted) {
+        setState(() {
+          _atsScorecard = scorecard;
+        });
+      }
 
       // Persist this finished result to history so it can be revisited /
-      // deleted later and is never regenerated on navigation.
+      // deleted later and is never regenerated on navigation. This must run
+      // regardless of mounted — an assigned interview's shell reads the result
+      // out of the store, so we cannot skip it if the page was disposed.
       final score = store.humeResult?.compositeScore ??
           scorecard.overallFitScore ??
-          72;
+          0;
       store.addInterviewResult(
         InterviewResult(
           id: 'res-${DateTime.now().millisecondsSinceEpoch}',
@@ -488,11 +493,12 @@ class _ResultsPageState extends State<ResultsPage> {
       // bytes so navigating back or relaunching never re-runs analysis.
       store.setRecordingBytes(null);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _geminiError = e.toString().replaceAll('Exception: ', '');
       });
     } finally {
-      setState(() => _geminiLoading = false);
+      if (mounted) setState(() => _geminiLoading = false);
     }
   }
 
@@ -916,10 +922,15 @@ class _ResultsPageState extends State<ResultsPage> {
     }
 
     final humeResult = store.humeResult;
-    final int overallScore = humeResult != null
-        ? humeResult.compositeScore
-        : 72;
-    final String verdict = _getScoreVerdict(overallScore);
+    // Unified score resolver: prefer Hume's composite, otherwise the Gemini ATS
+    // fit score. When neither is available we surface N/A instead of a
+    // fabricated 72, so this headline matches the persisted / candidate-visible
+    // score.
+    final int? resolvedScore =
+        humeResult?.compositeScore ?? _atsScorecard?.overallFitScore;
+    final int overallScore = resolvedScore ?? 0;
+    final String verdict =
+        resolvedScore != null ? _getScoreVerdict(resolvedScore) : 'Awaiting score';
 
     final List<String> strengths = [];
     final List<String> watchPoints = [];
@@ -1115,13 +1126,17 @@ class _ResultsPageState extends State<ResultsPage> {
                       children: [
                         StatCard(
                           label: 'Overall Score',
-                          value: '$overallScore/100',
+                          value: resolvedScore != null
+                              ? '$overallScore/100'
+                              : 'N/A',
                           valueColor: theme.colorScheme.primary,
                           subTitle: verdict,
                         ),
                         StatCard(
                           label: 'Hiring Confidence',
-                          value: '$overallScore%',
+                          value: resolvedScore != null
+                              ? '$overallScore%'
+                              : 'N/A',
                           valueColor: theme.colorScheme.primary,
                           subTitle: 'Based on speech keys',
                         ),

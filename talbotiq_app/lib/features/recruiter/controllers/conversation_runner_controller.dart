@@ -41,6 +41,7 @@ class ConversationRunnerController extends ChangeNotifier
   bool starting = false; // begin() in flight
   bool sending = false; // producing the next interviewer turn
   String? error;
+  bool _disposed = false; // set in dispose(); gates post-await continuations
 
   Timer? _timer;
   final List<IntegrityEvent> _integrityEvents = [];
@@ -136,6 +137,7 @@ class ConversationRunnerController extends ChangeNotifier
     try {
       await engine.begin(_now);
     } catch (e) {
+      if (_disposed) return;
       error = e.toString().replaceAll('Exception: ', '');
       starting = false;
       _restoreChrome();
@@ -143,6 +145,7 @@ class ConversationRunnerController extends ChangeNotifier
       notifyListeners();
       return;
     }
+    if (_disposed) return;
     starting = false;
     if (engine.completed) {
       await _finish();
@@ -182,6 +185,7 @@ class ConversationRunnerController extends ChangeNotifier
     } catch (e) {
       error = e.toString().replaceAll('Exception: ', '');
     }
+    if (_disposed) return;
     sending = false;
     if (engine.completed) {
       await _finish();
@@ -222,6 +226,7 @@ class ConversationRunnerController extends ChangeNotifier
       result = conversationHeuristicReport(completedSession, template, groups);
     }
 
+    if (_disposed) return;
     store.putReport(result);
     report = result;
     onFinished?.call(completedSession, result);
@@ -238,6 +243,7 @@ class ConversationRunnerController extends ChangeNotifier
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _restoreChrome();
     WidgetsBinding.instance.removeObserver(this);

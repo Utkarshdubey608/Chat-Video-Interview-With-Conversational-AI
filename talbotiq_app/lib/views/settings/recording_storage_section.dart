@@ -58,9 +58,9 @@ class _RecordingStorageSectionState extends State<RecordingStorageSection> {
     final store = Provider.of<AppStore>(context, listen: false);
     store.setSessionConfig(store.sessionConfig.copyWith(
       enableRecording: _enableRecording,
-      recordingS3BucketName: _bucketController.text,
-      recordingS3BucketRegion: _regionController.text,
-      awsAssumeRoleArn: _roleArnController.text,
+      recordingS3BucketName: _bucketController.text.trim(),
+      recordingS3BucketRegion: _regionController.text.trim(),
+      awsAssumeRoleArn: _roleArnController.text.trim(),
     ));
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

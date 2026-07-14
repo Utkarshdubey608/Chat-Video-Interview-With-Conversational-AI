@@ -92,7 +92,10 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
   Widget build(BuildContext context) {
     final c = _c!;
     return PopScope(
-      canPop: c.stage != ConvStage.running,
+      // Block back-out while the interview is running AND while it is being
+      // scored — popping mid-scoring would dispose the controller under an
+      // in-flight Gemini call (see the controller's _disposed guard).
+      canPop: c.stage != ConvStage.running && c.stage != ConvStage.scoring,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         final navigator = Navigator.of(context);
@@ -273,6 +276,7 @@ class _ResumeScreenState extends State<_ResumeScreen> {
       allowedExtensions: ['pdf'],
       withData: true,
     );
+    if (!mounted) return;
     if (res == null || res.files.isEmpty) return;
     final f = res.files.first;
     final Uint8List? bytes = f.bytes;
@@ -292,11 +296,13 @@ class _ResumeScreenState extends State<_ResumeScreen> {
     try {
       final text = await recruiterGeminiService.extractResumeText(
           pdfBase64: base64Encode(bytes));
+      if (!mounted) return;
       setState(() {
         _extracting = false;
         _textCtrl.text = text;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _extracting = false;
         _error = e.toString().replaceAll('Exception: ', '');
@@ -820,6 +826,7 @@ class _ChatInputBarState extends State<_ChatInputBar> {
         return;
       }
     }
+    if (!mounted) return;
     _base = widget.answerCtrl.text.trimRight();
     setState(() => _listening = true);
     await _speech.listen(

@@ -82,6 +82,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
       };
 
   Future<void> _save({required bool publish}) async {
+    if (_saving) return;
     setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
@@ -104,9 +105,25 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
   }
 
   Future<void> _unpublish() async {
+    if (_saving) return;
+    setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
-    await repo.setPublished(widget.interview.id, false);
-    if (mounted) setState(() => _published = false);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await repo.setPublished(widget.interview.id, false);
+      if (!mounted) return;
+      setState(() {
+        _published = false;
+        _saving = false;
+      });
+      messenger
+          .showSnackBar(const SnackBar(content: Text('Result unpublished.')));
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
+    }
   }
 
   @override
@@ -123,7 +140,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
               padding: const EdgeInsets.only(right: 8),
               child: Center(
                 child: TextButton.icon(
-                  onPressed: _unpublish,
+                  onPressed: _saving ? null : _unpublish,
                   icon: const Icon(Icons.visibility_off, size: 18),
                   label: const Text('Unpublish'),
                 ),

@@ -34,6 +34,11 @@ class _InterviewPageState extends State<InterviewPage>
   int _revealedIdx = -1;
   final _overrideController = TextEditingController();
 
+  // Guards against re-entrant _endInterview calls (e.g. the auto-advance timer
+  // firing while the end dialog is open). A second run would call
+  // stopAndReadBytes() again and overwrite the recording bytes with null.
+  bool _ending = false;
+
   Timer? _jitterTimer;
   Timer? _fallbackRevealTimer;
   Timer? _autoAdvanceTimeoutTimer;
@@ -158,6 +163,17 @@ class _InterviewPageState extends State<InterviewPage>
 
   /// Ends the interview session, finalises the recording, and redirects to results.
   Future<void> _endInterview() async {
+    // Re-entrancy guard: a second invocation (e.g. an auto-advance timer firing
+    // while this is running) must not reach stopAndReadBytes() a second time
+    // and overwrite the captured recording bytes with null.
+    if (_ending) return;
+    _ending = true;
+
+    // Cancel the question timers up-front so they cannot re-enter this method
+    // (via _nextQuestion) while the confirm dialog / finalisation is in flight.
+    _autoAdvanceTimeoutTimer?.cancel();
+    _fallbackRevealTimer?.cancel();
+
     final store = Provider.of<AppStore>(context, listen: false);
     final theme = Theme.of(context);
 
@@ -187,9 +203,18 @@ class _InterviewPageState extends State<InterviewPage>
       },
     );
 
-    if (confirmEnd != true) return;
+    if (confirmEnd != true) {
+      // User backed out — allow ending again later and re-arm the timers we
+      // cancelled above.
+      _ending = false;
+      if (mounted) _resetQuestionTimers();
+      return;
+    }
+    if (!mounted) return;
 
-    setState(() => store.setInterviewActive(false));
+    // NB: keep this out of setState — firing provider notifyListeners from
+    // inside a setState callback is not allowed.
+    store.setInterviewActive(false);
 
     // Stop the local recording and hand its bytes to the store so the results
     // page can transcribe it via Deepgram's pre-recorded endpoint (native only).
@@ -258,12 +283,24 @@ class _InterviewPageState extends State<InterviewPage>
   Future<void> _sendOverride() async {
     final store = Provider.of<AppStore>(context, listen: false);
     final overrideText = _overrideController.text.trim();
-    if (overrideText.isEmpty || store.currentConversation == null) return;
+    if (overrideText.isEmpty) return;
+
+    // Send the override to the EXISTING live conversation. (Previously this
+    // called createConversation, which span up a brand-new billed Tavus
+    // session instead of updating the running one.)
+    final conversationId = store.currentConversation?.conversationId;
+    if (conversationId == null || conversationId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No active conversation to override.'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
 
     try {
-      await tavusService.createConversation({
-        'conversational_context': overrideText,
-      });
+      await tavusService.sendInteraction(conversationId, overrideText);
       if (!mounted) return;
 
       _overrideController.clear();

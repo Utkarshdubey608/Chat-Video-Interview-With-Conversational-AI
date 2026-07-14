@@ -605,7 +605,7 @@ class EmotionSnapshot {
               .toList() ??
           [],
       categoryScores: Map<String, double>.from(
-          (json['categoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num).toDouble())) ?? {}),
+          (json['categoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
       dominant: json['dominant'] ?? 'Neutral',
     );
   }
@@ -641,7 +641,7 @@ class QuestionEmotionSummary {
       questionIdx: json['questionIdx'] ?? 0,
       questionText: json['questionText'] ?? '',
       avgCategoryScores: Map<String, double>.from(
-          (json['avgCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num).toDouble())) ?? {}),
+          (json['avgCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
       dominant: json['dominant'] ?? 'Neutral',
       timeline: (json['timeline'] as List?)
               ?.map((e) => EmotionSnapshot.fromJson(e))
@@ -689,7 +689,7 @@ class HumeSessionResult {
       jobId: json['jobId'] ?? '',
       status: json['status'] ?? 'COMPLETED',
       overallCategoryScores: Map<String, double>.from(
-          (json['overallCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num).toDouble())) ?? {}),
+          (json['overallCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
       overallTopEmotions: (json['overallTopEmotions'] as List?)
               ?.map((e) => HumeEmotion.fromJson(e))
               .toList() ??

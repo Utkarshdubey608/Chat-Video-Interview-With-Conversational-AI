@@ -139,7 +139,7 @@ class HumeEmotionPanel extends StatelessWidget {
                 ),
               ),
               Text(
-                'Confidence: ${(q.avgCategoryScores['positive_high']! * 100).round()}%',
+                'Confidence: ${((q.avgCategoryScores['positive_high'] ?? 0.0) * 100).round()}%',
                 style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11),
               ),
             ],

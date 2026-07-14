@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/app_store.dart';
+import '../../core/utils/validators.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
 import '../../widgets/apple_ui.dart';
@@ -23,12 +24,12 @@ class SessionSetupSection extends StatefulWidget {
 
 class _SessionSetupSectionState extends State<SessionSetupSection> {
   final _backgroundUrlController = TextEditingController();
+  final _participantLeftTimeoutController = TextEditingController();
+  final _participantAbsentTimeoutController = TextEditingController();
 
   String _selectedLanguage = 'English';
   String _selectedPipelineMode = 'full';
   double _maxCallDuration = 900.0;
-  int _participantLeftTimeout = 60;
-  int _participantAbsentTimeout = 300;
   bool _enableTranscription = true;
   bool _applyConversationOverride = false;
   bool _applyGreenscreen = false;
@@ -42,8 +43,8 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
     _selectedLanguage = cfg.language;
     _selectedPipelineMode = cfg.pipelineMode;
     _maxCallDuration = cfg.maxCallDuration.toDouble();
-    _participantLeftTimeout = cfg.participantLeftTimeout;
-    _participantAbsentTimeout = cfg.participantAbsentTimeout;
+    _participantLeftTimeoutController.text = '${cfg.participantLeftTimeout}';
+    _participantAbsentTimeoutController.text = '${cfg.participantAbsentTimeout}';
     _enableTranscription = cfg.enableTranscription;
     _applyConversationOverride = cfg.applyConversationOverride;
     _applyGreenscreen = cfg.applyGreenscreen;
@@ -52,6 +53,8 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
   @override
   void dispose() {
     _backgroundUrlController.dispose();
+    _participantLeftTimeoutController.dispose();
+    _participantAbsentTimeoutController.dispose();
     super.dispose();
   }
 
@@ -63,8 +66,20 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
       language: _selectedLanguage,
       pipelineMode: _selectedPipelineMode,
       maxCallDuration: _maxCallDuration.round(),
-      participantLeftTimeout: _participantLeftTimeout,
-      participantAbsentTimeout: _participantAbsentTimeout,
+      // Clamp to a sane range so negative/zero/huge values can't be saved or
+      // sent to Tavus (Tavus rejects out-of-range timeouts).
+      participantLeftTimeout: Validators.clampedInt(
+        _participantLeftTimeoutController.text,
+        min: 1,
+        max: 7200,
+        fallback: 60,
+      ),
+      participantAbsentTimeout: Validators.clampedInt(
+        _participantAbsentTimeoutController.text,
+        min: 1,
+        max: 7200,
+        fallback: 300,
+      ),
       enableTranscription: _enableTranscription,
       applyConversationOverride: _applyConversationOverride,
       applyGreenscreen: _applyGreenscreen,
@@ -135,9 +150,7 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
                     label: 'Participant Left Timeout (s)',
                     placeholder: '60',
                     keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantLeftTimeout = int.tryParse(val) ?? 60,
-                    controller: TextEditingController(text: '$_participantLeftTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantLeftTimeout'.length),
+                    controller: _participantLeftTimeoutController,
                   ),
                 ),
                 Expanded(
@@ -145,9 +158,7 @@ class _SessionSetupSectionState extends State<SessionSetupSection> {
                     label: 'Absent Timeout (s)',
                     placeholder: '300',
                     keyboardType: TextInputType.number,
-                    onChanged: (val) => _participantAbsentTimeout = int.tryParse(val) ?? 300,
-                    controller: TextEditingController(text: '$_participantAbsentTimeout')
-                      ..selection = TextSelection.collapsed(offset: '$_participantAbsentTimeout'.length),
+                    controller: _participantAbsentTimeoutController,
                   ),
                 ),
               ],

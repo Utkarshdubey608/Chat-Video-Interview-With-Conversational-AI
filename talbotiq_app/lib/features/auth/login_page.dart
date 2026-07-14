@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/utils/validators.dart';
 import '../../widgets/custom_buttons.dart';
 import '../../widgets/custom_inputs.dart';
 import 'app_role.dart';
@@ -46,6 +47,10 @@ class _LoginPageState extends State<LoginPage> {
       setState(() => _error = 'Enter your email and password.');
       return;
     }
+    if (!Validators.isValidEmail(email)) {
+      setState(() => _error = Validators.emailError(email));
+      return;
+    }
     if (_isSignUp && password.length < 6) {
       setState(() => _error = 'Password must be at least 6 characters.');
       return;
@@ -73,6 +78,37 @@ class _LoginPageState extends State<LoginPage> {
       setState(() => _error = _friendlyError(e));
     } catch (e) {
       setState(() => _error = 'Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // Sends a password-reset email for the address currently in the email field.
+  Future<void> _sendPasswordReset() async {
+    final email = _emailController.text.trim();
+    if (!Validators.isValidEmail(email)) {
+      setState(() => _error = 'Enter your email above to reset your password.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final auth = context.read<AuthService>();
+    try {
+      await auth.sendPasswordReset(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Password reset email sent to $email.')),
+      );
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _error = _friendlyError(e));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not send the reset email. Please try again.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -166,6 +202,17 @@ class _LoginPageState extends State<LoginPage> {
                   controller: _passwordController,
                   isPassword: true,
                 ),
+                if (!_isSignUp)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _loading ? null : _sendPasswordReset,
+                      child: Text(
+                        'Forgot password?',
+                        style: TextStyle(color: theme.colorScheme.primary),
+                      ),
+                    ),
+                  ),
                 if (_error != null) ...[
                   const SizedBox(height: 16),
                   Container(

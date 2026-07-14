@@ -179,9 +179,10 @@ class _SetupPageState extends State<SetupPage> {
   }
 
   // Prompts for the candidate name, then launches the interview.
-  void _showLaunchDialog() {
+  Future<void> _showLaunchDialog() async {
     final textController = TextEditingController();
-    showDialog(
+    try {
+      await showDialog(
       context: context,
       builder: (BuildContext context) {
         final theme = Theme.of(context);
@@ -220,12 +221,16 @@ class _SetupPageState extends State<SetupPage> {
         );
       },
     );
+    } finally {
+      textController.dispose();
+    }
   }
 
   // Saves the current session config + questions as a named, reloadable draft.
-  void _showSaveDraftDialog() {
+  Future<void> _showSaveDraftDialog() async {
     final textController = TextEditingController();
-    showDialog(
+    try {
+      await showDialog(
       context: context,
       builder: (BuildContext context) {
         final theme = Theme.of(context);
@@ -273,6 +278,9 @@ class _SetupPageState extends State<SetupPage> {
         );
       },
     );
+    } finally {
+      textController.dispose();
+    }
   }
 
   // Error dialog shown when Tavus rejects the conversation-create request.
@@ -391,7 +399,8 @@ class _SetupPageState extends State<SetupPage> {
   // Text dialog to manually type/override a replica ID.
   Future<void> _editReplicaId() async {
     final controller = TextEditingController(text: _replicaId);
-    await showDialog(
+    try {
+      await showDialog(
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
@@ -429,6 +438,9 @@ class _SetupPageState extends State<SetupPage> {
         );
       },
     );
+    } finally {
+      controller.dispose();
+    }
   }
 
   // Avatar group: header row with refresh, the avatar strip, persona picker and

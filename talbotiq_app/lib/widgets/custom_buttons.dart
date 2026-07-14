@@ -1,6 +1,5 @@
 // lib/widgets/custom_buttons.dart
 import 'package:flutter/material.dart';
-import '../core/constants/colors.dart';
 
 enum ButtonVariant { primary, secondary, outline, ghost, danger }
 
@@ -26,33 +25,37 @@ class CustomButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Read colors from the active theme so buttons are legible in both light
+    // and dark mode. In dark mode the scheme resolves to the same AppColors
+    // values used before, so the primary/filled look is unchanged.
+    final scheme = Theme.of(context).colorScheme;
     Color bg;
     Color textCol;
     BorderSide border = BorderSide.none;
 
     switch (variant) {
       case ButtonVariant.primary:
-        bg = AppColors.primary;
-        textCol = AppColors.backgroundBlack; // High contrast dark text on light primary
+        bg = scheme.primary;
+        textCol = scheme.onPrimary; // High contrast text on the primary fill
         break;
       case ButtonVariant.secondary:
-        bg = AppColors.backgroundDarker;
-        textCol = AppColors.textLight;
-        border = const BorderSide(color: AppColors.border, width: 1);
+        bg = scheme.surface;
+        textCol = scheme.onSurface;
+        border = BorderSide(color: scheme.outline, width: 1);
         break;
       case ButtonVariant.outline:
         bg = Colors.transparent;
-        textCol = AppColors.textLight;
-        border = const BorderSide(color: AppColors.border, width: 1);
+        textCol = scheme.onSurface;
+        border = BorderSide(color: scheme.outline, width: 1);
         break;
       case ButtonVariant.ghost:
         bg = Colors.transparent;
-        textCol = AppColors.textMuted;
+        textCol = scheme.onSurfaceVariant;
         break;
       case ButtonVariant.danger:
-        bg = AppColors.dangerBg;
-        textCol = AppColors.danger;
-        border = const BorderSide(color: AppColors.dangerBorder, width: 1);
+        bg = scheme.error.withOpacity(0.12);
+        textCol = scheme.error;
+        border = BorderSide(color: scheme.error.withOpacity(0.4), width: 1);
         break;
     }
 

@@ -54,7 +54,10 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
   bool _allowFollowUps = false;
   int _maxFollowUps = 1;
 
-  late List<_KpiDraft> _kpis;
+  // Initialized to an empty list so build()/dispose() are safe even when the
+  // template lookup fails (templateById → null) and _hydrate is never run.
+  List<_KpiDraft> _kpis = [];
+  bool _templateFound = false;
 
   bool _enforceFullscreen = false;
   bool _detectTabSwitch = true;
@@ -71,7 +74,10 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
     _initialized = true;
     final store = Provider.of<RecruiterStore>(context, listen: false);
     final t = store.templateById(widget.templateId);
-    if (t != null) _hydrate(t);
+    if (t != null) {
+      _templateFound = true;
+      _hydrate(t);
+    }
   }
 
   void _hydrate(InterviewTemplate t) {
@@ -207,6 +213,44 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final store = context.watch<RecruiterStore>();
+    if (!_templateFound) {
+      return Scaffold(
+        backgroundColor: theme.colorScheme.surface,
+        appBar: AppBar(
+          title: const Text('Edit Template'),
+          backgroundColor: theme.colorScheme.surface,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline,
+                    size: 40, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(height: 12),
+                Text('Template not found',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(
+                  'This template may have been deleted.',
+                  style: theme.textTheme.bodyMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                CustomButton(
+                  text: 'Go back',
+                  variant: ButtonVariant.outline,
+                  height: 40,
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(

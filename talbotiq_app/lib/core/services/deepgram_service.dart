@@ -1,9 +1,15 @@
 // lib/core/services/deepgram_service.dart
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../net/api_client.dart';
 import '../../models/app_models.dart';
 
 class DeepgramService {
+  // Shared transport: request timeout + 429/5xx backoff-retry, so a stalled or
+  // throttled Deepgram host no longer hangs (or one-shot-fails) transcription.
+  final ApiClient _api = ApiClient();
+
   String _apiKey = '';
 
   void setKey(String key) {
@@ -85,7 +91,7 @@ class DeepgramService {
     }
     try {
       // Direct call to Deepgram projects list to verify API Key
-      final response = await http.get(
+      final response = await _api.get(
         Uri.parse('https://api.deepgram.com/v1/projects'),
         headers: {
           'Authorization': 'Token $_apiKey',
@@ -98,6 +104,8 @@ class DeepgramService {
       } else {
         return {'ok': false, 'message': 'HTTP ${response.statusCode}'};
       }
+    } on ApiException catch (e) {
+      return {'ok': false, 'message': e.message};
     } catch (e) {
       return {'ok': false, 'message': e.toString()};
     }
@@ -123,9 +131,9 @@ class DeepgramService {
     final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
 
     try {
-      print('debug: Deepgram transcribeFromUrl POST $uri');
+      if (kDebugMode) print('debug: Deepgram transcribeFromUrl POST $uri');
       final body = jsonEncode({'url': audioUrl});
-      final response = await http.post(
+      final response = await _api.post(
         uri,
         headers: {
           'Authorization': 'Token $_apiKey',
@@ -134,11 +142,13 @@ class DeepgramService {
         body: body,
       );
 
-      print('debug: Deepgram status: ${response.statusCode}');
-      final preview = response.body.length > 1000
-          ? response.body.substring(0, 1000) + '...'
-          : response.body;
-      print('debug: Deepgram body preview: $preview');
+      if (kDebugMode) {
+        print('debug: Deepgram status: ${response.statusCode}');
+        final preview = response.body.length > 1000
+            ? response.body.substring(0, 1000) + '...'
+            : response.body;
+        print('debug: Deepgram body preview: $preview');
+      }
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -165,8 +175,11 @@ class DeepgramService {
       } else {
         throw Exception('Deepgram transcription failed: HTTP ${response.statusCode}');
       }
+    } on ApiException catch (e) {
+      if (kDebugMode) print('debug: transcribeFromUrl error: ${e.message}');
+      throw Exception('Deepgram transcription failed: ${e.message}');
     } catch (e) {
-      print('debug: transcribeFromUrl error: $e');
+      if (kDebugMode) print('debug: transcribeFromUrl error: $e');
       rethrow;
     }
   }
@@ -192,21 +205,33 @@ class DeepgramService {
     final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
     final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
 
-    print('debug: Deepgram transcribeFromFile POST $uri (${bytes.length} bytes)');
-    final response = await http.post(
-      uri,
-      headers: {
-        'Authorization': 'Token $_apiKey',
-        'Content-Type': contentType,
-      },
-      body: bytes,
-    );
+    if (kDebugMode) {
+      print('debug: Deepgram transcribeFromFile POST $uri (${bytes.length} bytes)');
+    }
+    // Raw-bytes POST (Deepgram pre-recorded accepts the audio as the body with a
+    // Content-Type header) — kept identical; routed through ApiClient for the
+    // timeout + 429/5xx backoff-retry.
+    final http.Response response;
+    try {
+      response = await _api.post(
+        uri,
+        headers: {
+          'Authorization': 'Token $_apiKey',
+          'Content-Type': contentType,
+        },
+        body: bytes,
+      );
+    } on ApiException catch (e) {
+      throw Exception('Deepgram transcription failed: ${e.message}');
+    }
 
-    print('debug: Deepgram (file) status: ${response.statusCode}');
+    if (kDebugMode) {
+      print('debug: Deepgram (file) status: ${response.statusCode}');
+    }
 
     if (response.statusCode != 200) {
       throw Exception(
-        'Deepgram transcription failed: HTTP ${response.statusCode} ${response.body}',
+        'Deepgram transcription failed: HTTP ${response.statusCode}',
       );
     }
 

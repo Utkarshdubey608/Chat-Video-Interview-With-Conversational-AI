@@ -75,6 +75,11 @@ class AppStore extends ChangeNotifier {
   bool _deepgramConnected = false;
   Future<void>? _loadFuture;
 
+  // True once the initial load from prefs has finished. Until then, setters
+  // fired during startup must NOT persist — otherwise a default value written
+  // before the load completes would overwrite the user's saved data.
+  bool _loaded = false;
+
   // Locally-recorded interview audio (native only). Captured during the call,
   // sent to Deepgram for transcription on the results page.
   List<int>? _recordingBytes;
@@ -112,13 +117,13 @@ class AppStore extends ChangeNotifier {
   DraftForm get sessionConfig => _sessionConfig;
 
   TavusConversation? get currentConversation => _currentConversation;
-  List<String> get questions => _questions;
+  List<String> get questions => List.unmodifiable(_questions);
   int get currentQuestionIdx => _currentQuestionIdx;
   bool get interviewActive => _interviewActive;
-  List<Draft> get drafts => _drafts;
+  List<Draft> get drafts => List.unmodifiable(_drafts);
 
-  List<TavusReplica> get cachedReplicas => _cachedReplicas;
-  List<TavusPersona> get cachedPersonas => _cachedPersonas;
+  List<TavusReplica> get cachedReplicas => List.unmodifiable(_cachedReplicas);
+  List<TavusPersona> get cachedPersonas => List.unmodifiable(_cachedPersonas);
 
   int get confidence => _confidence;
   int get anxiety => _anxiety;
@@ -129,16 +134,18 @@ class AppStore extends ChangeNotifier {
   String? get humeJobId => _humeJobId;
   String? get humeJobStatus => _humeJobStatus;
   HumeSessionResult? get humeResult => _humeResult;
-  List<int> get questionTimestamps => _questionTimestamps;
-  List<HumeEmotion> get liveEmotions => _liveEmotions;
+  List<int> get questionTimestamps => List.unmodifiable(_questionTimestamps);
+  List<HumeEmotion> get liveEmotions => List.unmodifiable(_liveEmotions);
   bool get humeStreamActive => _humeStreamActive;
 
-  List<TranscriptEntry> get sessionTranscript => _sessionTranscript;
+  List<TranscriptEntry> get sessionTranscript =>
+      List.unmodifiable(_sessionTranscript);
   bool get deepgramConnected => _deepgramConnected;
   bool get storeLocalRecordings => _storeLocalRecordings;
   List<int>? get recordingBytes => _recordingBytes;
-  List<SavedRecording> get recordings => _recordings;
-  List<InterviewResult> get interviewResults => _interviewResults;
+  List<SavedRecording> get recordings => List.unmodifiable(_recordings);
+  List<InterviewResult> get interviewResults =>
+      List.unmodifiable(_interviewResults);
 
   AppStore() {
     loadFromPrefs();
@@ -251,6 +258,25 @@ class AppStore extends ChangeNotifier {
     deepgramService.setKey(_deepgramKey);
     humeService.setKey(_humeKey);
     geminiService.setKey(_geminiKey);
+
+    // Ephemeral keys cleared the avatar caches; restore them from the same
+    // persisted blob so the replica/persona pickers repopulate without a
+    // restart (they belong to the device's own Tavus key).
+    if (data['cachedReplicas'] != null) {
+      final List replicasList = data['cachedReplicas'];
+      _cachedReplicas =
+          replicasList.map((r) => TavusReplica.fromJson(r)).toList();
+    } else {
+      _cachedReplicas = [];
+    }
+    if (data['cachedPersonas'] != null) {
+      final List personasList = data['cachedPersonas'];
+      _cachedPersonas =
+          personasList.map((p) => TavusPersona.fromJson(p)).toList();
+    } else {
+      _cachedPersonas = [];
+    }
+
     notifyListeners();
   }
 
@@ -544,11 +570,18 @@ class AppStore extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('Error loading store: $e');
+    } finally {
+      // Persistence is unblocked only after the initial load settles (success,
+      // early-return on empty prefs, or error) so subsequent setters can save.
+      _loaded = true;
     }
   }
 
   // Save key credentials and drafts to local storage
   Future<void> _saveToPrefs() async {
+    // Ignore writes triggered before the initial load finishes: a setter firing
+    // during startup must not overwrite persisted data with defaults.
+    if (!_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       final Map<String, dynamic> data = {

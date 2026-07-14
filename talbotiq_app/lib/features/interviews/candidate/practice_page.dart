@@ -79,6 +79,7 @@ class _PracticePageState extends State<PracticePage> {
       if (!mounted) return;
       setState(() => _replicas = replicas);
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Could not load avatars: '
           '${e.toString().replaceAll('Exception: ', '')}');
     } finally {

@@ -44,6 +44,7 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
   final _nameCtrl = TextEditingController(text: 'Résumé-based set');
 
   bool _loading = false;
+  bool _saving = false;
   String? _error;
   List<_GenDraft>? _drafts; // non-null → review step
 
@@ -109,6 +110,7 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
         difficulty: _difficulty,
         role: _roleCtrl.text.trim(),
       );
+      if (!mounted) return;
       if (questions.isEmpty) {
         setState(() {
           _loading = false;
@@ -121,6 +123,7 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
         _drafts = questions.map(_GenDraft.from).toList();
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _loading = false;
         _error = e.toString().replaceAll('Exception: ', '');
@@ -129,6 +132,10 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
   }
 
   void _save() {
+    // Re-entrancy guard: a rapid double-tap must not create two sets or pop
+    // the route more than once.
+    if (_saving) return;
+    _saving = true;
     final store = Provider.of<RecruiterStore>(context, listen: false);
     final now = DateTime.now().toIso8601String();
     final set = QuestionSet(

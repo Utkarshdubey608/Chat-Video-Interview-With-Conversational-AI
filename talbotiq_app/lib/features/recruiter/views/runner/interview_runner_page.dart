@@ -393,8 +393,11 @@ class _QuestionStage extends StatelessWidget {
                               text: engine.progressCurrent >= engine.total
                                   ? 'Submit & finish'
                                   : 'Submit & continue',
-                              onPressed: () =>
-                                  controller.submitAnswer(answerCtrl.text),
+                              isLoading: controller.submitting,
+                              onPressed: controller.submitting
+                                  ? () {}
+                                  : () =>
+                                      controller.submitAnswer(answerCtrl.text),
                             ),
                           ),
                         ],

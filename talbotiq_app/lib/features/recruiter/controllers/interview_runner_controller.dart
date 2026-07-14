@@ -30,6 +30,8 @@ class InterviewRunnerController extends ChangeNotifier
   final List<IntegrityEvent> _integrityEvents = [];
   int _tabSwitchCount = 0;
   bool _immersive = false;
+  bool _disposed = false; // set in dispose(); gates post-await continuations
+  bool _submitting = false; // an answer submit + advance is in flight
 
   ResultReport? report;
   String? scoringError;
@@ -102,12 +104,27 @@ class InterviewRunnerController extends ChangeNotifier
 
   void saveDraft(String text) => engine.saveDraft(text);
 
+  /// True while a submit is advancing to the next question — the runner page
+  /// disables the submit button on this to stop a double-tap skipping a
+  /// question / duplicating the answer.
+  bool get submitting => _submitting;
+
   void submitAnswer(String text) {
+    if (_submitting) return;
+    if (engine.current == null) return;
+    _submitting = true;
     engine.submitAnswer(_now, text);
     if (engine.completed) {
+      // Guard stays set — the page moves to the scoring stage.
       _finish();
     } else {
       notifyListeners();
+      // Release only after the next question's frame is built, so a
+      // same-frame double-tap can't submit (and skip) the next question.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_disposed) return;
+        _submitting = false;
+      });
     }
   }
 
@@ -148,6 +165,7 @@ class InterviewRunnerController extends ChangeNotifier
       result = heuristicReport(completedSession, template);
     }
 
+    if (_disposed) return;
     store.putReport(result);
     report = result;
     stage = RunnerStage.finished;
@@ -163,6 +181,7 @@ class InterviewRunnerController extends ChangeNotifier
 
   @override
   void dispose() {
+    _disposed = true;
     _timer?.cancel();
     _restoreChrome();
     WidgetsBinding.instance.removeObserver(this);

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../models/app_models.dart';
+import '../../../core/utils/validators.dart';
 import '../../../views/setup/avatar_picker.dart';
 import '../../../core/services/tavus_service.dart';
 import '../../../widgets/custom_buttons.dart';
@@ -217,44 +218,70 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   }
 
   Future<void> _save() async {
+    // Re-entrancy guard set BEFORE any await so a fast double-tap can't run the
+    // save (and create duplicate interviews) twice.
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
     final title = _titleController.text.trim();
     final emails = _candidateEmails;
     final questions = _questions;
 
+    void fail(String message) => setState(() {
+          _error = message;
+          _saving = false;
+        });
+
     if (title.isEmpty) {
-      setState(() => _error = 'Give the interview a title.');
+      fail('Give the interview a title.');
       return;
     }
     if (emails.isEmpty) {
-      setState(() => _error = 'Add at least one candidate email.');
+      fail('Add at least one candidate email.');
+      return;
+    }
+    final invalidEmails =
+        emails.where((e) => !Validators.isValidEmail(e)).toList();
+    if (invalidEmails.isNotEmpty) {
+      fail('Enter valid candidate email(s): ${invalidEmails.join(', ')}');
       return;
     }
     if (questions.isEmpty) {
-      setState(() => _error = 'Add at least one question.');
+      fail('Add at least one question.');
       return;
     }
     if (_type == InterviewType.video &&
         _replicaIdController.text.trim().isEmpty) {
-      setState(() => _error = 'Pick or enter an avatar (replica) for video.');
+      fail('Pick or enter an avatar (replica) for video.');
       return;
     }
 
-    if (_expiresAt != null &&
-        _availableFrom != null &&
+    // The access window stays OPTIONAL (unchanged behaviour). We only reject the
+    // actual defect — an interview born already expired — and an inverted
+    // window. An `availableFrom` in the past is legitimate ("available since").
+    final now = DateTime.now();
+    if (_expiresAt != null && !_expiresAt!.isAfter(now)) {
+      fail('Expiry must be in the future.');
+      return;
+    }
+    if (_availableFrom != null &&
+        _expiresAt != null &&
         !_expiresAt!.isAfter(_availableFrom!)) {
-      setState(() => _error = 'Expiry must be after the available-from time.');
+      fail('Expiry must be after the available-from time.');
       return;
     }
 
     // Make the recruiter aware, before anything is written, that candidates run
     // this test on the recruiter's keys (or the per-test overrides, if set).
     final confirmed = await _confirmKeyUsage();
-    if (confirmed != true || !mounted) return;
-
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    if (!mounted) return;
+    if (confirmed != true) {
+      setState(() => _saving = false);
+      return;
+    }
 
     final avatar = AvatarConfig(
       replicaId: _replicaIdController.text.trim(),
@@ -274,7 +301,16 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
 
     try {
       final repo = context.read<InterviewRepository>();
-      final user = FirebaseAuth.instance.currentUser!;
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        if (mounted) {
+          setState(() {
+            _error = 'Your session has expired. Please sign in again.';
+            _saving = false;
+          });
+        }
+        return;
+      }
       // All candidates created/added together share one testId.
       final testId = _isEdit
           ? (widget.existing!.testId.isNotEmpty
@@ -366,10 +402,12 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             content: Text('Interview assigned to $n candidate${n == 1 ? '' : 's'}.')),
       );
     } catch (e) {
-      setState(() {
-        _error = 'Could not save: $e';
-        _saving = false;
-      });
+      if (mounted) {
+        setState(() {
+          _error = 'Could not save: $e';
+          _saving = false;
+        });
+      }
     }
   }
 
