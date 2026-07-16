@@ -1,9 +1,16 @@
 // lib/core/services/tavus_service.dart
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../../models/app_models.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class TavusService {
+  // Shared transport: request timeout + 429/5xx backoff-retry. POSTs are never
+  // retried on timeout (ApiClient treats them as non-idempotent) so we never
+  // risk a duplicate Tavus conversation create.
+  final ApiClient _api = ApiClient();
+
   String _apiKey = '';
 
   void setKey(String key) {
@@ -37,10 +44,10 @@ class TavusService {
       );
 
       final results = await Future.wait([
-        http
+        _api
             .get(customUrl, headers: _authHeaders())
             .catchError((e) => http.Response('{"data":[]}', 500)),
-        http
+        _api
             .get(stockUrl, headers: _authHeaders())
             .catchError((e) => http.Response('{"data":[]}', 500)),
       ]);
@@ -131,17 +138,27 @@ class TavusService {
     if (_apiKey.isEmpty) return [];
 
     final url = Uri.parse('https://tavusapi.com/v2/personas');
-    final response = await http.get(url, headers: _authHeaders());
+    final http.Response response;
+    try {
+      response = await _api.get(url, headers: _authHeaders());
+    } on ApiException catch (e) {
+      throw Exception('Failed to load personas: ${e.message}');
+    }
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body);
-      final list = body['data'] as List?;
+      // Tavus may return either a top-level list or a { "data": [...] } wrapper,
+      // exactly like the replicas endpoint.
+      final list = (body is List) ? body : (body is Map ? body['data'] as List? : null);
       if (list != null) {
         return list.map((item) => TavusPersona.fromJson(item)).toList();
       }
       return [];
     } else {
-      final errBody = jsonDecode(response.body);
+      Map? errBody;
+      try {
+        errBody = jsonDecode(response.body) as Map?;
+      } catch (_) {}
       throw Exception(
         errBody?['message'] ??
             errBody?['error'] ??
@@ -155,19 +172,20 @@ class TavusService {
   ) async {
     final url = Uri.parse('https://tavusapi.com/v2/conversations');
 
-    print("debug: Creating conversation with payload:");
-    print(url.toString());
-    print(jsonEncode(payload));
-    print(_headers());
+    final http.Response response;
+    try {
+      response = await _api.post(
+        url,
+        headers: _headers(),
+        body: jsonEncode(payload),
+      );
+    } on ApiException catch (e) {
+      throw Exception('Failed to create conversation: ${e.message}');
+    }
 
-    final response = await http.post(
-      url,
-      headers: _headers(),
-      body: jsonEncode(payload),
-    );
-
-    print("debug: Received response:");
-    print("Status code: ${response.body}");
+    if (kDebugMode) {
+      print("debug: create conversation status: ${response.statusCode}");
+    }
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final body = jsonDecode(response.body);
@@ -189,15 +207,14 @@ class TavusService {
   Future<TavusConversation> getConversation(String id) async {
     final url = Uri.parse('https://tavusapi.com/v2/conversations/$id');
     try {
-      print('debug: GET $url');
-      print('debug: headers: ${_authHeaders()}');
-      final response = await http.get(url, headers: _authHeaders());
-      print('debug: GET response status: ${response.statusCode}');
-      // Print limited body for readability
-      final bodyPreview = response.body.length > 1000
-          ? response.body.substring(0, 1000) + '...'
-          : response.body;
-      print('debug: GET response body: $bodyPreview');
+      final response = await _api.get(url, headers: _authHeaders());
+      if (kDebugMode) {
+        print('debug: GET response status: ${response.statusCode}');
+        final bodyPreview = response.body.length > 1000
+            ? response.body.substring(0, 1000) + '...'
+            : response.body;
+        print('debug: GET response body: $bodyPreview');
+      }
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
@@ -207,8 +224,10 @@ class TavusService {
           'Failed to load conversation: HTTP ${response.statusCode}',
         );
       }
+    } on ApiException catch (e) {
+      throw Exception('Failed to load conversation: ${e.message}');
     } catch (e) {
-      print('debug: getConversation error: $e');
+      if (kDebugMode) print('debug: getConversation error: $e');
       rethrow;
     }
   }
@@ -222,23 +241,26 @@ class TavusService {
       'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
     try {
-      print('debug: GET (transcript) $url?verbose=true');
-      print('debug: headers: ${_authHeaders()}');
-      final response = await http.get(url, headers: _authHeaders());
-      print('debug: GET transcript status: ${response.statusCode}');
-      final bodyPreview = response.body.length > 2000
-          ? response.body.substring(0, 2000) + '...'
-          : response.body;
-      print('debug: GET transcript body preview: $bodyPreview');
+      final response = await _api.get(url, headers: _authHeaders());
+      if (kDebugMode) {
+        print('debug: GET transcript status: ${response.statusCode}');
+        final bodyPreview = response.body.length > 2000
+            ? response.body.substring(0, 2000) + '...'
+            : response.body;
+        print('debug: GET transcript body preview: $bodyPreview');
+      }
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
         return _parseTranscriptResponse(body);
       } else {
-        throw Exception('Failed to load transcript: HTTP ${response.statusCode}');
+        // Carry the status code so fetchTranscriptWithRetry can fast-fail on
+        // auth / not-found instead of pointlessly retrying.
+        throw ApiException('Failed to load transcript',
+            statusCode: response.statusCode);
       }
     } catch (e) {
-      print('debug: getConversationTranscript error: $e');
+      if (kDebugMode) print('debug: getConversationTranscript error: $e');
       rethrow;
     }
   }
@@ -256,15 +278,21 @@ class TavusService {
     while (attempt < maxAttempts) {
       attempt++;
       try {
-        print('debug: fetchTranscriptWithRetry attempt $attempt for $id');
+        if (kDebugMode) print('debug: fetchTranscriptWithRetry attempt $attempt for $id');
         final entries = await getConversationTranscript(id);
         if (entries.isNotEmpty) {
-          print('debug: transcript available on attempt $attempt (entries: ${entries.length})');
+          if (kDebugMode) print('debug: transcript available on attempt $attempt (entries: ${entries.length})');
           return entries;
         }
-        print('debug: transcript empty on attempt $attempt, will retry after ${delay.inSeconds}s');
+        if (kDebugMode) print('debug: transcript empty on attempt $attempt, will retry after ${delay.inSeconds}s');
+      } on ApiException catch (e) {
+        // Auth failures and a missing conversation will never resolve by
+        // retrying — surface them immediately. Only empty results, rate limits
+        // (429) and server errors (5xx) are worth polling for.
+        if (e.isAuthError || e.statusCode == 404) rethrow;
+        if (kDebugMode) print('debug: fetchTranscriptWithRetry transient error on attempt $attempt: ${e.message}');
       } catch (e) {
-        print('debug: fetchTranscriptWithRetry error on attempt $attempt: $e');
+        if (kDebugMode) print('debug: fetchTranscriptWithRetry error on attempt $attempt: $e');
       }
 
       if (attempt >= maxAttempts) break;
@@ -282,15 +310,17 @@ class TavusService {
       'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
     try {
-      final response = await http.get(url, headers: _authHeaders());
+      final response = await _api.get(url, headers: _authHeaders());
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
         return _parseTranscriptResponse(body);
       } else {
         throw Exception('Failed to load live transcript: HTTP ${response.statusCode}');
       }
+    } on ApiException catch (e) {
+      throw Exception('Failed to load live transcript: ${e.message}');
     } catch (e) {
-      print('debug: getLiveTranscript error: $e');
+      if (kDebugMode) print('debug: getLiveTranscript error: $e');
       rethrow;
     }
   }
@@ -404,14 +434,15 @@ class TavusService {
       'https://tavusapi.com/v2/conversations/$id?verbose=true',
     );
     try {
-      print('debug: GET (recording uri) $url');
-      print('debug: headers: ${_authHeaders()}');
-      final response = await http.get(url, headers: _authHeaders());
-      print('debug: GET recording uri status: ${response.statusCode}');
-      final bodyPreview = response.body.length > 2000
-          ? response.body.substring(0, 2000) + '...'
-          : response.body;
-      print('debug: GET recording uri body preview: $bodyPreview');
+      if (kDebugMode) print('debug: GET (recording uri) $url');
+      final response = await _api.get(url, headers: _authHeaders());
+      if (kDebugMode) {
+        print('debug: GET recording uri status: ${response.statusCode}');
+        final bodyPreview = response.body.length > 2000
+            ? response.body.substring(0, 2000) + '...'
+            : response.body;
+        print('debug: GET recording uri body preview: $bodyPreview');
+      }
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
@@ -423,7 +454,7 @@ class TavusService {
             if (event['event_type'] == 'application.recording_ready') {
               final props = event['properties'];
               if (props != null && props['storage_uri'] != null) {
-                print('debug: found storage_uri: ${props['storage_uri']}');
+                if (kDebugMode) print('debug: found storage_uri: ${props['storage_uri']}');
                 return props['storage_uri'].toString();
               }
             }
@@ -431,8 +462,10 @@ class TavusService {
         }
       }
       return null;
+    } on ApiException catch (e) {
+      throw Exception('Failed to load recording URI: ${e.message}');
     } catch (e) {
-      print('debug: getConversationRecordingUri error: $e');
+      if (kDebugMode) print('debug: getConversationRecordingUri error: $e');
       rethrow;
     }
   }
@@ -444,20 +477,56 @@ class TavusService {
   Future<void> endConversation(String id) async {
     final url = Uri.parse('https://tavusapi.com/v2/conversations/$id/end');
     try {
-      print('debug: POST $url');
-      print('debug: headers: ${_headers()}');
-      final response = await http.post(url, headers: _headers());
-      print('debug: POST endConversation status: ${response.statusCode}');
-      print('debug: POST endConversation body: ${response.body}');
+      if (kDebugMode) print('debug: POST $url');
+      final response = await _api.post(url, headers: _headers());
+      if (kDebugMode) {
+        print('debug: POST endConversation status: ${response.statusCode}');
+      }
 
       if (response.statusCode != 200 && response.statusCode != 204) {
         throw Exception(
           'Failed to end conversation: HTTP ${response.statusCode}',
         );
       }
+    } on ApiException catch (e) {
+      throw Exception('Failed to end conversation: ${e.message}');
     } catch (e) {
-      print('debug: endConversation error: $e');
+      if (kDebugMode) print('debug: endConversation error: $e');
       rethrow;
+    }
+  }
+
+  /// Overwrites the live conversation's context mid-call (e.g. to feed the
+  /// avatar the next interview question). POSTs a conversation.overwrite_context
+  /// interaction and throws on any non-2xx so the caller can react.
+  Future<void> sendInteraction(String conversationId, String text) async {
+    final url = Uri.parse(
+      'https://tavusapi.com/v2/conversations/$conversationId/interactions',
+    );
+    final http.Response response;
+    try {
+      response = await _api.post(
+        url,
+        headers: _authHeaders(),
+        body: jsonEncode({
+          'message_type': 'conversation',
+          'event_type': 'conversation.overwrite_context',
+          'conversation_id': conversationId,
+          'properties': {'context': text},
+        }),
+      );
+    } on ApiException catch (e) {
+      throw Exception('Failed to send interaction: ${e.message}');
+    }
+
+    if (kDebugMode) {
+      print('debug: POST sendInteraction status: ${response.statusCode}');
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(
+        'Failed to send interaction: HTTP ${response.statusCode}',
+      );
     }
   }
 }

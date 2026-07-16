@@ -10,8 +10,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/recruiter_models.dart';
-import '../engine/seed.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/engine/seed.dart';
 
 /// Which feature occupies the first tab slot (formerly "Setup").
 enum FeatureSlot { videoInterview, recruiter }
@@ -32,6 +32,10 @@ class RecruiterStore extends ChangeNotifier {
 
   Future<void>? _loadFuture;
   bool _loaded = false;
+
+  // Persisted one-time flag: true once starter content has ever been seeded.
+  // Prevents re-seeding after the recruiter intentionally deletes everything.
+  bool _hasSeeded = false;
 
   // ── Getters ───────────────────────────────────────────────────────────────
   List<InterviewTemplate> get templates => List.unmodifiable(_templates);
@@ -173,7 +177,9 @@ class RecruiterStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_kStoreKey);
       if (raw == null) {
+        // Brand-new install: seed the starter content exactly once.
         _applySeed();
+        _hasSeeded = true;
         await _saveToPrefs();
       } else {
         final data = jsonDecode(raw) as Map<String, dynamic>;
@@ -187,23 +193,41 @@ class RecruiterStore extends ChangeNotifier {
               .map((s) => QuestionSet.fromJson(s))
               .toList();
         }
+        // Parse each session/report in isolation so one malformed entry does
+        // not drop the entire sessions/reports list.
         if (data['sessions'] != null) {
-          _sessions = (data['sessions'] as List)
-              .map((s) => InterviewSession.fromJson(s))
-              .toList();
+          _sessions = [];
+          for (final s in (data['sessions'] as List)) {
+            try {
+              _sessions.add(InterviewSession.fromJson(s));
+            } catch (e) {
+              debugPrint('RecruiterStore: skipping bad session: $e');
+            }
+          }
         }
         if (data['reports'] != null) {
           for (final r in (data['reports'] as List)) {
-            final report = ResultReport.fromJson(r);
-            _reports[report.sessionId] = report;
+            try {
+              final report = ResultReport.fromJson(r);
+              _reports[report.sessionId] = report;
+            } catch (e) {
+              debugPrint('RecruiterStore: skipping bad report: $e');
+            }
           }
         }
         final slot = data['slot0Feature'];
         if (slot == 'recruiter') _slot0Feature = FeatureSlot.recruiter;
 
-        // First-run recovery: an empty store still seeds the starter content.
-        if (_templates.isEmpty && _questionSets.isEmpty) {
-          _applySeed();
+        _hasSeeded = data['hasSeeded'] == true;
+        if (!_hasSeeded) {
+          // Legacy store written before the seed flag existed. Seed only if it
+          // has never held starter content (genuine first-run recovery), never
+          // clobbering existing data, then record the flag so an intentional
+          // full deletion is not resurrected on the next load.
+          if (_templates.isEmpty && _questionSets.isEmpty) {
+            _applySeed();
+          }
+          _hasSeeded = true;
           await _saveToPrefs();
         }
       }
@@ -232,6 +256,7 @@ class RecruiterStore extends ChangeNotifier {
         'reports': _reports.values.map((r) => r.toJson()).toList(),
         'slot0Feature':
             _slot0Feature == FeatureSlot.recruiter ? 'recruiter' : 'video',
+        'hasSeeded': _hasSeeded,
       };
       await prefs.setString(_kStoreKey, jsonEncode(data));
     } catch (e) {

@@ -5,9 +5,11 @@
 // exactly as the server does. Falls back to a deterministic heuristic when no
 // Gemini scoring is available, so scoring works fully offline.
 
-import '../models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 
-int _clamp(num n) => n.clamp(0, 100).round();
+/// Clamp any numeric score into the inclusive 0–100 range and round to an int.
+/// Shared by both the scoring and conversation engines.
+int clampScore(num n) => n.clamp(0, 100).round();
 
 /// Weighted overall — enabled-KPI weights normalized, applied to per-KPI averages.
 int weightedOverall(KpiRubric rubric, Map<String, double> kpiAverages) {
@@ -43,6 +45,18 @@ String recommendationFor(int overall) {
   return Recommendation.no;
 }
 
+/// Keep the model's [raw] recommendation only when it's one of the recognized
+/// values; otherwise derive one from the recomputed [overall] score. Shared by
+/// the scoring and conversation engines (never trust an unknown label).
+String resolveRecommendation(String? raw, int overall) => const [
+      Recommendation.strongYes,
+      Recommendation.yes,
+      Recommendation.maybe,
+      Recommendation.no,
+    ].contains(raw)
+    ? raw!
+    : recommendationFor(overall);
+
 // ── Deterministic heuristic fallback (no Gemini key) ────────────────────────
 
 int _hash(String s) {
@@ -61,7 +75,7 @@ int heuristicScore(String answer, String kpiId) {
   final base = (45 + (words.clamp(0, 180) / 4).round()).clamp(0, 90);
   final key = '$kpiId:${answer.length > 40 ? answer.substring(0, 40) : answer}';
   final spread = (_hash(key) % 17) - 8;
-  return _clamp(base + spread);
+  return clampScore(base + spread);
 }
 
 /// Fully offline report — scores reflect answer length only.
@@ -130,7 +144,7 @@ ResultReport assembleFromGemini(
     final kpiScores = <String, double>{};
     if (match != null) {
       match.scores.forEach((kpiId, score) {
-        if (enabledIds.contains(kpiId)) kpiScores[kpiId] = _clamp(score).toDouble();
+        if (enabledIds.contains(kpiId)) kpiScores[kpiId] = clampScore(score).toDouble();
       });
     }
     return PerQuestionResult(
@@ -142,14 +156,7 @@ ResultReport assembleFromGemini(
 
   final kpiAverages = averageKpis(template.rubric, perQuestion);
   final overall = weightedOverall(template.rubric, kpiAverages);
-  final rec = const [
-    Recommendation.strongYes,
-    Recommendation.yes,
-    Recommendation.maybe,
-    Recommendation.no
-  ].contains(raw.recommendation)
-      ? raw.recommendation!
-      : recommendationFor(overall);
+  final rec = resolveRecommendation(raw.recommendation, overall);
 
   return ResultReport(
     sessionId: session.id,

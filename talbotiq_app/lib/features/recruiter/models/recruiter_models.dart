@@ -1023,7 +1023,7 @@ class PerQuestionResult {
         questionId: json['questionId'] ?? '',
         kpiScores: json['kpiScores'] != null
             ? (json['kpiScores'] as Map).map(
-                (k, v) => MapEntry(k as String, (v as num).toDouble()),
+                (k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0),
               )
             : const {},
         feedback: json['feedback'] ?? '',
@@ -1070,7 +1070,7 @@ class ResultReport {
             : const [],
         kpiAverages: json['kpiAverages'] != null
             ? (json['kpiAverages'] as Map).map(
-                (k, v) => MapEntry(k as String, (v as num).toDouble()),
+                (k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0),
               )
             : const {},
         overallScore: (json['overallScore'] as num?)?.toDouble() ?? 0,

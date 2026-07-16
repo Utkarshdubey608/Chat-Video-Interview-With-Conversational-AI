@@ -17,12 +17,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../providers/app_store.dart';
-import '../../../models/app_models.dart';
-import '../../../views/interview_page.dart';
-import '../../../views/results_page.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/features/interviews/candidate/interview/interview_page.dart';
+import 'package:talbotiq/features/interviews/candidate/results/results_page.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class CandidateVideoShell extends StatefulWidget {
   /// The assigned interview being run, or null for self-serve practice.
@@ -35,7 +35,6 @@ class CandidateVideoShell extends StatefulWidget {
 
 class _CandidateVideoShellState extends State<CandidateVideoShell> {
   bool _markedInProgress = false;
-  bool _markedCompleted = false;
   bool _resultWritten = false;
   bool _popScheduled = false;
   AppStore? _store;
@@ -43,18 +42,38 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _store = context.read<AppStore>();
+    final store = context.read<AppStore>();
+    if (!identical(store, _store)) {
+      _store?.removeListener(_onStoreChanged);
+      _store = store;
+      _store!.addListener(_onStoreChanged);
+    }
+    // Handle the route we're already on (e.g. the initial '/interview'), and
+    // pick up a result that may already be in the store.
+    _handleRoute(store.currentRoute);
   }
 
   @override
   void dispose() {
+    _store?.removeListener(_onStoreChanged);
     // Restore the candidate's own API keys (undo the org's ephemeral keys)
     // when leaving an assigned interview.
     if (widget.interview != null) _store?.reloadApiKeysFromPrefs();
     super.dispose();
   }
 
+  /// Route/result handling is driven off AppStore notifications rather than an
+  /// addPostFrameCallback fired on every build. The AI pipeline finishing
+  /// (store.addInterviewResult) notifies listeners, which lets us persist the
+  /// result to Firestore the moment it lands.
+  void _onStoreChanged() {
+    final store = _store;
+    if (store == null || !mounted) return;
+    _handleRoute(store.currentRoute);
+  }
+
   void _handleRoute(String route) {
+    if (!mounted) return;
     final interview = widget.interview;
     final repo = context.read<InterviewRepository>();
     if (route == '/interview') {
@@ -63,10 +82,12 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
         repo.updateStatus(interview.id, InterviewStatus.inProgress);
       }
     } else if (route == '/results') {
-      if (interview != null && !_markedCompleted) {
-        _markedCompleted = true;
-        repo.updateStatus(interview.id, InterviewStatus.completed);
-      }
+      // Deliberately do NOT mark the interview completed here. completeWithResult
+      // (in _maybeStoreResult) flips the status to completed atomically WITH the
+      // result. Marking completed up-front stranded any candidate whose result
+      // never landed (analysis failed, or they left mid-processing) on
+      // "Submitted — awaiting results" forever; leaving the status as in-progress
+      // until a result exists keeps the interview safely retakeable instead.
       _maybeStoreResult(interview, repo);
     } else if (!_popScheduled) {
       // A page navigated somewhere outside this shell (e.g. "New session").
@@ -79,8 +100,10 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
 
   // Once the AI pipeline finishes, its InterviewResult appears in AppStore.
   // Convert it to the canonical (unpublished) result and store to Firestore.
+  // This is what marks the interview completed (via completeWithResult).
   void _maybeStoreResult(Interview? interview, InterviewRepository repo) {
     if (interview == null || _resultWritten) return;
+    if (!mounted) return;
     final store = context.read<AppStore>();
     final convId = store.currentConversation?.conversationId ?? '';
     if (convId.isEmpty) return;
@@ -98,13 +121,17 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
       'improvements': sc?.topConcerns ?? const <String>[],
       'evaluatedBy': 'ai',
       if (sc != null) 'detail': sc.toJson(),
+      // Integrity: how many times the candidate left the app mid-interview.
+      if (store.integrityLeftAppCount > 0)
+        'integrity': {'leftAppCount': store.integrityLeftAppCount},
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final route = context.watch<AppStore>().currentRoute;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _handleRoute(route));
+    // Route handling is driven by the store listener (_onStoreChanged); here we
+    // only read the route to decide what to render.
+    final route = context.select<AppStore, String>((s) => s.currentRoute);
 
     // Assigned interviews hide the result behind a pending overlay.
     final gated = widget.interview != null && route == '/results';
@@ -123,7 +150,7 @@ class _IndexedStackPages extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final route = context.watch<AppStore>().currentRoute;
+    final route = context.select<AppStore, String>((s) => s.currentRoute);
     final index = route == '/results' ? 1 : 0;
     return IndexedStack(
       index: index,

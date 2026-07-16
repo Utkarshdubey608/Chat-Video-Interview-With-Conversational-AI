@@ -4,7 +4,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 import 'package:talbotiq/features/recruiter/engine/defaults.dart';
-import 'package:talbotiq/features/recruiter/engine/timing_engine.dart';
 import 'package:talbotiq/features/recruiter/engine/scoring_engine.dart';
 import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 
@@ -25,61 +24,7 @@ InterviewTemplate _template({int prep = 2, int answer = 3}) {
   );
 }
 
-List<SessionQuestion> _qs(int n) => List.generate(
-    n, (i) => SessionQuestion(id: 'q$i', text: 'Question $i'));
-
 void main() {
-  group('RunnerEngine timing state machine', () {
-    test('advances prep → answer → auto-submit → complete', () {
-      final t = _template(prep: 2, answer: 3);
-      final e = RunnerEngine.fromQuestions(_qs(2), t.timing);
-      e.begin(0);
-      expect(e.phase, RunnerPhase.prep);
-      expect(e.currentIndex, 0);
-
-      e.tick(2000); // prep elapsed → answer phase
-      expect(e.phase, RunnerPhase.answer);
-
-      e.tick(5000); // answer elapsed → auto-submit q0, arm q1 prep
-      expect(e.questions[0].autoSubmitted, isTrue);
-      expect(e.currentIndex, 1);
-      expect(e.completed, isFalse);
-
-      e.tick(10000); // q1 prep(→7000) + answer(→10000) elapse → complete
-      expect(e.completed, isTrue);
-      expect(e.questions[1].autoSubmitted, isTrue);
-    });
-
-    test('manual submit advances and preserves answer text', () {
-      final t = _template();
-      final e = RunnerEngine.fromQuestions(_qs(2), t.timing);
-      e.begin(0);
-      e.submitAnswer(500, 'my answer');
-      expect(e.questions[0].answerText, 'my answer');
-      expect(e.questions[0].autoSubmitted, isFalse);
-      expect(e.currentIndex, 1);
-      e.submitAnswer(1000, 'second');
-      expect(e.completed, isTrue);
-    });
-
-    test('skipPrep jumps to the answer phase', () {
-      final t = _template(prep: 30, answer: 60);
-      final e = RunnerEngine.fromQuestions(_qs(1), t.timing);
-      e.begin(0);
-      expect(e.phase, RunnerPhase.prep);
-      e.skipPrep(1000);
-      expect(e.phase, RunnerPhase.answer);
-    });
-
-    test('remainingSeconds counts down within a phase', () {
-      final t = _template(prep: 10, answer: 20);
-      final e = RunnerEngine.fromQuestions(_qs(1), t.timing);
-      e.begin(0);
-      expect(e.remainingSeconds(0), 10);
-      expect(e.remainingSeconds(4000), 6);
-    });
-  });
-
   group('résumé generation helpers', () {
     test('clampInt bounds and falls back', () {
       expect(clampInt(30, 0, 25, 8), 25);

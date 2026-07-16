@@ -8,15 +8,42 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Video (Tavus avatar) vs text Chat interview.
-enum InterviewType { video, chat }
+/// Video (Tavus avatar) vs text Chat vs real-time Voice interview.
+enum InterviewType { video, chat, voice }
 
 extension InterviewTypeX on InterviewType {
-  String get wire => this == InterviewType.video ? 'video' : 'chat';
-  String get label =>
-      this == InterviewType.video ? 'Video Interview' : 'Chat Interview';
-  static InterviewType fromWire(String? v) =>
-      v == 'video' ? InterviewType.video : InterviewType.chat;
+  String get wire {
+    switch (this) {
+      case InterviewType.video:
+        return 'video';
+      case InterviewType.chat:
+        return 'chat';
+      case InterviewType.voice:
+        return 'voice';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case InterviewType.video:
+        return 'Video Interview';
+      case InterviewType.chat:
+        return 'Chat Interview';
+      case InterviewType.voice:
+        return 'Voice Interview';
+    }
+  }
+
+  static InterviewType fromWire(String? v) {
+    switch (v) {
+      case 'video':
+        return InterviewType.video;
+      case 'voice':
+        return InterviewType.voice;
+      default:
+        return InterviewType.chat;
+    }
+  }
 }
 
 /// Lifecycle of an assigned interview.
@@ -99,6 +126,54 @@ class Interview {
   final String prompt;
   final List<String> questions;
 
+  /// Chat interviews only: when true, the AI generates questions adaptively
+  /// (résumé-grounded, with optional follow-ups) instead of using the fixed
+  /// [questions] list. Absent/false on every existing doc → fixed behaviour is
+  /// preserved unchanged.
+  final bool adaptive;
+
+  /// Adaptive settings (an `AdaptiveConfig` JSON map) applied when [adaptive] is
+  /// true — role, difficulty, style, numberOfQuestions, allowFollowUps, etc.
+  /// Kept as a raw map so this focused model stays free of the recruiter-module
+  /// types; the chat launch adapter converts it to an `AdaptiveConfig`.
+  final Map<String, dynamic>? adaptiveConfig;
+
+  /// When true, the candidate is asked to provide a résumé (PDF or pasted text)
+  /// before a VIDEO interview starts; the text grounds the AI interviewer.
+  /// Adaptive chat always collects a résumé via the runner regardless of this
+  /// flag. Absent/false on existing docs → no résumé step (unchanged).
+  final bool collectResume;
+
+  /// Interview language (full name, e.g. 'English', 'Spanish'). Drives the Tavus
+  /// avatar's spoken language and the adaptive chat interviewer. Absent → English
+  /// (unchanged behaviour).
+  final String language;
+
+  /// Voice track only: the Gemini Live prebuilt voice name (e.g. 'Aoede') and an
+  /// optional persona id. Absent → the voice engine's default voice.
+  final String? voiceName;
+  final String? voicePersonaId;
+
+  /// Optional proctoring/integrity settings (an `IntegrityConfig` JSON map:
+  /// detectTabSwitch, disablePasteInAnswers, disableCopy, maxTabSwitchWarnings,
+  /// logEvents). Enforced by the chat runner. Absent → sensible defaults.
+  final Map<String, dynamic>? integrity;
+
+  /// Optional branding (a `BrandingConfig` JSON map: companyName, accentColor,
+  /// welcomeMessage) shown on the candidate welcome screen. Absent → defaults.
+  final Map<String, dynamic>? branding;
+
+  /// Chat interviews only: optional per-question countdown timer. A
+  /// `ConversationTimingConfig`-shaped JSON map:
+  /// { enabled:bool, perQuestionSeconds:int, thinkingSeconds:int,
+  ///   allowEarlySubmit:bool, warningThresholdSeconds:int,
+  ///   autoSubmitOnExpiry:bool }.
+  /// When `enabled` is true the chat launch adapter runs the interview in
+  /// `InterviewMode.timed`; the answer clock auto-submits at zero. Absent or
+  /// `enabled:false` → the untimed conversational behaviour is preserved
+  /// unchanged.
+  final Map<String, dynamic>? chatTimer;
+
   /// Only meaningful for [InterviewType.video].
   final AvatarConfig avatar;
   final int durationMinutes;
@@ -148,6 +223,15 @@ class Interview {
     required this.title,
     required this.prompt,
     required this.questions,
+    this.adaptive = false,
+    this.adaptiveConfig,
+    this.collectResume = false,
+    this.language = 'English',
+    this.voiceName,
+    this.voicePersonaId,
+    this.integrity,
+    this.branding,
+    this.chatTimer,
     required this.avatar,
     required this.durationMinutes,
     required this.status,
@@ -207,6 +291,15 @@ class Interview {
       questions:
           (d['questions'] as List?)?.map((e) => e.toString()).toList() ??
               const [],
+      adaptive: (d['adaptive'] as bool?) ?? false,
+      adaptiveConfig: (d['adaptiveConfig'] as Map<String, dynamic>?),
+      collectResume: (d['collectResume'] as bool?) ?? false,
+      language: (d['language'] as String?) ?? 'English',
+      voiceName: d['voiceName'] as String?,
+      voicePersonaId: d['voicePersonaId'] as String?,
+      integrity: d['integrity'] as Map<String, dynamic>?,
+      branding: d['branding'] as Map<String, dynamic>?,
+      chatTimer: d['chatTimer'] as Map<String, dynamic>?,
       avatar: AvatarConfig.fromMap(d['avatar'] as Map<String, dynamic>?),
       durationMinutes: (d['durationMinutes'] as num?)?.toInt() ?? 15,
       status: InterviewStatusX.fromWire(d['status'] as String?),
@@ -238,6 +331,15 @@ class Interview {
         'title': title,
         'prompt': prompt,
         'questions': questions,
+        'adaptive': adaptive,
+        if (adaptiveConfig != null) 'adaptiveConfig': adaptiveConfig,
+        'collectResume': collectResume,
+        'language': language,
+        if (voiceName != null) 'voiceName': voiceName,
+        if (voicePersonaId != null) 'voicePersonaId': voicePersonaId,
+        if (integrity != null) 'integrity': integrity,
+        if (branding != null) 'branding': branding,
+        if (chatTimer != null) 'chatTimer': chatTimer,
         'avatar': avatar.toMap(),
         'durationMinutes': durationMinutes,
         'status': status.wire,
@@ -260,6 +362,17 @@ class Interview {
         'title': title,
         'prompt': prompt,
         'questions': questions,
+        'adaptive': adaptive,
+        'collectResume': collectResume,
+        'language': language,
+        // Type-specific config written UNCONDITIONALLY (null when absent) so
+        // editing an interview to a different type clears stale fields.
+        'adaptiveConfig': adaptiveConfig,
+        'voiceName': voiceName,
+        'voicePersonaId': voicePersonaId,
+        'integrity': integrity,
+        'branding': branding,
+        'chatTimer': chatTimer,
         'avatar': avatar.toMap(),
         'durationMinutes': durationMinutes,
         'keyOverrides': keyOverrides,

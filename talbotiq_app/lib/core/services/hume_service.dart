@@ -2,20 +2,27 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class HumeService {
+  // Shared transport: request timeout + 429/5xx backoff-retry so a stalled or
+  // throttled Hume host no longer hangs (or one-shot-fails) emotion analysis.
+  final ApiClient _api = ApiClient();
+
   String _apiKey = '';
 
+  // Trim on entry so stray whitespace from a pasted key never produces a
+  // silently-invalid X-Hume-Api-Key header.
   void setKey(String key) {
-    _apiKey = key;
+    _apiKey = key.trim();
   }
 
   String getKey() => _apiKey;
 
   Map<String, String> _headers() {
     return {
-      'X-Hume-Api-Key': _apiKey,
+      'X-Hume-Api-Key': _apiKey.trim(),
       'Content-Type': 'application/json',
     };
   }
@@ -148,9 +155,11 @@ class HumeService {
 
   // Submit audio bytes to Hume
   Future<String> submitBatchJob(List<int> audioBytes, {String filename = 'interview.webm'}) async {
+    if (_apiKey.trim().isEmpty) throw Exception('No Hume API key set');
     final url = Uri.parse('https://api.hume.ai/v0/batch/jobs');
-    
-    final request = http.MultipartRequest('POST', url)
+
+    // Rebuilt on each attempt so retried uploads get a fresh request stream.
+    http.MultipartRequest buildRequest() => http.MultipartRequest('POST', url)
       ..headers['X-Hume-Api-Key'] = _apiKey.trim()
       ..fields['json'] = jsonEncode({
         'models': {'prosody': {}}
@@ -164,7 +173,12 @@ class HumeService {
         ),
       );
 
-    final response = await http.Response.fromStream(await request.send());
+    final http.Response response;
+    try {
+      response = await _api.sendMultipart(buildRequest);
+    } on ApiException catch (e) {
+      throw Exception('Hume batch submit failed: ${e.message}');
+    }
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final body = jsonDecode(response.body);
@@ -183,15 +197,21 @@ class HumeService {
 
   // Submit audio URLs to Hume
   Future<String> submitBatchJobWithUrls(List<String> urls) async {
+    if (_apiKey.trim().isEmpty) throw Exception('No Hume API key set');
     final url = Uri.parse('https://api.hume.ai/v0/batch/jobs');
-    final response = await http.post(
-      url,
-      headers: _headers(),
-      body: jsonEncode({
-        'urls': urls,
-        'models': {'prosody': {}}
-      }),
-    );
+    final http.Response response;
+    try {
+      response = await _api.post(
+        url,
+        headers: _headers(),
+        body: jsonEncode({
+          'urls': urls,
+          'models': {'prosody': {}}
+        }),
+      );
+    } on ApiException catch (e) {
+      throw Exception('Hume batch submit URLs failed: ${e.message}');
+    }
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final body = jsonDecode(response.body);
@@ -210,8 +230,14 @@ class HumeService {
 
   // Poll job status
   Future<Map<String, dynamic>> pollBatchJob(String jobId) async {
+    if (_apiKey.trim().isEmpty) throw Exception('No Hume API key set');
     final url = Uri.parse('https://api.hume.ai/v0/batch/jobs/$jobId');
-    final response = await http.get(url, headers: _headers());
+    final http.Response response;
+    try {
+      response = await _api.get(url, headers: _headers());
+    } on ApiException catch (e) {
+      throw Exception('Hume poll failed: ${e.message}');
+    }
 
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body);
@@ -228,8 +254,14 @@ class HumeService {
 
   // Fetch predictions
   Future<List<dynamic>> fetchBatchPredictions(String jobId) async {
+    if (_apiKey.trim().isEmpty) throw Exception('No Hume API key set');
     final url = Uri.parse('https://api.hume.ai/v0/batch/jobs/$jobId/predictions');
-    final response = await http.get(url, headers: _headers());
+    final http.Response response;
+    try {
+      response = await _api.get(url, headers: _headers());
+    } on ApiException catch (e) {
+      throw Exception('Failed to fetch predictions: ${e.message}');
+    }
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -266,14 +298,20 @@ class HumeService {
           final time = p['time'] as Map?;
           final emotionsList = p['emotions'] as List?;
           if (time == null || emotionsList == null) continue;
-          
+
+          // A present `time` object can still omit begin/end — read them as
+          // nullable and skip the frame rather than crashing on a bad cast.
+          final begin = time['begin'] as num?;
+          if (begin == null) continue;
+          final end = time['end'] as num?;
+
           final List<HumeEmotion> emos = emotionsList
               .map((e) => HumeEmotion.fromJson(Map<String, dynamic>.from(e)))
               .toList();
 
           allPredictions.add({
-            'begin': (time['begin'] as num).toDouble(),
-            'end': (time['end'] as num).toDouble(),
+            'begin': begin.toDouble(),
+            'end': (end ?? begin).toDouble(),
             'emotions': emos,
           });
         }

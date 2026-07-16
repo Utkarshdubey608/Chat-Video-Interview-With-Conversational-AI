@@ -6,5 +6,5 @@
 //
 // Native (Android/iOS) uses the `record` package; web is a no-op stub because
 // the web build already captures the transcript via Deepgram live streaming.
-export 'recording_service_stub.dart'
+export 'package:talbotiq/core/services/recording_service_stub.dart'
     if (dart.library.io) 'recording_service_io.dart';

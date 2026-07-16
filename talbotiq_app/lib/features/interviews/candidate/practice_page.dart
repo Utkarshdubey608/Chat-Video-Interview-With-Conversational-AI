@@ -10,13 +10,16 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../models/app_models.dart';
-import '../../../providers/app_store.dart';
-import '../../../core/services/tavus_service.dart';
-import '../../../views/setup/avatar_picker.dart';
-import '../../../widgets/custom_buttons.dart';
-import '../../../widgets/custom_inputs.dart';
-import 'video_launch.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/core/constants/colors.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
+import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({super.key});
@@ -78,6 +81,7 @@ class _PracticePageState extends State<PracticePage> {
       if (!mounted) return;
       setState(() => _replicas = replicas);
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Could not load avatars: '
           '${e.toString().replaceAll('Exception: ', '')}');
     } finally {
@@ -91,6 +95,19 @@ class _PracticePageState extends State<PracticePage> {
   void _removeQuestion(int i) {
     if (_questionControllers.length == 1) return;
     setState(() => _questionControllers.removeAt(i).dispose());
+  }
+
+  /// Replaces the practice questions with a saved template's questions.
+  void _applyTemplate(List<String> questions, {String? title}) {
+    setState(() {
+      for (final c in _questionControllers) {
+        c.dispose();
+      }
+      _questionControllers
+        ..clear()
+        ..addAll((questions.isEmpty ? [''] : questions)
+            .map((q) => TextEditingController(text: q)));
+    });
   }
 
   List<String> get _questions => _questionControllers
@@ -138,6 +155,7 @@ class _PracticePageState extends State<PracticePage> {
         interview: null,
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Could not start practice: '
           '${e.toString().replaceAll('Exception: ', '')}');
     } finally {
@@ -149,63 +167,47 @@ class _PracticePageState extends State<PracticePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Practice with AI')),
+      appBar: AppBar(
+        title: const Text('Practice with AI'),
+        actions: const [LogoutButton(), SizedBox(width: 4)],
+        elevation: 0,
+      ),
       body: Stack(
         children: [
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               child: Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 640),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer
-                              .withOpacity(0.3),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          'Practice mode uses your own Tavus account and settings. '
-                          'Nothing here is assigned by a recruiter or scored.',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      CustomInputField(
-                        label: 'Your Tavus API key',
-                        placeholder: 'tavus_...',
-                        controller: _keyController,
-                        isPassword: true,
-                      ),
-                      const SizedBox(height: 16),
-                      CustomInputField(
-                        label: 'Prompt / interviewer instructions',
-                        placeholder: 'How the AI should behave…',
-                        controller: _promptController,
-                        maxLines: 5,
-                      ),
-                      const SizedBox(height: 20),
-                      _buildQuestions(theme),
-                      const SizedBox(height: 20),
-                      _buildDuration(theme),
-                      const SizedBox(height: 20),
-                      _buildAvatar(theme),
+                      _buildTavusIntegrationCard(theme),
+                      _buildSessionSetupCard(theme),
+                      _buildQuestionsCard(theme),
+                      _buildAvatarCard(theme),
                       if (_error != null) ...[
-                        const SizedBox(height: 16),
-                        Text(_error!,
-                            style: TextStyle(color: theme.colorScheme.error)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Text(
+                            _error!,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: theme.colorScheme.error,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                       ],
-                      const SizedBox(height: 28),
+                      const SizedBox(height: 16),
                       CustomButton(
-                        text: 'Start practice',
+                        text: 'Start Practice Session',
                         isLoading: _launching,
+                        width: double.infinity,
                         onPressed: _launching ? () {} : _launch,
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 24),
                     ],
                   ),
                 ),
@@ -213,12 +215,173 @@ class _PracticePageState extends State<PracticePage> {
             ),
           ),
           if (_launching)
-            const ColoredBox(
-              color: Color(0x88000000),
-              child: Center(child: CircularProgressIndicator()),
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withOpacity(0.5),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                    margin: const EdgeInsets.symmetric(horizontal: 32),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceVariant,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: theme.colorScheme.outline.withOpacity(0.12),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Starting Practice Session...',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Setting up AI avatar call...',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFormSection({
+    required BuildContext context,
+    required String title,
+    required IconData icon,
+    required Widget child,
+    Widget? action,
+  }) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: theme.colorScheme.primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                ),
+                if (action != null) action,
+              ],
+            ),
+            const SizedBox(height: 20),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTavusIntegrationCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Tavus Integration',
+      icon: Icons.vpn_key_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: theme.colorScheme.primary,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Practice mode uses your personal Tavus account and settings. Nothing here is assigned by a recruiter, stored, or scored.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          CustomInputField(
+            label: 'Your Tavus API Key',
+            placeholder: 'Enter tavus_api_key...',
+            controller: _keyController,
+            isPassword: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSessionSetupCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Session Configuration',
+      icon: Icons.settings_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CustomInputField(
+            label: 'AI Interviewer Instructions / Prompt',
+            placeholder: 'How the AI avatar should behave, questions style, tone...',
+            controller: _promptController,
+            maxLines: 5,
+          ),
+          const SizedBox(height: 16),
+          CustomSlider(
+            label: 'Practice Call Duration',
+            min: 5,
+            max: 60,
+            divisions: 11,
+            value: _durationMinutes.toDouble(),
+            formatValue: (v) => '${v.round()} mins',
+            onChanged: (v) => setState(() => _durationMinutes = v.round()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionsCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Practice Questions',
+      icon: Icons.question_answer_outlined,
+      child: _buildQuestions(theme),
     );
   }
 
@@ -226,106 +389,135 @@ class _PracticePageState extends State<PracticePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Questions (optional)',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        for (int i = 0; i < _questionControllers.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: CustomInputField(
-                    label: '',
-                    placeholder: 'Question ${i + 1}',
-                    controller: _questionControllers[i],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: _questionControllers.length == 1
-                      ? null
-                      : () => _removeQuestion(i),
-                ),
-              ],
-            ),
-          ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _addQuestion,
-            icon: const Icon(Icons.add),
-            label: const Text('Add question'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDuration(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Duration: $_durationMinutes min',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        Slider(
-          value: _durationMinutes.toDouble(),
-          min: 5,
-          max: 60,
-          divisions: 11,
-          label: '$_durationMinutes min',
-          onChanged: (v) => setState(() => _durationMinutes = v.round()),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAvatar(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
           children: [
-            Text('Avatar',
-                style: theme.textTheme.labelLarge
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-            TextButton.icon(
-              onPressed: _loadingReplicas ? null : _loadReplicas,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Load avatars'),
+            Text(
+              'Questions (Optional)',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            QuestionTemplatesBar(
+              currentQuestions: () => _questions,
+              onApply: _applyTemplate,
             ),
           ],
         ),
-        if (_loadingReplicas)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_replicas.isNotEmpty)
-          AvatarStrip(
-            replicas: _replicas,
-            selectedId: _replicaIdController.text.trim(),
-            onSelect: (id) => setState(() => _replicaIdController.text = id),
-          )
-        else
-          Text('Enter your key and tap “Load avatars”, or type a replica ID.',
-              style: theme.textTheme.bodySmall),
         const SizedBox(height: 12),
-        CustomInputField(
-          label: 'Replica ID',
-          placeholder: 'r1234...',
-          controller: _replicaIdController,
-        ),
-        const SizedBox(height: 12),
-        CustomInputField(
-          label: 'Persona ID (optional)',
-          placeholder: 'p1234...',
-          controller: _personaIdController,
+        for (int i = 0; i < _questionControllers.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: CustomInputField(
+                    label: 'Question ${i + 1}',
+                    placeholder: 'e.g. Describe a time you resolved a technical challenge.',
+                    controller: _questionControllers[i],
+                  ),
+                ),
+                if (_questionControllers.length > 1) ...[
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 28), // Align with input field
+                    child: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                      onPressed: () => _removeQuestion(i),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        const SizedBox(height: 8),
+        CustomButton(
+          text: 'Add Question',
+          variant: ButtonVariant.outline,
+          width: double.infinity,
+          height: 44,
+          icon: const Icon(Icons.add, size: 18),
+          onPressed: _addQuestion,
         ),
       ],
+    );
+  }
+
+  Widget _buildAvatarCard(ThemeData theme) {
+    Widget action = TextButton.icon(
+      onPressed: _loadingReplicas ? null : _loadReplicas,
+      icon: const Icon(Icons.refresh, size: 16),
+      label: const Text('Load Avatars'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      ),
+    );
+
+    return _buildFormSection(
+      context: context,
+      title: 'AI Avatar Select',
+      icon: Icons.face_outlined,
+      action: action,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_loadingReplicas)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_replicas.isNotEmpty)
+            Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withOpacity(0.12),
+                ),
+              ),
+              child: AvatarStrip(
+                replicas: _replicas,
+                selectedId: _replicaIdController.text.trim(),
+                onSelect: (id) => setState(() => _replicaIdController.text = id),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withOpacity(0.12),
+                ),
+              ),
+              child: Text(
+                'Enter your API key and tap "Load Avatars" to choose, or enter a replica ID manually below.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          const SizedBox(height: 16),
+          CustomInputField(
+            label: 'Replica ID',
+            placeholder: 'e.g. r1234abc...',
+            controller: _replicaIdController,
+          ),
+          const SizedBox(height: 12),
+          CustomInputField(
+            label: 'Persona ID (Optional)',
+            placeholder: 'e.g. p1234abc...',
+            controller: _personaIdController,
+          ),
+        ],
+      ),
     );
   }
 }

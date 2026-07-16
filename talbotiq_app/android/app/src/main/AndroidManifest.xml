@@ -32,6 +32,35 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Deep link: custom scheme. Works purely client-side, no server
+                 or domain verification required. Handles invite links of the
+                 form  talbotiq://interview/<interviewId>. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="talbotiq" android:host="interview"/>
+            </intent-filter>
+
+            <!-- Deep link: Android App Links (verified HTTPS). Handles invite
+                 links of the form  https://<host>/take/<interviewId>.
+                 android:autoVerify enables verification against the host's
+                 /.well-known/assetlinks.json.
+                 TODO(deploy): "app.talbotiq.com" is a PLACEHOLDER. Replace it
+                 with the real deployed domain AND host an assetlinks.json at
+                 https://<domain>/.well-known/assetlinks.json containing this
+                 app's package name + release signing SHA-256, or the https
+                 links will open in the browser instead of the app. The custom
+                 talbotiq:// scheme above works without any of this. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="app.talbotiq.com"
+                      android:pathPrefix="/take"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

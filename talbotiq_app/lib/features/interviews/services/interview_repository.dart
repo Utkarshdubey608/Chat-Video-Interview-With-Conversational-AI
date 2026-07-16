@@ -6,9 +6,14 @@
 // Security rules (firestore.rules) enforce the same scoping server-side.
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 
-import '../models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
 
+/// Owns all Firestore access for the `interviews` collection: CRUD plus the
+/// recruiter/candidate query streams and the attempt/status/result mutations.
+/// UI and controllers go through this repository — no widget touches Firestore
+/// directly.
 class InterviewRepository {
   InterviewRepository({FirebaseFirestore? firestore})
       : _db = firestore ?? FirebaseFirestore.instance;
@@ -32,7 +37,7 @@ class InterviewRepository {
         .where('recruiterId', isEqualTo: recruiterId)
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((s) => s.docs.map(Interview.fromDoc).toList());
+        .map((s) => _parseDocs(s.docs));
   }
 
   /// Live list of interviews assigned to a candidate email, newest first.
@@ -41,12 +46,35 @@ class InterviewRepository {
         .where('candidateEmailLower', isEqualTo: normalizeEmail(candidateEmail))
         .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((s) => s.docs.map(Interview.fromDoc).toList());
+        .map((s) => _parseDocs(s.docs));
+  }
+
+  /// Parses a snapshot's docs one at a time, dropping any single document that
+  /// fails to parse. A malformed record therefore can't break the whole
+  /// dashboard — the remaining valid interviews still render.
+  List<Interview> _parseDocs(
+      Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+    final out = <Interview>[];
+    for (final doc in docs) {
+      try {
+        out.add(Interview.fromDoc(doc));
+      } catch (e) {
+        debugPrint('InterviewRepository: skipping bad doc ${doc.id}: $e');
+      }
+    }
+    return out;
   }
 
   Future<Interview?> getById(String id) async {
-    final doc = await _col.doc(id).get();
-    return doc.exists ? Interview.fromDoc(doc) : null;
+    try {
+      final doc = await _col.doc(id).get();
+      return doc.exists ? Interview.fromDoc(doc) : null;
+    } catch (e) {
+      // Permission-denied or a malformed document should surface as "not
+      // found" to the caller rather than leaking a raw Firestore/parse error.
+      debugPrint('InterviewRepository.getById($id) failed: $e');
+      return null;
+    }
   }
 
   /// Updates the editable fields of an existing interview.
@@ -104,13 +132,31 @@ class InterviewRepository {
         .where('recruiterId', isEqualTo: recruiterId)
         .where('testId', isEqualTo: testId)
         .get();
-    final batch = _db.batch();
-    for (final doc in q.docs) {
-      batch.update(doc.reference, {
-        'resultPublished': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+
+    // Only publish candidates who actually took the test: a completed status
+    // with a stored result. Untaken/incomplete assignments are left untouched
+    // so they aren't wrongly marked published.
+    final publishable = q.docs.where((doc) {
+      final d = doc.data();
+      return d['status'] == InterviewStatus.completed.wire &&
+          d['result'] != null;
+    }).toList();
+
+    // Firestore hard-caps a batch at 500 writes; chunk well under that and
+    // commit each chunk sequentially.
+    const int chunkSize = 450;
+    for (var i = 0; i < publishable.length; i += chunkSize) {
+      final end = (i + chunkSize < publishable.length)
+          ? i + chunkSize
+          : publishable.length;
+      final batch = _db.batch();
+      for (final doc in publishable.sublist(i, end)) {
+        batch.update(doc.reference, {
+          'resultPublished': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
     }
-    await batch.commit();
   }
 }

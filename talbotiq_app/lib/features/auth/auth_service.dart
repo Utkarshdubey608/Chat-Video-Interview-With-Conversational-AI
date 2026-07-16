@@ -7,8 +7,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import 'app_role.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
 
+/// Thin wrapper over Firebase Auth that also resolves the signed-in user's
+/// role + display name from Firestore. Exposes the current user, auth-state and
+/// role streams, and sign-in/up/out — the single seam the UI should use instead
+/// of touching `FirebaseAuth.instance` directly.
 class AuthService {
   AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
       : _auth = auth ?? FirebaseAuth.instance,
@@ -69,6 +73,11 @@ class AuthService {
   }
 
   Future<void> signOut() => _auth.signOut();
+
+  /// Sends a password-reset email to [email]. Used by the login screen's
+  /// "Forgot password?" action.
+  Future<void> sendPasswordReset(String email) =>
+      _auth.sendPasswordResetEmail(email: email.trim());
 
   /// Reads the role recorded at sign-up. Defaults to candidate if the doc is
   /// missing (e.g. an account created outside the app).

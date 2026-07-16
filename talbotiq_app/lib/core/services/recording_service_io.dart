@@ -4,13 +4,17 @@
 // local .wav file for the duration of the interview, then returns the raw bytes
 // so they can be POSTed to Deepgram's pre-recorded transcription endpoint.
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class RecordingService {
   final AudioRecorder _recorder = AudioRecorder();
   String? _path;
+  // Bytes of the most recent recording, retained so persistLastRecording can
+  // write the permanent copy after stopAndReadBytes has deleted the temp file.
+  List<int>? _lastBytes;
   bool _isRecording = false;
 
   bool get isRecording => _isRecording;
@@ -21,7 +25,7 @@ class RecordingService {
     if (_isRecording) return true;
     try {
       final hasPerm = await _recorder.hasPermission();
-      print('debug[rec]: hasPermission = $hasPerm');
+      if (kDebugMode) print('debug[rec]: hasPermission = $hasPerm');
       if (!hasPerm) return false;
 
       final dir = await getTemporaryDirectory();
@@ -40,38 +44,51 @@ class RecordingService {
 
       _path = path;
       _isRecording = true;
-      print('debug[rec]: recording started -> $path');
+      if (kDebugMode) print('debug[rec]: recording started -> $path');
       return true;
     } catch (e) {
       _isRecording = false;
-      print('debug[rec]: start FAILED: $e');
+      if (kDebugMode) print('debug[rec]: start FAILED: $e');
       return false;
     }
   }
 
   /// Stops recording and returns the recorded .wav file's bytes (or null if
-  /// nothing was recorded).
+  /// nothing was recorded). The temp file is deleted once its bytes are in
+  /// memory so cached recordings don't accumulate; persistLastRecording writes
+  /// its permanent copy from the retained bytes rather than from this file.
   Future<List<int>?> stopAndReadBytes() async {
-    print('debug[rec]: stopAndReadBytes (isRecording=$_isRecording)');
+    if (kDebugMode) print('debug[rec]: stopAndReadBytes (isRecording=$_isRecording)');
     if (!_isRecording) return null;
     try {
       final path = await _recorder.stop();
       _isRecording = false;
       final finalPath = path ?? _path;
-      print('debug[rec]: stopped -> $finalPath');
+      if (kDebugMode) print('debug[rec]: stopped -> $finalPath');
       if (finalPath == null) return null;
+      _path = finalPath;
 
       final file = File(finalPath);
-      if (!await file.exists()) {
-        print('debug[rec]: file does NOT exist at $finalPath');
-        return null;
+      try {
+        if (!await file.exists()) {
+          if (kDebugMode) print('debug[rec]: file does NOT exist at $finalPath');
+          return null;
+        }
+        final bytes = await file.readAsBytes();
+        _lastBytes = bytes;
+        if (kDebugMode) print('debug[rec]: read ${bytes.length} bytes from $finalPath');
+        return bytes;
+      } finally {
+        // Bytes are captured above, so the temp .wav is no longer needed.
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (e) {
+          if (kDebugMode) print('debug[rec]: temp cleanup failed: $e');
+        }
       }
-      final bytes = await file.readAsBytes();
-      print('debug[rec]: read ${bytes.length} bytes from $finalPath');
-      return bytes;
     } catch (e) {
       _isRecording = false;
-      print('debug[rec]: stop FAILED: $e');
+      if (kDebugMode) print('debug[rec]: stop FAILED: $e');
       return null;
     }
   }
@@ -79,18 +96,17 @@ class RecordingService {
   /// Copies the most recent recording from the temp cache into permanent
   /// device storage so it can be played back / deleted later from Settings.
   Future<SavedRecording?> persistLastRecording(String name) async {
-    if (_path == null) return null;
+    final bytes = _lastBytes;
+    if (_path == null || bytes == null) return null;
     try {
-      final src = File(_path!);
-      if (!await src.exists()) return null;
-
       final docs = await getApplicationDocumentsDirectory();
       final recDir = Directory('${docs.path}/recordings');
       if (!await recDir.exists()) await recDir.create(recursive: true);
 
       final filename = _path!.split('/').last;
       final destPath = '${recDir.path}/$filename';
-      final dest = await src.copy(destPath);
+      final dest = File(destPath);
+      await dest.writeAsBytes(bytes, flush: true);
       final size = await dest.length();
 
       return SavedRecording(
@@ -101,7 +117,7 @@ class RecordingService {
         sizeBytes: size,
       );
     } catch (e) {
-      print('debug[rec]: persist failed: $e');
+      if (kDebugMode) print('debug[rec]: persist failed: $e');
       return null;
     }
   }

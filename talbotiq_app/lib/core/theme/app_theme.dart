@@ -1,6 +1,6 @@
 // lib/core/theme/app_theme.dart
 import 'package:flutter/material.dart';
-import '../constants/colors.dart';
+import 'package:talbotiq/core/constants/colors.dart';
 
 class AppTheme {
   static ThemeData get darkTheme {
@@ -25,7 +25,7 @@ class AppTheme {
         outline: AppColors.border,
         outlineVariant: AppColors.borderLight,
         error: AppColors.danger,
-        onError: AppColors.dangerBg,
+        onError: AppColors.textLight, // Near-white for contrast on the red error surface
       ),
       cardTheme: CardThemeData(
         color: AppColors.cardBg,

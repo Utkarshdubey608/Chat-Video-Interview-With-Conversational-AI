@@ -3,7 +3,7 @@
 // Pure-Dart port of talbotiq-platform `server/store/defaults.ts`. No Flutter
 // imports so it stays unit-testable.
 
-import '../models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 
 TimingConfig defaultTiming() => const TimingConfig(
       prepSeconds: 30,

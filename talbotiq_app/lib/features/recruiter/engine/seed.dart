@@ -3,8 +3,8 @@
 // Pure-Dart port of talbotiq-platform `server/store/seed.ts`. Populates the
 // RecruiterStore on first run so the UI is not empty.
 
-import '../models/recruiter_models.dart';
-import 'defaults.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/engine/defaults.dart';
 
 class SeedData {
   final List<InterviewTemplate> templates;

@@ -10,8 +10,8 @@ import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
-import '../engine/conversation_engine.dart';
-import '../models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/engine/conversation_engine.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 
 class _Row {
   final String title;
