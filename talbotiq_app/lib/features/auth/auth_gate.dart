@@ -11,8 +11,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:talbotiq/features/interviews/candidate/candidate_home.dart';
-import 'package:talbotiq/features/interviews/recruiter/recruiter_home.dart';
+import 'package:talbotiq/features/interviews/candidate/candidate_shell.dart';
+import 'package:talbotiq/features/interviews/recruiter/recruiter_shell.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
 import 'package:talbotiq/features/auth/login_page.dart';
@@ -37,8 +37,8 @@ class AuthGate extends StatelessWidget {
           builder: (context, roleSnap) {
             if (!roleSnap.hasData) return const _Loading();
             return roleSnap.data == AppRole.recruiter
-                ? const RecruiterHome()
-                : const CandidateHome();
+                ? const RecruiterShell()
+                : const CandidateShell();
           },
         );
       },

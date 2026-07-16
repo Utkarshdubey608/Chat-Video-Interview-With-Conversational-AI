@@ -12,20 +12,17 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
-import 'package:talbotiq/core/utils/date_format.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/settings/settings_page.dart';
 import 'package:talbotiq/features/app_config/app_config_service.dart';
-import 'package:talbotiq/features/auth/auth_service.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_result_page.dart';
 import 'package:talbotiq/features/interviews/candidate/chat_launch_adapter.dart';
 import 'package:talbotiq/features/interviews/candidate/facefit_page.dart';
-import 'package:talbotiq/features/interviews/candidate/practice_page.dart';
 import 'package:talbotiq/features/interviews/candidate/resume_intake_page.dart';
 import 'package:talbotiq/features/interviews/candidate/system_check_page.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
@@ -250,28 +247,10 @@ class _CandidateHomeState extends State<CandidateHome> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('My Interviews'),
-        actions: [
-          IconButton(
-            tooltip: 'Practice with AI',
-            icon: const Icon(Icons.smart_toy_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const PracticePage()),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const _SettingsScaffold()),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthService>().signOut(),
-          ),
-          const SizedBox(width: 4),
+        title: const _Wordmark(subtitle: 'My Interviews'),
+        actions: const [
+          LogoutButton(),
+          SizedBox(width: 4),
         ],
       ),
       body: Stack(
@@ -355,114 +334,257 @@ class _CandidateHomeState extends State<CandidateHome> {
   }
 }
 
-/// Wraps the reused [SettingsPage] (which has no app bar) in its own Scaffold.
-class _SettingsScaffold extends StatelessWidget {
-  const _SettingsScaffold();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: const SettingsPage(),
-    );
-  }
-}
-
 class _AssignedCard extends StatelessWidget {
   final Interview interview;
   final VoidCallback onLaunch;
   const _AssignedCard({required this.interview, required this.onLaunch});
 
+  Widget _buildStatusBadge(
+      BuildContext context, String text, Color bgColor, Color textColor) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(100), // Pill-shaped!
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: textColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton(
+    BuildContext context,
+    ThemeData theme,
+    bool published,
+    bool awaiting,
+    bool accessible,
+    bool completed,
+  ) {
+    if (published) {
+      return FilledButton(
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+        ),
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => CandidateResultPage(interview: interview),
+          ),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('View Result'),
+            SizedBox(width: 4),
+            Icon(Icons.arrow_forward, size: 14),
+          ],
+        ),
+      );
+    } else if (awaiting && !accessible) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceVariant,
+          borderRadius: BorderRadius.circular(100),
+        ),
+        child: Text(
+          'Pending',
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    } else {
+      return FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: accessible
+              ? theme.colorScheme.primary
+              : theme.colorScheme.outline.withValues(alpha: 0.1),
+          foregroundColor: accessible
+              ? theme.colorScheme.onPrimary
+              : theme.colorScheme.onSurfaceVariant,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+        ),
+        onPressed: accessible ? onLaunch : null,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(completed ? 'Re-take' : 'Launch'),
+            const SizedBox(width: 4),
+            Icon(completed ? Icons.refresh : Icons.play_arrow, size: 14),
+          ],
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isVideo = interview.type == InterviewType.video;
     final completed = interview.status == InterviewStatus.completed;
     final accessible = interview.isAccessible;
     final published =
         interview.resultPublished && interview.result != null;
     final awaiting =
         interview.status == InterviewStatus.completed && !published;
-    final attemptsNote = interview.maxAttempts == null
-        ? ''
-        : ' · ${interview.attemptsRemaining} attempt(s) left';
-    String subtitle =
-        '${interview.questions.length} question(s) · ${interview.durationMinutes} min$attemptsNote';
-    if (published) {
-      subtitle = 'Results available';
-    } else if (awaiting) {
-      subtitle = 'Submitted — awaiting results';
-    } else if (interview.isExpired) {
-      subtitle = 'Expired · ${formatDateTime(interview.expiresAt!)}';
-    } else if (interview.isNotYetAvailable) {
-      subtitle = 'Available from ${formatDateTime(interview.availableFrom!)}';
-    } else if (!interview.hasAttemptsLeft) {
-      subtitle = 'No attempts left';
-    }
+
+    final typeIcon = switch (interview.type) {
+      InterviewType.video => Icons.videocam_outlined,
+      InterviewType.voice => Icons.record_voice_over_outlined,
+      InterviewType.chat => Icons.chat_bubble_outline,
+    };
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: theme.colorScheme.primaryContainer,
-              child: Icon(
-                isVideo ? Icons.videocam_outlined : Icons.chat_bubble_outline,
-                color: theme.colorScheme.onPrimaryContainer,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(interview.title,
-                      style: theme.textTheme.titleMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  Text(
-                    'from ${interview.recruiterName?.isNotEmpty == true ? interview.recruiterName : interview.recruiterEmail}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: accessible
-                          ? null
-                          : theme.colorScheme.error,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (published)
-              FilledButton(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => CandidateResultPage(interview: interview),
-                  ),
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(28.0), // More rounded!
+        side: BorderSide(
+          color: theme.colorScheme.outline.withValues(alpha: 0.3),
+          width: 1.0,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(28.0), // More rounded!
+        onTap: accessible
+            ? onLaunch
+            : (published
+                ? () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            CandidateResultPage(interview: interview),
+                      ),
+                    )
+                : null),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color:
+                      theme.colorScheme.primaryContainer.withValues(alpha: 0.4),
+                  shape: BoxShape.circle, // Fully circular shape!
                 ),
-                child: const Text('View result'),
-              )
-            else if (awaiting && !accessible)
-              const Text('Pending')
-            else
-              FilledButton(
-                onPressed: accessible ? onLaunch : null,
-                child: Text(completed ? 'Re-take' : 'Launch'),
+                child: Icon(
+                  typeIcon,
+                  color: theme.colorScheme.primary,
+                  size: 24,
+                ),
               ),
-          ],
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      interview.title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'from ${interview.recruiterName?.isNotEmpty == true ? interview.recruiterName : interview.recruiterEmail}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        _buildStatusBadge(
+                          context,
+                          '${interview.questions.length} Qs · ${interview.durationMinutes} min',
+                          theme.colorScheme.surfaceVariant,
+                          theme.colorScheme.onSurfaceVariant,
+                        ),
+                        if (published) ...[
+                          _buildStatusBadge(
+                            context,
+                            'Results Available',
+                            Colors.green.withValues(alpha: 0.15),
+                            Colors.green,
+                          ),
+                        ] else if (awaiting) ...[
+                          _buildStatusBadge(
+                            context,
+                            'Awaiting Evaluation',
+                            Colors.orange.withValues(alpha: 0.15),
+                            Colors.orange,
+                          ),
+                        ] else if (interview.isExpired) ...[
+                          _buildStatusBadge(
+                            context,
+                            'Expired',
+                            theme.colorScheme.error.withValues(alpha: 0.15),
+                            theme.colorScheme.error,
+                          ),
+                        ] else if (interview.isNotYetAvailable) ...[
+                          _buildStatusBadge(
+                            context,
+                            'Scheduled',
+                            theme.colorScheme.secondary.withValues(alpha: 0.15),
+                            theme.colorScheme.secondary,
+                          ),
+                        ] else if (!interview.hasAttemptsLeft) ...[
+                          _buildStatusBadge(
+                            context,
+                            'No Attempts Left',
+                            theme.colorScheme.error.withValues(alpha: 0.15),
+                            theme.colorScheme.error,
+                          ),
+                        ] else ...[
+                          if (interview.maxAttempts != null)
+                            _buildStatusBadge(
+                              context,
+                              '${interview.attemptsRemaining} left',
+                              theme.colorScheme.primary.withValues(alpha: 0.1),
+                              theme.colorScheme.primary,
+                            ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              _buildActionButton(
+                context,
+                theme,
+                published,
+                awaiting,
+                accessible,
+                completed,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
 }
 
 class _Header extends StatelessWidget {
@@ -474,16 +596,64 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 12),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: theme.colorScheme.onSurfaceVariant),
-          const SizedBox(width: 8),
-          Text(label,
-              style: theme.textTheme.titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w700)),
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              icon,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            label.toUpperCase(),
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.8,
+              fontSize: 12,
+              color: theme.colorScheme.primary,
+            ),
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _Wordmark extends StatelessWidget {
+  final String subtitle;
+  const _Wordmark({required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        RichText(
+          text: TextSpan(
+            style: theme.textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.5),
+            children: [
+              const TextSpan(text: 'talbot'),
+              TextSpan(
+                  text: 'iq',
+                  style: TextStyle(color: theme.colorScheme.primary)),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('· $subtitle',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      ],
     );
   }
 }

@@ -15,7 +15,15 @@ import 'package:talbotiq/features/interviews/services/interview_repository.dart'
 
 class EvaluateInterviewPage extends StatefulWidget {
   final Interview interview;
-  const EvaluateInterviewPage({super.key, required this.interview});
+  final List<Interview>? groupInterviews;
+  final int? initialIndex;
+
+  const EvaluateInterviewPage({
+    super.key,
+    required this.interview,
+    this.groupInterviews,
+    this.initialIndex,
+  });
 
   @override
   State<EvaluateInterviewPage> createState() => _EvaluateInterviewPageState();
@@ -37,11 +45,20 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
   String _recommendation = '';
   late bool _published;
   bool _saving = false;
+  int _currentIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    final r = widget.interview.result ?? const {};
+    _currentIndex = widget.initialIndex ?? 0;
+    final i = widget.groupInterviews != null
+        ? widget.groupInterviews![_currentIndex]
+        : widget.interview;
+    _loadInterview(i);
+  }
+
+  void _loadInterview(Interview i) {
+    final r = i.result ?? const {};
     _score = (r['overallScore'] as num?)?.round() ?? 0;
     _summaryCtrl.text = (r['summary'] as String?) ?? '';
     _recommendation = _recommendations.containsKey(r['recommendation'])
@@ -49,7 +66,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
         : '';
     _strengthsCtrl.text = _joinList(r['strengths']);
     _improvementsCtrl.text = _joinList(r['improvements']);
-    _published = widget.interview.resultPublished;
+    _published = i.resultPublished;
   }
 
   String _joinList(dynamic v) =>
@@ -69,7 +86,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     super.dispose();
   }
 
-  Map<String, dynamic> _buildResult() => {
+  Map<String, dynamic> _buildResult(Interview i) => {
         'overallScore': _score,
         'summary': _summaryCtrl.text.trim(),
         'recommendation': _recommendation,
@@ -77,11 +94,11 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
         'improvements': _splitLines(_improvementsCtrl.text),
         // Preserve the original AI detail + note that a recruiter touched it.
         'evaluatedBy': 'manual',
-        if (widget.interview.result?['detail'] != null)
-          'detail': widget.interview.result!['detail'],
+        if (i.result?['detail'] != null)
+          'detail': i.result!['detail'],
         // Preserve the integrity signal captured during the interview.
-        if (widget.interview.result?['integrity'] != null)
-          'integrity': widget.interview.result!['integrity'],
+        if (i.result?['integrity'] != null)
+          'integrity': i.result!['integrity'],
       };
 
   Future<void> _save({required bool publish}) async {
@@ -89,10 +106,13 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
+    final i = widget.groupInterviews != null
+        ? widget.groupInterviews![_currentIndex]
+        : widget.interview;
     try {
-      await repo.saveResult(widget.interview.id, _buildResult());
+      await repo.saveResult(i.id, _buildResult(i));
       if (publish) {
-        await repo.setPublished(widget.interview.id, true);
+        await repo.setPublished(i.id, true);
         _published = true;
       }
       if (!mounted) return;
@@ -112,8 +132,11 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
+    final i = widget.groupInterviews != null
+        ? widget.groupInterviews![_currentIndex]
+        : widget.interview;
     try {
-      await repo.setPublished(widget.interview.id, false);
+      await repo.setPublished(i.id, false);
       if (!mounted) return;
       setState(() {
         _published = false;
@@ -129,10 +152,37 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     }
   }
 
+  Future<void> _saveDraftSilence() async {
+    final repo = context.read<InterviewRepository>();
+    final currentInterview = widget.groupInterviews![_currentIndex];
+    try {
+      await repo.saveResult(currentInterview.id, _buildResult(currentInterview));
+    } catch (_) {
+      // Swallowed on silent background save
+    }
+  }
+
+  void _navigateCandidate(int newIndex) {
+    if (_saving) return;
+    setState(() => _saving = true);
+    _saveDraftSilence().then((_) {
+      if (mounted) {
+        setState(() {
+          _currentIndex = newIndex;
+          _saving = false;
+          final next = widget.groupInterviews![_currentIndex];
+          _loadInterview(next);
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final i = widget.interview;
+    final i = widget.groupInterviews != null
+        ? widget.groupInterviews![_currentIndex]
+        : widget.interview;
     final evaluatedBy = (i.result?['evaluatedBy'] as String?) ?? '';
     final leftAppCount =
         ((i.result?['integrity'] as Map?)?['leftAppCount'] as num?)?.toInt() ??
@@ -141,6 +191,29 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
       appBar: AppBar(
         title: const Text('Evaluate'),
         actions: [
+          if (widget.groupInterviews != null && widget.groupInterviews!.length > 1) ...[
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_rounded, size: 16),
+              tooltip: 'Previous Candidate',
+              onPressed: _currentIndex > 0
+                  ? () => _navigateCandidate(_currentIndex - 1)
+                  : null,
+            ),
+            Center(
+              child: Text(
+                '${_currentIndex + 1} / ${widget.groupInterviews!.length}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+              tooltip: 'Next Candidate',
+              onPressed: _currentIndex < widget.groupInterviews!.length - 1
+                  ? () => _navigateCandidate(_currentIndex + 1)
+                  : null,
+            ),
+            const SizedBox(width: 8),
+          ],
           if (_published)
             Padding(
               padding: const EdgeInsets.only(right: 8),

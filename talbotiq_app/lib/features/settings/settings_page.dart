@@ -1,6 +1,10 @@
 // lib/views/settings_page.dart
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/shared/widgets/apple_ui.dart';
+import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/guide/mimic_guide_page.dart';
 import 'package:talbotiq/features/settings/sections/api_credentials_section.dart';
 import 'package:talbotiq/features/settings/sections/session_setup_section.dart';
@@ -13,7 +17,12 @@ import 'package:talbotiq/features/settings/sections/appearance_section.dart';
 /// active category section. Each category lives in its own file under
 /// `views/settings/` and owns its own controllers + Save action.
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  /// When true (recruiter surface only) the page shows a "Sync API keys to
+  /// cloud" action so candidate devices can pull the org's keys. Never enabled
+  /// for candidates — they only ever consume keys.
+  final bool showCloudSync;
+
+  const SettingsPage({super.key, this.showCloudSync = false});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -21,6 +30,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   int _category = 0;
+  bool _syncing = false;
 
   // Category metadata; index maps 1:1 to the sections kept alive below.
   static const List<_CategoryMeta> _categories = [
@@ -64,6 +74,10 @@ class _SettingsPageState extends State<SettingsPage> {
                           : null,
                     ),
                     const SizedBox(height: 24),
+                    if (widget.showCloudSync) ...[
+                      _buildCloudSyncCard(theme),
+                      const SizedBox(height: 24),
+                    ],
                     if (isWide) _buildWide(theme) else _buildNarrow(theme),
                     const SizedBox(height: 24),
                     _buildGuideEntry(theme),
@@ -108,6 +122,74 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         IndexedStack(index: _category, children: _sections),
       ],
+    );
+  }
+
+  // Pushes this recruiter's saved API keys to the cloud so their candidates'
+  // devices can pull them at launch (see AppConfigService). Recruiter-only —
+  // gated by [SettingsPage.showCloudSync].
+  Future<void> _syncKeys() async {
+    if (_syncing) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final appConfig = context.read<AppConfigService>();
+    final store = context.read<AppStore>();
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    setState(() => _syncing = true);
+    try {
+      await appConfig.pushForRecruiter(uid, store);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('API keys synced to cloud.')),
+      );
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Sync failed: $e')));
+    } finally {
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  // Recruiter-only card: sync saved API keys to the cloud for candidate pull.
+  Widget _buildCloudSyncCard(ThemeData theme) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.6)),
+      ),
+      child: ListTile(
+        leading: const AppleIconBadge(
+          icon: Icons.cloud_upload_outlined,
+          color: Color(0xFF0EA5E9),
+          size: 32,
+        ),
+        title: Text(
+          'Sync API keys to cloud',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        subtitle: Text(
+          'Push your saved keys so candidates you assign can reach Tavus / Gemini during their interviews.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        trailing: _syncing
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(100)),
+                ),
+                onPressed: _syncKeys,
+                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: const Text('Sync'),
+              ),
+      ),
     );
   }
 

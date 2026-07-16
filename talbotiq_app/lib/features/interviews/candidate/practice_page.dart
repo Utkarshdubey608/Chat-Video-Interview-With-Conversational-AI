@@ -16,6 +16,7 @@ import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
 
@@ -165,7 +166,10 @@ class _PracticePageState extends State<PracticePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Practice with AI')),
+      appBar: AppBar(
+        title: const Text('Practice with AI'),
+        actions: const [LogoutButton(), SizedBox(width: 4)],
+      ),
       body: Stack(
         children: [
           SafeArea(
