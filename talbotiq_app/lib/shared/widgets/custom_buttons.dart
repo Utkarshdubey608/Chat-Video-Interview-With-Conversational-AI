@@ -77,13 +77,20 @@ class CustomButton extends StatelessWidget {
           icon!,
           const SizedBox(width: 8),
         ],
-        Text(
-          text,
-          style: TextStyle(
-            color: textCol,
-            fontSize: 14,
-            fontWeight: FontWeight.w500, // M3 label font weight
-            fontFamily: 'Inter',
+        // Flexible so a long label ellipsizes inside a tight/fixed-width button
+        // instead of overflowing the Row.
+        Flexible(
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: textCol,
+              fontSize: 14,
+              fontWeight: FontWeight.w500, // M3 label font weight
+              fontFamily: 'Inter',
+            ),
           ),
         ),
       ],

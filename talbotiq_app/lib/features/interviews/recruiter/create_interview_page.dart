@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/core/constants/colors.dart';
 import 'package:talbotiq/core/utils/date_format.dart';
 import 'package:talbotiq/core/utils/validators.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
@@ -101,6 +102,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   List<TavusReplica> _replicas = const [];
   bool _loadingReplicas = false;
   bool _saving = false;
+  bool _timingAccessExpanded = false;
+  bool _keyOverridesExpanded = false;
   String? _error;
   String? _recruiterName;
 
@@ -734,97 +737,45 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-          title: Text(_isEdit ? 'Edit interview' : 'Create interview')),
+        title: Text(_isEdit ? 'Edit Interview' : 'Create Interview'),
+        elevation: 0,
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _TypeToggle(
-                    value: _type,
-                    onChanged: (t) => setState(() => _type = t),
-                  ),
-                  const SizedBox(height: 20),
-                  CustomInputField(
-                    label: 'Title',
-                    placeholder: 'e.g. Senior Flutter Engineer — Screen 1',
-                    controller: _titleController,
-                  ),
-                  const SizedBox(height: 20),
-                  _buildCandidates(theme),
-                  const SizedBox(height: 20),
-                  _buildLanguage(theme),
-                  if (_type == InterviewType.voice) ...[
-                    const SizedBox(height: 20),
-                    _buildVoiceConfig(theme),
-                  ],
-                  // Prompt drives the Tavus avatar (video) or the voice agent;
-                  // not used by the chat track.
-                  if (_type == InterviewType.video ||
-                      _type == InterviewType.voice) ...[
-                    const SizedBox(height: 16),
-                    CustomInputField(
-                      label: 'Prompt / interviewer instructions',
-                      placeholder:
-                          'How the AI interviewer should behave, tone, focus…',
-                      controller: _promptController,
-                      maxLines: 5,
-                    ),
-                  ],
-                  if (_type == InterviewType.video)
-                    SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Collect résumé from candidate'),
-                      subtitle: Text(
-                        'Ask the candidate for a résumé before the call to '
-                        'ground the avatar’s questions.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                  _buildJobDetailsCard(theme),
+                  _buildCandidatesCard(theme),
+                  _buildInterviewDesignCard(theme),
+                  if (_type == InterviewType.chat) _buildIntegrityBrandingCard(theme),
+                  _buildTimingAccessCard(theme),
+                  _buildKeyOverridesCard(theme),
+                  if (_error != null) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: theme.colorScheme.error,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
-                      value: _collectResume,
-                      onChanged: (v) => setState(() => _collectResume = v),
                     ),
-                  const SizedBox(height: 20),
-                  if (_type == InterviewType.chat) ...[
-                    _buildQuestionSource(theme),
-                    if (!_isAdaptiveChat) const SizedBox(height: 20),
                   ],
-                  if (!_isAdaptiveChat) _buildQuestions(theme),
-                  if (_type == InterviewType.chat) ...[
-                    const SizedBox(height: 20),
-                    _buildChatTimer(theme),
-                    const SizedBox(height: 20),
-                    _buildIntegrityBranding(theme),
-                  ],
-                  const SizedBox(height: 20),
-                  _buildDuration(theme),
-                  const SizedBox(height: 20),
-                  _buildAccessWindow(theme),
-                  const SizedBox(height: 20),
-                  _buildAttempts(theme),
-                  const SizedBox(height: 20),
-                  _buildKeyOverrides(theme),
-                  if (_type == InterviewType.video) ...[
-                    const SizedBox(height: 20),
-                    _buildAvatar(theme),
-                  ],
-                  if (_error != null) ...[
-                    const SizedBox(height: 16),
-                    Text(_error!,
-                        style: TextStyle(color: theme.colorScheme.error)),
-                  ],
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 16),
                   CustomButton(
-                    text: _isEdit ? 'Save changes' : 'Save & assign',
+                    text: _isEdit ? 'Save Changes' : 'Save & Assign Interview',
                     isLoading: _saving,
+                    width: double.infinity,
                     onPressed: _saving ? () {} : _save,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
@@ -834,401 +785,590 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     );
   }
 
+  Widget _buildFormSection({
+    required BuildContext context,
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 20),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: theme.colorScheme.primary, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: -0.2,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsibleSection({
+    required BuildContext context,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required bool isExpanded,
+    required VoidCallback onToggle,
+    required Widget child,
+  }) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 20),
+      child: InkWell(
+        onTap: onToggle,
+        borderRadius: BorderRadius.circular(24.0),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, color: theme.colorScheme.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          subtitle,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              if (isExpanded) ...[
+                const SizedBox(height: 20),
+                child,
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildJobDetailsCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Interview Basics',
+      icon: Icons.assignment_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildTypeToggle(theme),
+          const SizedBox(height: 20),
+          CustomInputField(
+            label: 'Job Title / Interview Role',
+            placeholder: 'e.g. Senior Flutter Engineer — Screen 1',
+            controller: _titleController,
+          ),
+          const SizedBox(height: 16),
+          CustomSelectDropdown<String>(
+            label: 'Interview Language',
+            value: _language,
+            items: [
+              for (final l in _languages)
+                DropdownMenuItem(value: l, child: Text(l)),
+            ],
+            onChanged: (v) => setState(() => _language = v ?? 'English'),
+          ),
+          const SizedBox(height: 16),
+          CustomSlider(
+            label: 'Interview Duration',
+            min: 5,
+            max: 60,
+            divisions: 11,
+            value: _durationMinutes.toDouble(),
+            formatValue: (v) => '${v.round()} mins',
+            onChanged: (v) => setState(() => _durationMinutes = v.round()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTypeToggle(ThemeData theme) {
+    final cs = theme.colorScheme;
+    Widget seg(InterviewType t, IconData icon, String label, String desc) {
+      final selected = _type == t;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _type = t),
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+            decoration: BoxDecoration(
+              color: selected ? cs.primary.withOpacity(0.12) : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected ? cs.primary : cs.outline.withOpacity(0.12),
+                width: 1.5,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 22,
+                  color: selected ? cs.primary : cs.onSurfaceVariant,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                    color: selected ? cs.primary : cs.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  desc,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: selected ? cs.primary.withOpacity(0.8) : cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.12),
+        ),
+      ),
+      child: Row(
+        children: [
+          seg(InterviewType.video, Icons.videocam_outlined, 'Video', 'AI Video Avatar'),
+          const SizedBox(width: 4),
+          seg(InterviewType.chat, Icons.chat_bubble_outline, 'Chat', 'AI Chat Screen'),
+          const SizedBox(width: 4),
+          seg(InterviewType.voice, Icons.record_voice_over_outlined, 'Voice', 'AI Voice Call'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCandidatesCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Candidates',
+      icon: Icons.people_alt_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _isEdit
+                ? 'The first email remains assigned to this interview; any extra emails are assigned as new interviews.'
+                : 'Assign this interview to one or more candidate email addresses.',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildCandidates(theme),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCandidates(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Candidate emails',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Text(
-            _isEdit
-                ? 'The first email stays assigned to this interview; any extra '
-                    'emails are assigned as new interviews.'
-                : 'Assign this interview to one or more candidates.',
-            style: theme.textTheme.bodySmall),
-        const SizedBox(height: 8),
         for (int i = 0; i < _candidateEmailControllers.length; i++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 12),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: CustomInputField(
-                    label: '',
+                    label: 'Candidate ${i + 1}',
                     placeholder: 'candidate${i + 1}@example.com',
                     controller: _candidateEmailControllers[i],
                     keyboardType: TextInputType.emailAddress,
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: _candidateEmailControllers.length == 1
-                      ? null
-                      : () => _removeCandidate(i),
+                if (_candidateEmailControllers.length > 1) ...[
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 28), // Align with input field
+                    child: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                      onPressed: () => _removeCandidate(i),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: CustomButton(
+                text: 'Add Candidate',
+                variant: ButtonVariant.outline,
+                height: 44,
+                icon: const Icon(Icons.add, size: 18),
+                onPressed: _addCandidate,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: CustomButton(
+                text: 'Import File',
+                variant: ButtonVariant.outline,
+                height: 44,
+                icon: const Icon(Icons.upload_file_outlined, size: 18),
+                onPressed: _importEmails,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInterviewDesignCard(ThemeData theme) {
+    final title = _type == InterviewType.video
+        ? 'Video Setup'
+        : _type == InterviewType.chat
+            ? 'Chat Questions'
+            : 'Voice & Persona';
+
+    final icon = _type == InterviewType.video
+        ? Icons.video_settings_outlined
+        : _type == InterviewType.chat
+            ? Icons.question_answer_outlined
+            : Icons.record_voice_over_outlined;
+
+    return _buildFormSection(
+      context: context,
+      title: title,
+      icon: icon,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_type == InterviewType.video) ...[
+            CustomInputField(
+              label: 'AI Interviewer Instructions / Prompt',
+              placeholder: 'e.g. You are a professional tech recruiter. Be encouraging, ask deep technical questions...',
+              controller: _promptController,
+              maxLines: 5,
+            ),
+            const SizedBox(height: 16),
+            CustomToggle(
+              label: 'Collect Resume',
+              description: 'Require candidates to upload a resume to ground the avatar\'s questions.',
+              checked: _collectResume,
+              onChanged: (v) => setState(() => _collectResume = v),
+            ),
+            const SizedBox(height: 16),
+            _buildAvatarSection(theme),
+          ] else if (_type == InterviewType.chat) ...[
+            _buildQuestionSourceToggle(theme),
+            const SizedBox(height: 16),
+            if (_isAdaptiveChat) ...[
+              Text(
+                'The AI interviewer dynamically creates resume-grounded questions. The candidate will upload their resume before starting.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Number of Questions',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  _buildModernStepper(
+                    value: _adaptiveNumQuestions,
+                    min: 1,
+                    max: 15,
+                    onChanged: (v) => setState(() => _adaptiveNumQuestions = v),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              CustomToggle(
+                label: 'Allow Follow-ups',
+                description: 'Let the AI ask conversational follow-up questions based on the candidate\'s responses.',
+                checked: _adaptiveFollowUps,
+                onChanged: (v) => setState(() => _adaptiveFollowUps = v),
+              ),
+            ] else ...[
+              _buildQuestions(theme),
+            ],
+          ] else if (_type == InterviewType.voice) ...[
+            _buildVoiceConfigSection(theme),
+            const SizedBox(height: 16),
+            CustomInputField(
+              label: 'AI Voice Instructions / Prompt',
+              placeholder: 'Describe how the AI voice agent should behave, context of the interview, tone...',
+              controller: _promptController,
+              maxLines: 5,
+            ),
+            const SizedBox(height: 20),
+            _buildQuestions(theme),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionSourceToggle(ThemeData theme) {
+    final cs = theme.colorScheme;
+    Widget seg(bool adaptive, String label, String desc, IconData icon) {
+      final selected = _adaptive == adaptive;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _adaptive = adaptive),
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            decoration: BoxDecoration(
+              color: selected ? cs.primary.withOpacity(0.12) : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected ? cs.primary : cs.outline.withOpacity(0.12),
+                width: 1.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: selected ? cs.primary : cs.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected ? FontWeight.bold : FontWeight.w600,
+                          color: selected ? cs.primary : cs.onSurface,
+                        ),
+                      ),
+                      Text(
+                        desc,
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: selected ? cs.primary.withOpacity(0.8) : cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-        Row(
-          children: [
-            TextButton.icon(
-              onPressed: _addCandidate,
-              icon: const Icon(Icons.add),
-              label: const Text('Add candidate'),
-            ),
-            const SizedBox(width: 4),
-            TextButton.icon(
-              onPressed: _importEmails,
-              icon: const Icon(Icons.upload_file_outlined, size: 18),
-              label: const Text('Import CSV/Excel'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAttempts(ThemeData theme) {
-    final limited = _maxAttempts != null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Limit attempts',
-                      style: theme.textTheme.labelLarge
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  Text(
-                      limited
-                          ? 'Candidate can take it $_maxAttempts time(s).'
-                          : 'Unlimited attempts.',
-                      style: theme.textTheme.bodySmall),
-                ],
-              ),
-            ),
-            Switch(
-              value: limited,
-              onChanged: (v) => setState(() => _maxAttempts = v ? 1 : null),
-            ),
-          ],
-        ),
-        if (limited)
-          Row(
-            children: [
-              const Text('Max attempts:'),
-              IconButton(
-                icon: const Icon(Icons.remove_circle_outline),
-                onPressed: (_maxAttempts ?? 1) <= 1
-                    ? null
-                    : () => setState(() => _maxAttempts = _maxAttempts! - 1),
-              ),
-              Text('$_maxAttempts',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700)),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline),
-                onPressed: (_maxAttempts ?? 1) >= 10
-                    ? null
-                    : () => setState(() => _maxAttempts = (_maxAttempts ?? 1) + 1),
-              ),
-            ],
-          ),
-      ],
-    );
-  }
-
-  Widget _buildKeyOverrides(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('API keys',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-                color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.key_outlined,
-                  size: 18, color: theme.colorScheme.onSurfaceVariant),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'When candidates take or share this test, it runs on your API '
-                  'keys — usage is billed to your accounts. Leave custom keys '
-                  'off to use the keys from your Settings.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Use custom keys for this test',
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  Text(
-                      'Override your Settings keys just for this test. Blank '
-                      'fields fall back to your Settings keys.',
-                      style: theme.textTheme.bodySmall),
-                ],
-              ),
-            ),
-            Switch(
-              value: _useCustomKeys,
-              onChanged: (v) => setState(() => _useCustomKeys = v),
-            ),
-          ],
-        ),
-        if (_useCustomKeys) ...[
-          const SizedBox(height: 8),
-          CustomInputField(
-            label: 'Tavus API key',
-            placeholder: 'Used for video interviews',
-            controller: _tavusKeyController,
-          ),
-          const SizedBox(height: 12),
-          CustomInputField(
-            label: 'Gemini API key',
-            placeholder: 'Used for chat scoring & ATS analysis',
-            controller: _geminiKeyController,
-          ),
-          const SizedBox(height: 12),
-          CustomInputField(
-            label: 'Hume API key',
-            placeholder: 'Optional — voice sentiment scoring',
-            controller: _humeKeyController,
-          ),
-          const SizedBox(height: 12),
-          CustomInputField(
-            label: 'Deepgram API key',
-            placeholder: 'Optional — transcription & pace',
-            controller: _deepgramKeyController,
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAccessWindow(ThemeData theme) {
-    String fmt(DateTime? d) => d == null ? 'Not set' : formatDateTime(d);
-
-    Widget row(String label, DateTime? value, bool isExpiry) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: theme.textTheme.bodyMedium),
-                  Text(fmt(value),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant)),
-                ],
-              ),
-            ),
-            TextButton(
-              onPressed: () => _pickDateTime(isExpiry: isExpiry),
-              child: Text(value == null ? 'Set' : 'Change'),
-            ),
-            if (value != null)
-              IconButton(
-                icon: const Icon(Icons.clear, size: 18),
-                onPressed: () => setState(() {
-                  if (isExpiry) {
-                    _expiresAt = null;
-                  } else {
-                    _availableFrom = null;
-                  }
-                }),
-              ),
-          ],
         ),
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Text('Access window (optional)',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Text('Candidates can only launch between these times.',
-            style: theme.textTheme.bodySmall),
-        const SizedBox(height: 8),
-        row('Accessible from', _availableFrom, false),
-        row('Expires at', _expiresAt, true),
+        seg(false, 'Fixed List', 'Predefined set', Icons.list_alt_outlined),
+        const SizedBox(width: 12),
+        seg(true, 'Adaptive AI', 'Dynamic resume-based', Icons.auto_awesome_outlined),
       ],
     );
   }
 
-  /// Chat track: an optional per-question countdown. When enabled the chat
-  /// runner switches to timed mode (thinking→answer→auto-submit); off preserves
-  /// the untimed conversational flow. Compact by design — the master switch
-  /// reveals the seconds knobs only when on.
-  Widget _buildChatTimer(ThemeData theme) {
-    final cs = theme.colorScheme;
+  Widget _buildQuestions(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Per-question timer',
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700)),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Enable per-question countdown'),
-          subtitle: Text(
-            'Give the candidate a fixed time to answer each question. The '
-            'timer counts down while they type.',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: cs.onSurfaceVariant),
-          ),
-          value: _chatTimerEnabled,
-          onChanged: (v) => setState(() => _chatTimerEnabled = v),
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            Text(
+              'Questions List',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            QuestionTemplatesBar(
+              currentQuestions: () => _questions,
+              onApply: _applyTemplate,
+              includeInterviewTemplates: true,
+            ),
+          ],
         ),
-        if (_chatTimerEnabled) ...[
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-                child: Text('Answer time per question',
-                    style: theme.textTheme.bodyMedium)),
-            _secondsStepper(
-              value: _chatTimerPerQuestion,
-              min: 30,
-              max: 600,
-              step: 30,
-              onChanged: (v) => setState(() => _chatTimerPerQuestion = v),
+        const SizedBox(height: 12),
+        for (int i = 0; i < _questionControllers.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: CustomInputField(
+                    label: 'Question ${i + 1}',
+                    placeholder: 'e.g. Describe a time you resolved a technical challenge.',
+                    controller: _questionControllers[i],
+                  ),
+                ),
+                if (_questionControllers.length > 1) ...[
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 28), // Align with input field
+                    child: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                      onPressed: () => _removeQuestion(i),
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            Expanded(
-                child: Text('Thinking time before answering',
-                    style: theme.textTheme.bodyMedium)),
-            _secondsStepper(
-              value: _chatTimerThinking,
-              min: 0,
-              max: 300,
-              step: 15,
-              onChanged: (v) => setState(() => _chatTimerThinking = v),
-            ),
-          ]),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: Text('Auto-submit at 0', style: theme.textTheme.bodyMedium),
-            subtitle: Text(
-              'Submit the current answer automatically when time runs out.',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: cs.onSurfaceVariant),
-            ),
-            value: _chatTimerAutoSubmit,
-            onChanged: (v) => setState(() => _chatTimerAutoSubmit = v),
           ),
-        ],
+        const SizedBox(height: 8),
+        CustomButton(
+          text: 'Add Question',
+          variant: ButtonVariant.outline,
+          width: double.infinity,
+          height: 44,
+          icon: const Icon(Icons.add, size: 18),
+          onPressed: _addQuestion,
+        ),
       ],
     );
   }
 
-  /// Like [_stepper] but increments by [step] seconds and renders the value as
-  /// a compact `Ns` label — suited to the 30–600s range of the chat timer.
-  Widget _secondsStepper({
-    required int value,
-    required int min,
-    required int max,
-    required int step,
-    required ValueChanged<int> onChanged,
-  }) {
-    final cs = Theme.of(context).colorScheme;
-    Widget btn(IconData icon, VoidCallback? onTap) => InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: Icon(icon,
-                size: 20,
-                color: onTap == null
-                    ? cs.onSurfaceVariant.withOpacity(0.4)
-                    : cs.onSurface),
-          ),
-        );
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      btn(Icons.remove_circle_outline,
-          value > min ? () => onChanged((value - step).clamp(min, max)) : null),
-      SizedBox(
-          width: 48,
-          child: Text('${value}s',
-              textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontWeight: FontWeight.w700, color: cs.onSurface))),
-      btn(Icons.add_circle_outline,
-          value < max ? () => onChanged((value + step).clamp(min, max)) : null),
-    ]);
-  }
-
-  /// Chat track: proctoring/integrity toggles (enforced by the conversation
-  /// runner) + an optional candidate welcome message.
-  Widget _buildIntegrityBranding(ThemeData theme) {
+  Widget _buildAvatarSection(ThemeData theme) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Proctoring & welcome',
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700)),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Flag leaving the app during the interview'),
-          value: _detectTabSwitch,
-          onChanged: (v) => setState(() => _detectTabSwitch = v),
-        ),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Block paste in answers'),
-          value: _disablePaste,
-          onChanged: (v) => setState(() => _disablePaste = v),
-        ),
-        SwitchListTile.adaptive(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Block copy'),
-          value: _disableCopy,
-          onChanged: (v) => setState(() => _disableCopy = v),
+        Text(
+          'Select Avatar Video',
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
         ),
         const SizedBox(height: 8),
+        if (_loadingReplicas)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_replicas.isNotEmpty)
+          Container(
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+              ),
+            ),
+            child: AvatarStrip(
+              replicas: _replicas,
+              selectedId: _replicaIdController.text.trim(),
+              onSelect: (id) => setState(() => _replicaIdController.text = id),
+            ),
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+              ),
+            ),
+            child: Text(
+              tavusService.getKey().isEmpty
+                  ? 'Add a Tavus API key in Settings to browse avatars, or enter a replica ID manually below.'
+                  : 'No avatars loaded. Enter a replica ID manually below.',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        const SizedBox(height: 16),
         CustomInputField(
-          label: 'Welcome message (optional)',
-          placeholder: 'Shown to the candidate before they start…',
-          controller: _welcomeController,
-          maxLines: 3,
+          label: 'Replica ID',
+          placeholder: 'e.g. r1234abc...',
+          controller: _replicaIdController,
+        ),
+        const SizedBox(height: 12),
+        CustomInputField(
+          label: 'Persona ID (Optional)',
+          placeholder: 'e.g. p1234abc...',
+          controller: _personaIdController,
         ),
       ],
     );
   }
 
-  /// Voice track: pick the interviewer persona + Gemini Live voice. Selecting a
-  /// persona adopts its default voice (the recruiter can still override).
-  Widget _buildVoiceConfig(ThemeData theme) {
+  Widget _buildVoiceConfigSection(ThemeData theme) {
     final base = VoiceCatalog.defaultVoiceConfig;
     final current = VoiceConfig(
       engine: base.engine,
@@ -1241,376 +1381,444 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       allowBargeIn: base.allowBargeIn,
       language: base.language,
     );
-    // Preview uses whichever Gemini key would run the interview: the per-test
-    // override if set, else the recruiter's own key.
     final previewKey =
         (_useCustomKeys && _geminiKeyController.text.trim().isNotEmpty)
             ? _geminiKeyController.text.trim()
             : context.read<AppStore>().geminiKey.trim();
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Voice & persona',
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700)),
+        Text(
+          'Select Voice & Persona',
+          style: theme.textTheme.titleSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const SizedBox(height: 8),
-        VoicePicker(
-          value: current,
-          onChanged: (c) => setState(() {
-            _voicePersonaId = c.personaId;
-            _voiceName = c.voiceId;
-          }),
-          previewApiKey: previewKey.isEmpty ? null : previewKey,
+        Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: theme.colorScheme.outline.withOpacity(0.12),
+            ),
+          ),
+          padding: const EdgeInsets.all(12),
+          child: VoicePicker(
+            value: current,
+            onChanged: (c) => setState(() {
+              _voicePersonaId = c.personaId;
+              _voiceName = c.voiceId;
+            }),
+            previewApiKey: previewKey.isEmpty ? null : previewKey,
+          ),
         ),
       ],
     );
   }
 
-  /// Interview language — drives the Tavus avatar's speech and the adaptive
-  /// chat interviewer. Applies to both tracks.
-  Widget _buildLanguage(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Language',
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: _language,
-          isExpanded: true,
-          decoration: InputDecoration(
-            border:
-                OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+  Widget _buildIntegrityBrandingCard(ThemeData theme) {
+    return _buildFormSection(
+      context: context,
+      title: 'Proctoring & Experience',
+      icon: Icons.security_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CustomToggle(
+            label: 'Detect Tab Switch',
+            description: 'Flag candidate if they leave or switch tabs during the interview.',
+            checked: _detectTabSwitch,
+            onChanged: (v) => setState(() => _detectTabSwitch = v),
           ),
-          items: [
-            for (final l in _languages)
-              DropdownMenuItem(value: l, child: Text(l)),
-          ],
-          onChanged: (v) => setState(() => _language = v ?? 'English'),
-        ),
-      ],
-    );
-  }
-
-  /// Chat-only: choose between a fixed question list and adaptive AI questions.
-  /// When adaptive, exposes the two knobs candidates actually feel (question
-  /// count + follow-ups); role is taken from the title, the rest use sensible
-  /// defaults. The runner handles the résumé intake automatically.
-  Widget _buildQuestionSource(ThemeData theme) {
-    final cs = theme.colorScheme;
-
-    Widget seg(bool adaptive, String label, IconData icon) {
-      final selected = _adaptive == adaptive;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _adaptive = adaptive),
-          behavior: HitTestBehavior.opaque,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color:
-                  selected ? cs.primary.withOpacity(0.14) : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color:
-                    selected ? cs.primary : cs.outlineVariant.withOpacity(0.5),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon,
-                    size: 18,
-                    color: selected ? cs.primary : cs.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Text(label,
-                    style: TextStyle(
-                      fontWeight:
-                          selected ? FontWeight.w700 : FontWeight.w500,
-                      color: selected ? cs.primary : cs.onSurfaceVariant,
-                    )),
-              ],
-            ),
+          const Divider(height: 1),
+          CustomToggle(
+            label: 'Block Paste',
+            description: 'Prevent candidates from pasting text answers.',
+            checked: _disablePaste,
+            onChanged: (v) => setState(() => _disablePaste = v),
           ),
-        ),
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Questions',
-            style:
-                theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        Row(children: [
-          seg(false, 'Fixed list', Icons.list_alt_outlined),
-          const SizedBox(width: 8),
-          seg(true, 'Adaptive AI', Icons.auto_awesome_outlined),
-        ]),
-        if (_isAdaptiveChat) ...[
-          const SizedBox(height: 12),
-          Text(
-            'The AI asks résumé-grounded questions during the interview. '
-            'The candidate uploads a résumé at the start.',
-            style:
-                theme.textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+          const Divider(height: 1),
+          CustomToggle(
+            label: 'Block Copy',
+            description: 'Prevent candidates from copying questions.',
+            checked: _disableCopy,
+            onChanged: (v) => setState(() => _disableCopy = v),
           ),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-                child: Text('Number of questions',
-                    style: theme.textTheme.bodyMedium)),
-            _stepper(
-              value: _adaptiveNumQuestions,
-              min: 1,
-              max: 15,
-              onChanged: (v) => setState(() => _adaptiveNumQuestions = v),
-            ),
-          ]),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: Text('Allow follow-up questions',
-                style: theme.textTheme.bodyMedium),
-            value: _adaptiveFollowUps,
-            onChanged: (v) => setState(() => _adaptiveFollowUps = v),
+          const SizedBox(height: 16),
+          CustomInputField(
+            label: 'Welcome Message (Optional)',
+            placeholder: 'Displayed to the candidate before starting the interview...',
+            controller: _welcomeController,
+            maxLines: 3,
           ),
         ],
-      ],
+      ),
     );
   }
 
-  Widget _stepper({
-    required int value,
-    required int min,
-    required int max,
-    required ValueChanged<int> onChanged,
-  }) {
-    final cs = Theme.of(context).colorScheme;
-    Widget btn(IconData icon, VoidCallback? onTap) => InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: Icon(icon,
-                size: 20,
-                color: onTap == null
-                    ? cs.onSurfaceVariant.withOpacity(0.4)
-                    : cs.onSurface),
-          ),
-        );
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      btn(Icons.remove_circle_outline,
-          value > min ? () => onChanged(value - 1) : null),
-      SizedBox(
-          width: 28,
-          child: Text('$value',
-              textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontWeight: FontWeight.w700, color: cs.onSurface))),
-      btn(Icons.add_circle_outline,
-          value < max ? () => onChanged(value + 1) : null),
-    ]);
-  }
+  Widget _buildTimingAccessCard(ThemeData theme) {
+    final hasChatTimer = _type == InterviewType.chat;
 
-  Widget _buildQuestions(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text('Questions',
-                style: theme.textTheme.labelLarge
-                    ?.copyWith(fontWeight: FontWeight.w600)),
-            Flexible(
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: QuestionTemplatesBar(
-                  currentQuestions: () => _questions,
-                  onApply: _applyTemplate,
-                  includeInterviewTemplates: true,
+    final List<String> summaryParts = [];
+    if (_availableFrom != null || _expiresAt != null) {
+      summaryParts.add('Schedule set');
+    }
+    if (_maxAttempts != null) {
+      summaryParts.add('Max $_maxAttempts attempts');
+    } else {
+      summaryParts.add('Unlimited attempts');
+    }
+    if (hasChatTimer && _chatTimerEnabled) {
+      summaryParts.add('Timed questions');
+    }
+    final summary = summaryParts.join(' · ');
+
+    return _buildCollapsibleSection(
+      context: context,
+      title: 'Scheduling & Retries',
+      subtitle: summary,
+      icon: Icons.schedule_outlined,
+      isExpanded: _timingAccessExpanded,
+      onToggle: () => setState(() => _timingAccessExpanded = !_timingAccessExpanded),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Access Window (Optional)',
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          _buildDateTimeTile(label: 'Accessible From', value: _availableFrom, isExpiry: false),
+          const SizedBox(height: 12),
+          _buildDateTimeTile(label: 'Expires At', value: _expiresAt, isExpiry: true),
+          const SizedBox(height: 20),
+          CustomToggle(
+            label: 'Limit Candidate Attempts',
+            description: 'Control how many attempts a candidate is allowed to complete the interview.',
+            checked: _maxAttempts != null,
+            onChanged: (v) => setState(() => _maxAttempts = v ? 1 : null),
+          ),
+          if (_maxAttempts != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withOpacity(0.08),
                 ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Attempts Allowed',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  _buildModernStepper(
+                    value: _maxAttempts!,
+                    min: 1,
+                    max: 10,
+                    onChanged: (v) => setState(() => _maxAttempts = v),
+                  ),
+                ],
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 8),
-        for (int i = 0; i < _questionControllers.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: CustomInputField(
-                    label: '',
-                    placeholder: 'Question ${i + 1}',
-                    controller: _questionControllers[i],
+          if (hasChatTimer) ...[
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 16),
+            Text(
+              'Per-Question Countdown Timer',
+              style: theme.textTheme.titleSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            CustomToggle(
+              label: 'Enable Question Timer',
+              description: 'Give candidate a fixed amount of time to think and write their response.',
+              checked: _chatTimerEnabled,
+              onChanged: (v) => setState(() => _chatTimerEnabled = v),
+            ),
+            if (_chatTimerEnabled) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: theme.colorScheme.outline.withOpacity(0.08),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.remove_circle_outline),
-                  onPressed: _questionControllers.length == 1
-                      ? null
-                      : () => _removeQuestion(i),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Answer time per question', style: theme.textTheme.bodyMedium),
+                        _buildModernStepper(
+                          value: _chatTimerPerQuestion,
+                          min: 30,
+                          max: 600,
+                          step: 30,
+                          suffix: 's',
+                          onChanged: (v) => setState(() => _chatTimerPerQuestion = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Thinking time before typing', style: theme.textTheme.bodyMedium),
+                        _buildModernStepper(
+                          value: _chatTimerThinking,
+                          min: 0,
+                          max: 300,
+                          step: 15,
+                          suffix: 's',
+                          onChanged: (v) => setState(() => _chatTimerThinking = v),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    CustomToggle(
+                      label: 'Auto-submit at 0',
+                      description: 'Submit candidate\'s current text when time runs out.',
+                      checked: _chatTimerAutoSubmit,
+                      onChanged: (v) => setState(() => _chatTimerAutoSubmit = v),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _addQuestion,
-            icon: const Icon(Icons.add),
-            label: const Text('Add question'),
-          ),
-        ),
-      ],
+              ),
+            ],
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _buildDuration(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Duration: $_durationMinutes min',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        Slider(
-          value: _durationMinutes.toDouble(),
-          min: 5,
-          max: 60,
-          divisions: 11,
-          label: '$_durationMinutes min',
-          onChanged: (v) => setState(() => _durationMinutes = v.round()),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAvatar(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Avatar',
-            style: theme.textTheme.labelLarge
-                ?.copyWith(fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        if (_loadingReplicas)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_replicas.isNotEmpty)
-          AvatarStrip(
-            replicas: _replicas,
-            selectedId: _replicaIdController.text.trim(),
-            onSelect: (id) =>
-                setState(() => _replicaIdController.text = id),
-          )
-        else
-          Text(
-            tavusService.getKey().isEmpty
-                ? 'Add a Tavus API key in Settings to browse avatars, or enter a replica ID below.'
-                : 'No avatars loaded. Enter a replica ID below.',
-            style: theme.textTheme.bodySmall,
-          ),
-        const SizedBox(height: 12),
-        CustomInputField(
-          label: 'Replica ID',
-          placeholder: 'r1234...',
-          controller: _replicaIdController,
-        ),
-        const SizedBox(height: 12),
-        CustomInputField(
-          label: 'Persona ID (optional)',
-          placeholder: 'p1234...',
-          controller: _personaIdController,
-        ),
-      ],
-    );
-  }
-}
-
-class _TypeToggle extends StatelessWidget {
-  final InterviewType value;
-  final ValueChanged<InterviewType> onChanged;
-  const _TypeToggle({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildDateTimeTile({
+    required String label,
+    required DateTime? value,
+    required bool isExpiry,
+  }) {
     final theme = Theme.of(context);
-    Widget seg(InterviewType t, IconData icon) {
-      final selected = value == t;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(t),
-          behavior: HitTestBehavior.opaque,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-              color: selected ? theme.colorScheme.surface : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 4,
-                          offset: const Offset(0, 2))
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon,
-                    size: 18,
-                    color: selected
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    t == InterviewType.video
-                        ? 'Video'
-                        : t == InterviewType.chat
-                            ? 'Chat'
-                            : 'Voice',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontWeight:
-                            selected ? FontWeight.w700 : FontWeight.w500,
-                        color: selected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurfaceVariant),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
+    final isSet = value != null;
     return Container(
-      padding: const EdgeInsets.all(3),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.15),
+        border: Border.all(
+          color: theme.colorScheme.outline.withOpacity(0.12),
+        ),
         borderRadius: BorderRadius.circular(12),
-        border:
-            Border.all(color: theme.colorScheme.outlineVariant.withOpacity(0.5)),
       ),
       child: Row(
         children: [
-          seg(InterviewType.video, Icons.videocam_outlined),
-          seg(InterviewType.chat, Icons.chat_bubble_outline),
-          seg(InterviewType.voice, Icons.record_voice_over_outlined),
+          Icon(
+            isExpiry ? Icons.event_busy_outlined : Icons.event_available_outlined,
+            color: isSet ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  isSet ? formatDateTime(value) : (isExpiry ? 'No expiration date' : 'Available immediately'),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: isSet ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () => _pickDateTime(isExpiry: isExpiry),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            ),
+            child: Text(isSet ? 'Change' : 'Set'),
+          ),
+          if (isSet) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.clear, size: 18),
+              onPressed: () => setState(() {
+                if (isExpiry) {
+                  _expiresAt = null;
+                } else {
+                  _availableFrom = null;
+                }
+              }),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModernStepper({
+    required int value,
+    required int min,
+    required int max,
+    int step = 1,
+    String suffix = '',
+    required ValueChanged<int> onChanged,
+  }) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    Widget btn(IconData icon, bool enabled, VoidCallback onTap) {
+      return Material(
+        color: enabled
+            ? cs.surfaceContainerHighest.withOpacity(0.3)
+            : cs.surfaceContainerHighest.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: enabled ? onTap : null,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: 18,
+              color: enabled ? cs.primary : cs.onSurfaceVariant.withOpacity(0.3),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        btn(
+          Icons.remove,
+          value > min,
+          () => onChanged((value - step).clamp(min, max)),
+        ),
+        Container(
+          constraints: const BoxConstraints(minWidth: 48),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            '$value$suffix',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: cs.onSurface,
+            ),
+          ),
+        ),
+        btn(
+          Icons.add,
+          value < max,
+          () => onChanged((value + step).clamp(min, max)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildKeyOverridesCard(ThemeData theme) {
+    final summary = _useCustomKeys ? 'Custom keys enabled' : 'Using global settings keys';
+    return _buildCollapsibleSection(
+      context: context,
+      title: 'API Keys Override',
+      subtitle: summary,
+      icon: Icons.key_outlined,
+      isExpanded: _keyOverridesExpanded,
+      onToggle: () => setState(() => _keyOverridesExpanded = !_keyOverridesExpanded),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.outline.withOpacity(0.12),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Optional override for this specific interview. Leave custom keys disabled to use the global keys configured in your Settings.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          CustomToggle(
+            label: 'Use Custom Keys',
+            description: 'Provide unique API keys for this interview only.',
+            checked: _useCustomKeys,
+            onChanged: (v) => setState(() => _useCustomKeys = v),
+          ),
+          if (_useCustomKeys) ...[
+            const SizedBox(height: 12),
+            CustomInputField(
+              label: 'Tavus API Key',
+              placeholder: 'Enter Tavus key override',
+              controller: _tavusKeyController,
+            ),
+            const SizedBox(height: 12),
+            CustomInputField(
+              label: 'Gemini API Key',
+              placeholder: 'Enter Gemini key override',
+              controller: _geminiKeyController,
+            ),
+            const SizedBox(height: 12),
+            CustomInputField(
+              label: 'Hume API Key',
+              placeholder: 'Enter Hume key override',
+              controller: _humeKeyController,
+            ),
+            const SizedBox(height: 12),
+            CustomInputField(
+              label: 'Deepgram API Key',
+              placeholder: 'Enter Deepgram key override',
+              controller: _deepgramKeyController,
+            ),
+          ],
         ],
       ),
     );
