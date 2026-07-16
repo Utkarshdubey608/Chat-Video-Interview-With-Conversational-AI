@@ -79,6 +79,9 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
         'evaluatedBy': 'manual',
         if (widget.interview.result?['detail'] != null)
           'detail': widget.interview.result!['detail'],
+        // Preserve the integrity signal captured during the interview.
+        if (widget.interview.result?['integrity'] != null)
+          'integrity': widget.interview.result!['integrity'],
       };
 
   Future<void> _save({required bool publish}) async {
@@ -131,6 +134,9 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     final theme = Theme.of(context);
     final i = widget.interview;
     final evaluatedBy = (i.result?['evaluatedBy'] as String?) ?? '';
+    final leftAppCount =
+        ((i.result?['integrity'] as Map?)?['leftAppCount'] as num?)?.toInt() ??
+            0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Evaluate'),
@@ -173,6 +179,24 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
                           const SizedBox(width: 6),
                           Text('Visible to candidate',
                               style: TextStyle(color: theme.colorScheme.primary)),
+                        ],
+                      ),
+                    ),
+                  if (leftAppCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber_rounded,
+                              size: 16, color: theme.colorScheme.error),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Integrity: left the app $leftAppCount '
+                              'time${leftAppCount == 1 ? '' : 's'} during the interview',
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                          ),
                         ],
                       ),
                     ),

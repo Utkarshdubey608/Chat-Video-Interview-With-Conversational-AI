@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
-import '../../../../core/constants/colors.dart';
 import '../../../../providers/app_store.dart';
 import '../../../../widgets/custom_buttons.dart';
 
-/// A tab in the interview sidebar that displays real-time speech and emotion metrics
-/// (Confidence, Anxiety, Engagement, WPM, Fillers) and allows context override.
+/// A tab in the interview sidebar.
+///
+/// Communication and sentiment analysis (speaking pace, filler words,
+/// confidence, engagement, emotional tone) are NOT computed live during the
+/// call — they are produced by the post-interview pipeline (Deepgram
+/// transcription + Hume/ATS analysis) on the results page. This tab therefore
+/// shows an honest "analyzed after your interview" panel rather than any
+/// live-looking numbers. It also hosts the optional operator context-override
+/// control when the session enables it.
 class LiveAiTab extends StatelessWidget {
   final AppStore store;
   final TextEditingController overrideController;
@@ -17,60 +23,30 @@ class LiveAiTab extends StatelessWidget {
     required this.onSendOverride,
   });
 
-  /// Builds a linear metric bar representing one of the candidate's real-time emotional stats.
-  Widget _buildLiveMetricBar(BuildContext context, String label, int value, Color color) {
+  /// One line item describing a metric that will be produced after the call.
+  Widget _analyzedItem(BuildContext context, IconData icon, String text) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              label,
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
-            ),
-            Text(
-              '$value%',
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Container(
-          height: 6,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.outline.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: FractionallySizedBox(
-              widthFactor: value / 100.0,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final Color chartColor = theme.brightness == Brightness.dark
-        ? AppColors.humeTeal
-        : theme.colorScheme.secondary;
 
     return SingleChildScrollView(
       child: Column(
@@ -89,129 +65,75 @@ class LiveAiTab extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'EMOTION ANALYSIS',
-                      style: TextStyle(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'Courier',
-                      ),
+                    Icon(
+                      Icons.insights_outlined,
+                      size: 18,
+                      color: theme.colorScheme.primary,
                     ),
-                    Row(
-                      children: [
-                        Icon(Icons.wifi, color: chartColor, size: 10),
-                        const SizedBox(width: 4),
-                        Text(
-                          'LIVE FEED',
-                          style: TextStyle(
-                            color: chartColor,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                          ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Analyzed after your interview',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
                         ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                Text(
+                  'Your communication and sentiment are not scored live. Once '
+                  'the interview ends, your responses are transcribed and '
+                  'analyzed, and the results appear on your report.',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
                 const SizedBox(height: 16),
-                _buildLiveMetricBar(
+                _analyzedItem(
                   context,
-                  'Confidence',
-                  store.confidence,
-                  theme.colorScheme.primary,
+                  Icons.record_voice_over_outlined,
+                  'Speaking pace and filler words',
                 ),
-                const SizedBox(height: 12),
-                _buildLiveMetricBar(
+                _analyzedItem(
                   context,
-                  'Anxiety',
-                  store.anxiety,
-                  theme.colorScheme.error,
+                  Icons.emoji_emotions_outlined,
+                  'Confidence, engagement and emotional tone',
                 ),
-                const SizedBox(height: 12),
-                _buildLiveMetricBar(
+                _analyzedItem(
                   context,
-                  'Engagement',
-                  store.engagement,
-                  theme.colorScheme.secondary,
+                  Icons.assignment_turned_in_outlined,
+                  'Answer quality and overall scorecard',
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.lock_outline,
+                      size: 13,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'No live metrics are shown during the call.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.onSurface.withOpacity(0.04),
-                    border: Border.all(
-                      color: theme.colorScheme.outline.withOpacity(0.12),
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'WPM',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${store.wpm}',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.onSurface.withOpacity(0.04),
-                    border: Border.all(
-                      color: theme.colorScheme.outline.withOpacity(0.12),
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'FILLERS',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${store.fillers}',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           if (store.currentConversation?.properties?.applyConversationOverride == true) ...[
+            const SizedBox(height: 16),
             Divider(color: theme.colorScheme.outline.withOpacity(0.12)),
             const SizedBox(height: 12),
             Text(

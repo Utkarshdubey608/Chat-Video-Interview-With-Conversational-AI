@@ -27,4 +27,16 @@ class GatewayConfig {
     'FUNCTIONS_BASE_URL',
     defaultValue: '',
   );
+
+  /// Guard invoked at the top of every gateway call: until the backend is
+  /// deployed and [useSecureBackend] is flipped on, fail fast with a clear
+  /// message instead of hitting an unconfigured endpoint.
+  static void ensureConfigured() {
+    if (!useSecureBackend) {
+      // TODO(deploy): flip USE_SECURE_BACKEND=true and set FUNCTIONS_BASE_URL.
+      throw StateError(
+        'Backend not configured — deploy functions/ and set FUNCTIONS_BASE_URL',
+      );
+    }
+  }
 }

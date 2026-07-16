@@ -24,17 +24,40 @@ Future<void> launchVideoConversation({
   required List<String> questions,
   required String candidateName,
   Interview? interview,
+  String? resumeText,
+  FacialSessionSummary? facialSummary,
 }) async {
   final store = context.read<AppStore>();
 
+  // Ground the avatar in the candidate's résumé when one was provided.
+  final effectiveConfig = (resumeText != null && resumeText.trim().isNotEmpty)
+      ? config.copyWith(
+          conversationalContext:
+              '${config.conversationalContext}\n\n'
+              'Candidate résumé (use it to tailor and follow up on your questions):\n'
+              '${resumeText.trim()}',
+        )
+      : config;
+
   final payload = buildConversationPayload(
-    config: config,
+    config: effectiveConfig,
     questions: questions,
     candidateName: candidateName,
   );
   final conv = await tavusService.createConversation(payload);
 
   _resetHumeState(store);
+  // Set the pre-call facefit result AFTER the reset so the results pipeline
+  // can fuse it into the scorecard.
+  store.setFacialSummary(facialSummary);
+  // Carry the real role + duration so scoring isn't judged against a hardcoded
+  // default (falls back to the config for self-serve practice).
+  store.setActiveInterviewMeta(
+    role: interview?.title ?? config.conversationName,
+    durationSeconds: (interview?.durationMinutes ?? 0) > 0
+        ? interview!.durationMinutes * 60
+        : config.maxCallDuration,
+  );
   store.setQuestions(questions);
   store.setCurrentConversation(conv);
   store.setInterviewActive(true);
@@ -59,4 +82,5 @@ void _resetHumeState(AppStore store) {
   store.setHumeStreamActive(false);
   store.clearSessionTranscript();
   store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
+  store.resetIntegrity();
 }

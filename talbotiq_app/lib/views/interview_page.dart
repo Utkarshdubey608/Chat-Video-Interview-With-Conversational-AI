@@ -1,6 +1,5 @@
 // lib/views/interview_page.dart
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -27,8 +26,9 @@ class InterviewPage extends StatefulWidget {
 }
 
 class _InterviewPageState extends State<InterviewPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _isFullscreen = false;
+
   bool _autoAdvance = true;
   final bool _avatarSpeaking = false;
   int _revealedIdx = -1;
@@ -39,7 +39,6 @@ class _InterviewPageState extends State<InterviewPage>
   // stopAndReadBytes() again and overwrite the recording bytes with null.
   bool _ending = false;
 
-  Timer? _jitterTimer;
   Timer? _fallbackRevealTimer;
   Timer? _autoAdvanceTimeoutTimer;
 
@@ -51,13 +50,38 @@ class _InterviewPageState extends State<InterviewPage>
   // Cached store reference so we can add/remove a route listener safely.
   AppStore? _store;
 
-  /// Initializes the interview state, default variables, simulated metrics, and timers.
+  /// Initializes the interview state, default variables, and question timers.
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _revealedIdx = 0;
-    _startSimulations();
     _resetQuestionTimers();
+  }
+
+  /// Integrity: flag when the candidate leaves the app mid-interview.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final store = _store;
+    if (store == null) return;
+    final active =
+        store.currentRoute == '/interview' && store.interviewActive;
+    if (!active) return;
+    if (state == AppLifecycleState.paused) {
+      store.incrementIntegrityLeftApp();
+    } else if (state == AppLifecycleState.resumed &&
+        store.integrityLeftAppCount > 0 &&
+        mounted) {
+      final n = store.integrityLeftAppCount;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Please stay in the interview. Leaving the app was noted '
+            '($n time${n == 1 ? '' : 's'}).',
+          ),
+        ),
+      );
+    }
   }
 
   /// Manages routing/lifecycle dependencies and starts recording when active.
@@ -86,8 +110,8 @@ class _InterviewPageState extends State<InterviewPage>
   /// Cleans up active timers, controllers, listeners, and the recorder.
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _store?.removeListener(_syncRecordingWithRoute);
-    _jitterTimer?.cancel();
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
     _recorder.dispose();
@@ -114,26 +138,6 @@ class _InterviewPageState extends State<InterviewPage>
         ),
       );
     }
-  }
-
-  /// Simulates candidate emotional levels (confidence, anxiety, engagement) during interview.
-  void _startSimulations() {
-    final store = Provider.of<AppStore>(context, listen: false);
-
-    _jitterTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (!store.interviewActive) return;
-      final random = math.Random();
-      final conf = (store.confidence == 0)
-          ? 80
-          : (store.confidence + (random.nextInt(5) - 2)).clamp(70, 90);
-      final anx = (store.anxiety == 0)
-          ? 12
-          : (store.anxiety + (random.nextInt(3) - 1)).clamp(8, 20);
-      final eng = (store.engagement == 0)
-          ? 92
-          : (store.engagement + (random.nextInt(4) - 2)).clamp(85, 96);
-      store.updateMetrics(conf: conf, anx: anx, eng: eng);
-    });
   }
 
   /// Cancels and schedules the timeout advance and fallback reveal timers for the current question.
@@ -374,6 +378,10 @@ class _InterviewPageState extends State<InterviewPage>
                   onEndInterview: _endInterview,
                   overrideController: _overrideController,
                   onSendOverride: _sendOverride,
+                  // InterviewPage is only ever reached via the candidate video
+                  // flow (CandidateVideoShell), so hide upcoming questions and
+                  // disable jumping ahead.
+                  candidateMode: true,
                 ),
               ),
             )
@@ -435,6 +443,8 @@ class _InterviewPageState extends State<InterviewPage>
               onEndInterview: _endInterview,
               overrideController: _overrideController,
               onSendOverride: _sendOverride,
+              // Candidate-only flow: hide upcoming questions, no jumping ahead.
+              candidateMode: true,
             ),
         ],
       ),

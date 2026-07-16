@@ -259,10 +259,10 @@ data alone. If facial data quality is "low", reduce its weight accordingly.
 Session facial overview:
 - Average camera attention: ${(f.sessionAvgAttention * 100).toStringAsFixed(1)}%
 - Looking away from camera: ${f.overallLookingAwayPercent.toStringAsFixed(1)}% of frames
-- Dominant facial emotions: ${f.sessionDominantEmotions.map((e) => '${e['type']} (${(e['avgConfidence'] as num).toStringAsFixed(1)}%)').join(', ')}
+- Dominant facial emotions: ${f.sessionDominantEmotions.map((e) => '${e['type']} (${(((e['avgConfidence'] ?? e['confidence']) as num?) ?? 0).toStringAsFixed(1)}%)').join(', ')}
 
 Per-question facial signals:
-${f.perQuestion.map((q) => '  Q${q.questionIdx + 1}: ${q.usableFrameCount} usable frames — attention ${(q.avgAttentionScore * 100).toStringAsFixed(0)}%, looking away ${q.lookingAwayPercent.toStringAsFixed(0)}%, dominant facial emotion ${q.dominantEmotions.isNotEmpty ? '${q.dominantEmotions[0]['type']} (${(q.dominantEmotions[0]['avgConfidence'] as num).toStringAsFixed(0)}%)' : 'insufficient'}, head variance ${q.headPoseVariance.toStringAsFixed(0)} (>200 notable)').join('\n')}
+${f.perQuestion.map((q) => '  Q${q.questionIdx + 1}: ${q.usableFrameCount} usable frames — attention ${(q.avgAttentionScore * 100).toStringAsFixed(0)}%, looking away ${q.lookingAwayPercent.toStringAsFixed(0)}%, dominant facial emotion ${q.dominantEmotions.isNotEmpty ? '${q.dominantEmotions[0]['type']} (${(((q.dominantEmotions[0]['avgConfidence'] ?? q.dominantEmotions[0]['confidence']) as num?) ?? 0).toStringAsFixed(0)}%)' : 'insufficient'}, head variance ${q.headPoseVariance.toStringAsFixed(0)} (>200 notable)').join('\n')}
 
 Facial integrity flags: ${f.integrityFlags.isNotEmpty ? f.integrityFlags.join('; ') : 'none'}
 Facial engagement signals: ${f.engagementFlags.isNotEmpty ? f.engagementFlags.join('; ') : 'none'}

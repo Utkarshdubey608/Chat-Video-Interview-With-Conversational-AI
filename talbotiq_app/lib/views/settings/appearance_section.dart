@@ -11,7 +11,9 @@ class AppearanceSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final store = Provider.of<AppStore>(context);
+    // Listen only to the theme mode; read (non-listening) for the setters.
+    final themeMode = context.select<AppStore, ThemeMode>((s) => s.themeMode);
+    final store = context.read<AppStore>();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -37,7 +39,7 @@ class AppearanceSection extends StatelessWidget {
                     child: _ThemeOptionCard(
                       title: 'Light Mode',
                       icon: Icons.light_mode_outlined,
-                      selected: store.themeMode == ThemeMode.light,
+                      selected: themeMode == ThemeMode.light,
                       onTap: () => store.setThemeMode(ThemeMode.light),
                     ),
                   ),
@@ -46,7 +48,7 @@ class AppearanceSection extends StatelessWidget {
                     child: _ThemeOptionCard(
                       title: 'Dark Mode',
                       icon: Icons.dark_mode_outlined,
-                      selected: store.themeMode == ThemeMode.dark,
+                      selected: themeMode == ThemeMode.dark,
                       onTap: () => store.setThemeMode(ThemeMode.dark),
                     ),
                   ),

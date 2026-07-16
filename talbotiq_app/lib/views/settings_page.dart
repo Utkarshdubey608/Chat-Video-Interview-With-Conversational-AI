@@ -1,6 +1,7 @@
 // lib/views/settings_page.dart
 import 'package:flutter/material.dart';
 import '../widgets/apple_ui.dart';
+import '../features/guide/mimic_guide_page.dart';
 import 'settings/api_credentials_section.dart';
 import 'settings/session_setup_section.dart';
 import 'settings/recording_storage_section.dart';
@@ -64,6 +65,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ),
                     const SizedBox(height: 24),
                     if (isWide) _buildWide(theme) else _buildNarrow(theme),
+                    const SizedBox(height: 24),
+                    _buildGuideEntry(theme),
                   ],
                 ),
               ),
@@ -105,6 +108,42 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 24),
         IndexedStack(index: _category, children: _sections),
       ],
+    );
+  }
+
+  // Single entry point into the Mimic Guide help assistant.
+  Widget _buildGuideEntry(ThemeData theme) {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.6)),
+      ),
+      child: ListTile(
+        leading: const AppleIconBadge(
+          icon: Icons.support_agent,
+          color: Color(0xFF10B981),
+          size: 32,
+        ),
+        title: Text(
+          'Help & Guide',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        subtitle: Text(
+          'Ask the Mimic Guide how to use templates, sessions, scoring and reports.',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        trailing: Icon(Icons.chevron_right,
+            size: 20, color: theme.colorScheme.onSurfaceVariant),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MimicGuidePage()),
+        ),
+      ),
     );
   }
 

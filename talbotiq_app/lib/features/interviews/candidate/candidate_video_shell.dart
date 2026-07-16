@@ -121,6 +121,9 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
       'improvements': sc?.topConcerns ?? const <String>[],
       'evaluatedBy': 'ai',
       if (sc != null) 'detail': sc.toJson(),
+      // Integrity: how many times the candidate left the app mid-interview.
+      if (store.integrityLeftAppCount > 0)
+        'integrity': {'leftAppCount': store.integrityLeftAppCount},
     });
   }
 
@@ -128,7 +131,7 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
   Widget build(BuildContext context) {
     // Route handling is driven by the store listener (_onStoreChanged); here we
     // only read the route to decide what to render.
-    final route = context.watch<AppStore>().currentRoute;
+    final route = context.select<AppStore, String>((s) => s.currentRoute);
 
     // Assigned interviews hide the result behind a pending overlay.
     final gated = widget.interview != null && route == '/results';
@@ -147,7 +150,7 @@ class _IndexedStackPages extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final route = context.watch<AppStore>().currentRoute;
+    final route = context.select<AppStore, String>((s) => s.currentRoute);
     final index = route == '/results' ? 1 : 0;
     return IndexedStack(
       index: index,

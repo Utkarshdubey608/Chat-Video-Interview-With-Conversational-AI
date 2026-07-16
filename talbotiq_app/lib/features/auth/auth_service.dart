@@ -9,6 +9,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'app_role.dart';
 
+/// Thin wrapper over Firebase Auth that also resolves the signed-in user's
+/// role + display name from Firestore. Exposes the current user, auth-state and
+/// role streams, and sign-in/up/out — the single seam the UI should use instead
+/// of touching `FirebaseAuth.instance` directly.
 class AuthService {
   AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
       : _auth = auth ?? FirebaseAuth.instance,

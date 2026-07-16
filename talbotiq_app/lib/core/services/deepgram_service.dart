@@ -184,6 +184,39 @@ class DeepgramService {
     }
   }
 
+  /// Maps a full language name (as chosen on the interview, e.g. 'Spanish') to a
+  /// Deepgram language code. Unknown/unsupported languages fall back to 'en-US'
+  /// so transcription still runs (English-biased) rather than erroring out.
+  static String localeFor(String language) {
+    switch (language.trim().toLowerCase()) {
+      case 'english':
+        return 'en-US';
+      case 'spanish':
+        return 'es';
+      case 'french':
+        return 'fr';
+      case 'german':
+        return 'de';
+      case 'hindi':
+        return 'hi';
+      case 'portuguese':
+        return 'pt';
+      case 'italian':
+        return 'it';
+      case 'japanese':
+        return 'ja';
+      case 'mandarin':
+      case 'chinese':
+        return 'zh';
+      case 'dutch':
+        return 'nl';
+      case 'korean':
+        return 'ko';
+      default:
+        return 'en-US';
+    }
+  }
+
   /// Transcribe a locally-recorded audio file (e.g. the candidate's .wav) by
   /// POSTing its raw bytes to Deepgram's pre-recorded endpoint. Returns a list
   /// with a single TranscriptEntry containing the combined transcript text.

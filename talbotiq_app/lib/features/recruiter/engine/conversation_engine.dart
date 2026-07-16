@@ -15,8 +15,6 @@ import '../models/recruiter_models.dart';
 import '../services/recruiter_gemini_service.dart';
 import 'scoring_engine.dart';
 
-int _clamp(num n) => n.clamp(0, 100).round();
-
 /// Timed conversational mode = mode 'timed' with a conversationTiming config.
 bool isTimedTemplate(InterviewTemplate t) =>
     t.mode == InterviewMode.timed && t.conversationTiming != null;
@@ -463,13 +461,6 @@ List<PrimaryQuestionGroup> primaryQuestionGroups(List<Turn> turns) {
 
 // ── Conversation report assembly ─────────────────────────────────────────────
 
-const List<String> _recs = [
-  Recommendation.strongYes,
-  Recommendation.yes,
-  Recommendation.maybe,
-  Recommendation.no,
-];
-
 ResultReport assembleConversationReport(
   InterviewSession session,
   InterviewTemplate template,
@@ -489,7 +480,7 @@ ResultReport assembleConversationReport(
     final kpiScores = <String, double>{};
     if (match != null) {
       match.scores.forEach((kpiId, score) {
-        if (enabledIds.contains(kpiId)) kpiScores[kpiId] = _clamp(score).toDouble();
+        if (enabledIds.contains(kpiId)) kpiScores[kpiId] = clampScore(score).toDouble();
       });
     }
     return PerQuestionResult(
@@ -501,9 +492,7 @@ ResultReport assembleConversationReport(
 
   final kpiAverages = averageKpis(template.rubric, perQuestion);
   final overall = weightedOverall(template.rubric, kpiAverages);
-  final rec = _recs.contains(raw.recommendation)
-      ? raw.recommendation!
-      : recommendationFor(overall);
+  final rec = resolveRecommendation(raw.recommendation, overall);
 
   return ResultReport(
     sessionId: session.id,

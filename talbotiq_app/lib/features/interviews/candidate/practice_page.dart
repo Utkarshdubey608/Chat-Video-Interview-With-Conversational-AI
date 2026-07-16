@@ -153,6 +153,7 @@ class _PracticePageState extends State<PracticePage> {
         interview: null,
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'Could not start practice: '
           '${e.toString().replaceAll('Exception: ', '')}');
     } finally {

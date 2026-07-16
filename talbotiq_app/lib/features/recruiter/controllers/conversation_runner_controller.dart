@@ -7,6 +7,7 @@
 // the deterministic heuristic) and persists it to RecruiterStore.
 
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -15,7 +16,17 @@ import '../models/recruiter_models.dart';
 import '../services/recruiter_gemini_service.dart';
 import '../store/recruiter_store.dart';
 
-enum ConvStage { welcome, resume, systemCheck, running, scoring, finished }
+enum ConvStage { welcome, resume, systemCheck, readiness, running, scoring, finished }
+
+/// A display-only interviewer acknowledgment bubble ("Thanks — got it.") shown
+/// between the candidate's answer and the next question. Purely presentational:
+/// it is NOT part of the engine transcript and never reaches scoring.
+class ChatAck {
+  final String id;
+  final String text;
+  final int createdAt; // epoch ms
+  const ChatAck({required this.id, required this.text, required this.createdAt});
+}
 
 class ConversationRunnerController extends ChangeNotifier
     with WidgetsBindingObserver {
@@ -50,6 +61,46 @@ class ConversationRunnerController extends ChangeNotifier
 
   ResultReport? report;
   String? scoringError;
+
+  // ── Chat polish (thinking floor + varied acknowledgments) ──────────────────
+
+  /// Minimum time the animated "Thinking…" indicator stays visible before an
+  /// interviewer turn is revealed, so it never flickers on a fast response.
+  static const Duration _thinkingFloor = Duration(milliseconds: 1400);
+
+  /// How long the acknowledgment bubble shows on its own before the next
+  /// question is revealed.
+  static const Duration _ackDwell = Duration(milliseconds: 900);
+
+  /// Varied acknowledgments shown as a brief interviewer bubble after each
+  /// answer. Never repeated twice in a row (see [_pushAck]).
+  static const List<String> _ackPhrases = [
+    'Thanks — got it.',
+    'Great, noted.',
+    'That makes sense.',
+    'Perfect, thank you.',
+    'Appreciate that — noted.',
+    'Lovely, thanks for sharing.',
+  ];
+  int _lastAckIndex = -1;
+  final Random _rng = Random();
+
+  /// Display-only acknowledgment bubbles (not part of the engine transcript).
+  final List<ChatAck> ackBubbles = [];
+
+  /// Time-of-day greeting derived from the candidate's local clock, e.g.
+  /// "Good morning" / "Good afternoon" / "Good evening".
+  String get greeting {
+    final h = DateTime.now().hour;
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  String? get candidateName {
+    final n = session.candidateName.trim();
+    return n.isEmpty ? null : n;
+  }
 
   ConversationRunnerController({
     required this.session,
@@ -124,6 +175,13 @@ class ConversationRunnerController extends ChangeNotifier
     notifyListeners();
   }
 
+  /// System check acknowledged → show the "Are you ready?" readiness step.
+  /// Questioning does not start until the candidate confirms (see [begin]).
+  void goToReadiness() {
+    stage = ConvStage.readiness;
+    notifyListeners();
+  }
+
   Future<void> begin() async {
     if (starting) return;
     starting = true;
@@ -134,6 +192,7 @@ class ConversationRunnerController extends ChangeNotifier
     }
     stage = ConvStage.running;
     notifyListeners();
+    final startedMs = _now;
     try {
       await engine.begin(_now);
     } catch (e) {
@@ -146,11 +205,16 @@ class ConversationRunnerController extends ChangeNotifier
       return;
     }
     if (_disposed) return;
+    // Hold the "Thinking…" indicator for its minimum floor before revealing the
+    // first question, then re-arm timed windows so the floor never eats a timer.
+    await _ensureThinkingFloor(startedMs);
+    if (_disposed) return;
     starting = false;
     if (engine.completed) {
       await _finish();
       return;
     }
+    _rearmTimedAwaiting();
     if (isTimed) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
     }
@@ -178,6 +242,7 @@ class ConversationRunnerController extends ChangeNotifier
 
   Future<void> _submit(String text, {required bool autoAdvanced}) async {
     if (sending || stage != ConvStage.running) return;
+    final startedMs = _now;
     sending = true;
     notifyListeners();
     try {
@@ -186,13 +251,71 @@ class ConversationRunnerController extends ChangeNotifier
       error = e.toString().replaceAll('Exception: ', '');
     }
     if (_disposed) return;
-    sending = false;
+
+    // Keep the animated "Thinking…" indicator up for its minimum floor so it
+    // never flickers, even when the next turn is produced instantly.
+    await _ensureThinkingFloor(startedMs);
+    if (_disposed) return;
+
     if (engine.completed) {
+      sending = false;
       await _finish();
-    } else {
-      // Re-arm timed phase timestamps already handled inside the engine.
-      notifyListeners();
+      return;
     }
+
+    // Brief, varied acknowledgment bubble before the next question is revealed
+    // (mirrors the website's "thanks, got it" beat). The question card keeps
+    // showing "Thinking…" while the acknowledgment dwells.
+    _pushAck();
+    notifyListeners();
+    await Future<void>.delayed(_ackDwell);
+    if (_disposed) return;
+
+    // Start the next question's timed windows now, at reveal — not back when the
+    // engine appended the turn — so the acknowledgment beat never eats a timer.
+    _rearmTimedAwaiting();
+    sending = false;
+    notifyListeners();
+  }
+
+  /// Hold until at least [_thinkingFloor] has elapsed since [startMs].
+  Future<void> _ensureThinkingFloor(int startMs) async {
+    final remaining = _thinkingFloor.inMilliseconds - (_now - startMs);
+    if (remaining > 0) {
+      await Future<void>.delayed(Duration(milliseconds: remaining));
+    }
+  }
+
+  /// Re-arm the awaiting turn's timed thinking/answer window to start now, so a
+  /// reveal delay (thinking floor + acknowledgment) doesn't count against it.
+  /// Mirrors the engine's own arming logic; only touches runtime timestamps.
+  void _rearmTimedAwaiting() {
+    if (!isTimed) return;
+    final ct = template.conversationTiming;
+    final turn = engine.awaitingInterviewer;
+    if (ct == null || turn == null || turn.questionIndex == null) return;
+    final now = _now;
+    if (ct.thinkingSeconds > 0) {
+      turn.thinkingStartedAt = now;
+      turn.answerStartedAt = null;
+    } else {
+      turn.thinkingStartedAt = null;
+      turn.answerStartedAt = now;
+    }
+  }
+
+  /// Append a display-only acknowledgment bubble, never repeating the last one.
+  void _pushAck() {
+    var idx = _rng.nextInt(_ackPhrases.length);
+    if (_ackPhrases.length > 1 && idx == _lastAckIndex) {
+      idx = (idx + 1) % _ackPhrases.length;
+    }
+    _lastAckIndex = idx;
+    ackBubbles.add(ChatAck(
+      id: 'ack_${DateTime.now().microsecondsSinceEpoch}',
+      text: _ackPhrases[idx],
+      createdAt: _now,
+    ));
   }
 
   Future<void> _finish() async {

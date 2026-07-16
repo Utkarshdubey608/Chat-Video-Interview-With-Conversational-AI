@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 import '../../../../providers/app_store.dart';
 
-/// A tab in the interview sidebar that lists all the questions,
-/// showing their current status (completed, active, locked/hidden).
+/// A tab in the interview sidebar that lists the questions and their status
+/// (completed, active, locked/hidden).
+///
+/// In [candidateMode] (the candidate-facing video flow) only the CURRENT
+/// question is shown — upcoming/future questions are never rendered — and
+/// tapping is disabled so the candidate cannot jump ahead. This is an
+/// anti-cheat measure; the recruiter/operator view (candidateMode == false)
+/// keeps the full, navigable list.
 class QuestionsTab extends StatelessWidget {
   final AppStore store;
   final List<String> validQs;
   final int revealedIdx;
   final Function(int) onQuestionTap;
+  final bool candidateMode;
 
   const QuestionsTab({
     super.key,
@@ -15,14 +22,24 @@ class QuestionsTab extends StatelessWidget {
     required this.validQs,
     required this.revealedIdx,
     required this.onQuestionTap,
+    this.candidateMode = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
+    // In candidate mode only the current question is visible; otherwise the
+    // full set is listed. `visibleIndices` maps list rows -> question indices.
+    final currentIdx = store.currentQuestionIdx;
+    final List<int> visibleIndices = candidateMode
+        ? (currentIdx >= 0 && currentIdx < validQs.length ? [currentIdx] : const [])
+        : List<int>.generate(validQs.length, (i) => i);
+
     return ListView.builder(
-      itemCount: validQs.length,
-      itemBuilder: (context, idx) {
+      itemCount: visibleIndices.length,
+      itemBuilder: (context, row) {
+        final idx = visibleIndices[row];
         final isCurrent = store.currentQuestionIdx == idx;
         final isDone = idx < store.currentQuestionIdx;
         final isLocked = idx > store.currentQuestionIdx;
@@ -43,7 +60,8 @@ class QuestionsTab extends StatelessWidget {
           ),
           child: ListTile(
             dense: true,
-            onTap: () => onQuestionTap(idx),
+            // Candidates cannot jump to arbitrary questions.
+            onTap: candidateMode ? null : () => onQuestionTap(idx),
             leading: Container(
               width: 24,
               height: 24,

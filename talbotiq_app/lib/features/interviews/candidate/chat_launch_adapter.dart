@@ -28,22 +28,61 @@ Widget buildChatRunnerPage({
   final sessionId =
       'ses_${interview.id}_${DateTime.now().microsecondsSinceEpoch}';
 
+  final isAdaptive = interview.adaptive;
+
+  // Optional per-question countdown. When the recruiter enabled it, run the
+  // conversation in the existing timed mode (thinking→answer→auto-submit);
+  // otherwise keep the untimed conversational behaviour unchanged.
+  final ct = interview.chatTimer;
+  final bool isTimed = ct != null && ct['enabled'] == true;
+  final ConversationTimingConfig? timing = isTimed
+      ? ConversationTimingConfig(
+          perQuestionSeconds:
+              (ct['perQuestionSeconds'] as num?)?.toInt() ?? 120,
+          thinkingSeconds: (ct['thinkingSeconds'] as num?)?.toInt() ?? 0,
+          allowSkipThinking: true,
+          allowEarlySubmit: ct['allowEarlySubmit'] as bool? ?? true,
+          warningThresholdSeconds:
+              (ct['warningThresholdSeconds'] as num?)?.toInt() ?? 15,
+        )
+      : null;
+  final String convMode =
+      isTimed ? InterviewMode.timed : InterviewMode.conversational;
+
+  // Fixed-track questions (empty/ignored for the adaptive track).
   final fixed = <FixedQuestion>[
     for (int i = 0; i < interview.questions.length; i++)
       FixedQuestion(id: 'q$i', text: interview.questions[i]),
   ];
+
+  // Adaptive config: the recruiter's stored config wins, but the interview
+  // title backfills the role when the config doesn't set one.
+  final AdaptiveConfig? adaptiveCfg = isAdaptive
+      ? AdaptiveConfig.fromJson({
+          'role': interview.title,
+          ...?interview.adaptiveConfig,
+          'language': interview.language,
+        })
+      : null;
 
   final template = InterviewTemplate(
     id: templateId,
     name: interview.title,
     role: interview.title,
     track: TrackType.chatbot,
-    questionSource: QuestionSource.fixed,
+    questionSource:
+        isAdaptive ? QuestionSource.adaptive : QuestionSource.fixed,
     timing: defaultTiming(),
     rubric: defaultRubric(),
-    integrity: defaultIntegrity(),
-    branding: defaultBranding(),
-    mode: InterviewMode.conversational,
+    integrity: interview.integrity != null
+        ? IntegrityConfig.fromJson(interview.integrity!)
+        : defaultIntegrity(),
+    branding: interview.branding != null
+        ? BrandingConfig.fromJson(interview.branding!)
+        : defaultBranding(),
+    mode: convMode,
+    adaptive: adaptiveCfg,
+    conversationTiming: timing,
     createdAt: now,
     updatedAt: now,
   );
@@ -60,23 +99,28 @@ Widget buildChatRunnerPage({
     candidateName: interview.candidateName ?? _localPart(interview.candidateEmail),
     candidateEmail: interview.candidateEmail,
     status: SessionStatus.created,
-    questions: [
-      for (final fq in fixed)
-        SessionQuestion(
-          id: fq.id,
-          text: fq.text,
-          category: fq.category,
-          idealAnswerNotes: fq.idealAnswerNotes,
-        ),
-    ],
+    // Adaptive generates its own questions; fixed carries the recruiter's set.
+    questions: isAdaptive
+        ? const []
+        : [
+            for (final fq in fixed)
+              SessionQuestion(
+                id: fq.id,
+                text: fq.text,
+                category: fq.category,
+                idealAnswerNotes: fq.idealAnswerNotes,
+              ),
+          ],
     createdAt: now,
-    mode: InterviewMode.conversational,
+    mode: convMode,
   );
 
   return ConversationRunnerPage(
     session: session,
     template: template,
-    fixedQuestionsOverride: fixed,
+    // Only pin fixed questions for the fixed track; adaptive lets the engine
+    // generate them (résumé-grounded via the runner's built-in résumé step).
+    fixedQuestionsOverride: isAdaptive ? null : fixed,
     candidateMode: true,
     onFinished: (completedSession, report) {
       // Store an UNPUBLISHED canonical result so the recruiter can review,
@@ -89,6 +133,11 @@ Widget buildChatRunnerPage({
         'improvements': report.improvements ?? const <String>[],
         'evaluatedBy': 'ai',
         'detail': report.toJson(),
+        // Mirror the same integrity signal the video track writes, so the
+        // recruiter's evaluate screen surfaces "left the app N times" for chat
+        // interviews too. Only written when it actually happened.
+        if (completedSession.tabSwitchCount > 0)
+          'integrity': {'leftAppCount': completedSession.tabSwitchCount},
       });
     },
   );

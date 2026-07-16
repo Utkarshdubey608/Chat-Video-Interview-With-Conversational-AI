@@ -173,7 +173,10 @@ class _ResultsPageState extends State<ResultsPage> {
       setState(() => _fetchingTranscript = true);
       try {
         deepgramService.setKey(store.deepgramKey);
-        final entries = await deepgramService.transcribeFromFile(bytes);
+        final entries = await deepgramService.transcribeFromFile(
+          bytes,
+          language: DeepgramService.localeFor(store.activeInterviewLanguage),
+        );
         if (entries.isNotEmpty) {
           store.clearSessionTranscript();
           for (final e in entries) {
@@ -277,6 +280,9 @@ class _ResultsPageState extends State<ResultsPage> {
     }
 
     _pollAttempts = 0;
+    // Cancel any poll still running from a prior interview — this page lives in
+    // a persistent IndexedStack, so dispose() won't fire between attempts.
+    _humePollTimer?.cancel();
     _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
       _pollAttempts++;
       if (_pollAttempts > 15) {
@@ -341,6 +347,8 @@ class _ResultsPageState extends State<ResultsPage> {
     final store = Provider.of<AppStore>(context, listen: false);
     _pollAttempts = 0;
 
+    // Cancel any poll still running from a prior interview (see _startHumeProcess).
+    _humePollTimer?.cancel();
     _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
       _pollAttempts++;
       if (_pollAttempts > 45) {
@@ -431,28 +439,33 @@ class _ResultsPageState extends State<ResultsPage> {
     });
 
     try {
-      final summary = FacialSessionSummary(
-        totalFrames: 0,
-        usableFrames: 0,
-        usableFramePercent: 0.0,
-        perQuestion: [],
-        sessionDominantEmotions: [],
-        sessionAvgAttention: 0.0,
-        sessionAvgSmile: 0.0,
-        overallLookingAwayPercent: 0.0,
-        dataQuality: 'insufficient',
-        dataQualityNote: 'Camera proxy was not active',
-        integrityFlags: [],
-        engagementFlags: [],
-        concernFlags: [],
-      );
+      // Use the pre-call facefit capture when present; otherwise a neutral
+      // placeholder (facefit skipped / camera unavailable).
+      final summary = store.facialSummary ??
+          FacialSessionSummary(
+            totalFrames: 0,
+            usableFrames: 0,
+            usableFramePercent: 0.0,
+            perQuestion: [],
+            sessionDominantEmotions: [],
+            sessionAvgAttention: 0.0,
+            sessionAvgSmile: 0.0,
+            overallLookingAwayPercent: 0.0,
+            dataQuality: 'insufficient',
+            dataQualityNote: 'Facefit was not captured',
+            integrityFlags: [],
+            engagementFlags: [],
+            concernFlags: [],
+          );
 
       final scorecard = await geminiService.analyze(
         candidateName:
             (store.currentConversation?.conversationName ?? 'Candidate')
                 .replaceAll('TalbotIQ — ', ''),
-        jobRole: 'Senior Software Engineer',
-        interviewDurationSeconds: 120,
+        jobRole: store.activeInterviewRole,
+        interviewDurationSeconds: store.activeInterviewDurationSeconds > 0
+            ? store.activeInterviewDurationSeconds
+            : 120,
         transcript: store.sessionTranscript,
         questions: store.questions,
         humeResult: store.humeResult,
@@ -1261,7 +1274,7 @@ class _ResultsPageState extends State<ResultsPage> {
                     _buildTranscriptCard(context, store),
                     const SizedBox(height: 24),
 
-                    const FacialAnalysisPanel(),
+                    FacialAnalysisPanel(summary: store.facialSummary),
                     const SizedBox(height: 24),
 
                     _buildRecruiterActions(

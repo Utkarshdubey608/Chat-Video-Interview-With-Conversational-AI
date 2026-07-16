@@ -51,5 +51,28 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- Deep linking: custom URL scheme. Handles candidate invite links of the
+	     form  talbotiq://interview/<interviewId>. This works purely client-side
+	     with no server configuration.
+	     TODO(deploy): HTTPS Universal Links (https://<domain>/take/<id>) are NOT
+	     configured here. They additionally require an "Associated Domains"
+	     entitlement (applinks:<domain>) in Runner.entitlements and an
+	     apple-app-site-association file hosted at
+	     https://<domain>/.well-known/apple-app-site-association on the real
+	     deployed domain. Only the custom scheme below is scaffolded because it
+	     needs no server. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.talbotiq.app.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>talbotiq</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

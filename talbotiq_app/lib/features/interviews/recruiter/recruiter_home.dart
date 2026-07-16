@@ -9,10 +9,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/utils/date_format.dart';
 import '../../../providers/app_store.dart';
 import '../../../views/settings_page.dart';
 import '../../app_config/app_config_service.dart';
 import '../../auth/auth_service.dart';
+import '../../recruiter/analytics/analytics_page.dart';
+import '../../../widgets/app_message_state.dart';
 import '../models/interview.dart';
 import '../services/interview_repository.dart';
 import 'create_interview_page.dart';
@@ -62,6 +65,13 @@ class RecruiterHome extends StatelessWidget {
         title: const _Wordmark(subtitle: 'Recruiter'),
         actions: [
           IconButton(
+            tooltip: 'Analytics',
+            icon: const Icon(Icons.insights_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AnalyticsPage()),
+            ),
+          ),
+          IconButton(
             tooltip: 'Sync API keys to cloud',
             icon: const Icon(Icons.cloud_upload_outlined),
             onPressed: () => _syncKeys(context),
@@ -88,7 +98,7 @@ class RecruiterHome extends StatelessWidget {
         stream: repo.watchForRecruiter(uid),
         builder: (context, snap) {
           if (snap.hasError) {
-            return _CenteredMessage(
+            return AppMessageState(
               icon: Icons.error_outline,
               title: 'Could not load interviews',
               subtitle: '${snap.error}',
@@ -99,7 +109,7 @@ class RecruiterHome extends StatelessWidget {
           }
           final all = snap.data!;
           if (all.isEmpty) {
-            return const _CenteredMessage(
+            return const AppMessageState(
               icon: Icons.inbox_outlined,
               title: 'No interviews yet',
               subtitle: 'Create one and assign it to a candidate email.',
@@ -144,14 +154,18 @@ class _InterviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isVideo = interview.type == InterviewType.video;
+    final IconData typeIcon = switch (interview.type) {
+      InterviewType.video => Icons.videocam_outlined,
+      InterviewType.voice => Icons.record_voice_over_outlined,
+      InterviewType.chat => Icons.chat_bubble_outline,
+    };
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: theme.colorScheme.primaryContainer,
           child: Icon(
-            isVideo ? Icons.videocam_outlined : Icons.chat_bubble_outline,
+            typeIcon,
             color: theme.colorScheme.onPrimaryContainer,
           ),
         ),
@@ -189,10 +203,10 @@ class _InterviewCard extends StatelessWidget {
               _kv(context, 'Attempts',
                   i.maxAttempts == null ? 'Unlimited' : '${i.attemptsUsed}/${i.maxAttempts}'),
               if (i.availableFrom != null)
-                _kv(context, 'From', _fmtDate(i.availableFrom!)),
+                _kv(context, 'From', formatDateTime(i.availableFrom!)),
               if (i.expiresAt != null)
                 _kv(context, 'Expires',
-                    '${_fmtDate(i.expiresAt!)}${i.isExpired ? '  (expired)' : ''}'),
+                    '${formatDateTime(i.expiresAt!)}${i.isExpired ? '  (expired)' : ''}'),
               const SizedBox(height: 12),
               Text('Prompt', style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 4),
@@ -288,10 +302,6 @@ class _InterviewCard extends StatelessWidget {
     if (context.mounted) Navigator.pop(context); // close the detail sheet
   }
 
-  String _fmtDate(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} '
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-
   Widget _kv(BuildContext context, String k, String v) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: Row(
@@ -382,7 +392,11 @@ class _TestSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final first = interviews.first;
-    final isVideo = first.type == InterviewType.video;
+    final IconData typeIcon = switch (first.type) {
+      InterviewType.video => Icons.videocam_outlined,
+      InterviewType.voice => Icons.record_voice_over_outlined,
+      InterviewType.chat => Icons.chat_bubble_outline,
+    };
     final completed = interviews
         .where((i) => i.status == InterviewStatus.completed)
         .length;
@@ -405,7 +419,7 @@ class _TestSection extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(4, 4, 4, 10),
             child: Row(
               children: [
-                Icon(isVideo ? Icons.videocam_outlined : Icons.chat_bubble_outline,
+                Icon(typeIcon,
                     size: 18, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
@@ -466,40 +480,6 @@ class _Wordmark extends StatelessWidget {
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       ],
-    );
-  }
-}
-
-class _CenteredMessage extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  const _CenteredMessage({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(subtitle,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          ],
-        ),
-      ),
     );
   }
 }

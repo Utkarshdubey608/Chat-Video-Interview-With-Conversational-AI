@@ -16,6 +16,12 @@ class InterviewSidebar extends StatefulWidget {
   final TextEditingController overrideController;
   final VoidCallback onSendOverride;
 
+  /// When true (the candidate-facing video flow), the Questions tab shows only
+  /// the current question and disables jumping to arbitrary questions, so a
+  /// candidate cannot preview upcoming questions. Defaults to false so any
+  /// non-candidate use keeps the full, navigable list.
+  final bool candidateMode;
+
   const InterviewSidebar({
     super.key,
     required this.store,
@@ -26,6 +32,7 @@ class InterviewSidebar extends StatefulWidget {
     required this.onEndInterview,
     required this.overrideController,
     required this.onSendOverride,
+    this.candidateMode = false,
   });
 
   @override
@@ -76,6 +83,7 @@ class _InterviewSidebarState extends State<InterviewSidebar> {
           validQs: widget.validQs,
           revealedIdx: widget.revealedIdx,
           onQuestionTap: widget.onQuestionTap,
+          candidateMode: widget.candidateMode,
         );
       case 'live':
         return LiveAiTab(

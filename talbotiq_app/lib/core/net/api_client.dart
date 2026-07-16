@@ -50,6 +50,9 @@ class ApiException implements Exception {
       'ApiException(${isTimeout ? 'timeout' : statusCode ?? 'network'}): $message';
 }
 
+/// Small HTTP helper with a request timeout and selective retry/backoff on 429
+/// and 503 responses. Deliberately does NOT retry a POST after a timeout (the
+/// server may have already processed it), so callers never double-submit.
 class ApiClient {
   ApiClient({
     http.Client? client,

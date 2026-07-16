@@ -8,6 +8,11 @@ import '../core/services/hume_service.dart';
 import '../core/services/deepgram_service.dart';
 import '../core/services/gemini_service.dart';
 
+/// Central app-wide [ChangeNotifier]: owns runtime API keys (loaded once from
+/// prefs, applied to the AI services in-memory), the session/avatar config,
+/// theme mode, current route, and the per-interview metadata carried into
+/// scoring. Widgets should `select`/`Consumer` on the specific field they need
+/// rather than listening to the whole store.
 class AppStore extends ChangeNotifier {
   // SharedPreferences keys
   static const String _kStoreKey = 'talbotiq_store';
@@ -318,6 +323,41 @@ class AppStore extends ChangeNotifier {
     _currentConversation = c;
     notifyListeners();
   }
+
+  // Full language name of the interview currently being taken (e.g. 'Spanish').
+  // Set at launch; read by the results page to pick the Deepgram locale for
+  // post-call transcription. Ephemeral (not persisted).
+  String _activeInterviewLanguage = 'English';
+  String get activeInterviewLanguage => _activeInterviewLanguage;
+  void setActiveInterviewLanguage(String language) {
+    final v = language.trim();
+    _activeInterviewLanguage = v.isEmpty ? 'English' : v;
+  }
+
+  // The current interview's role/title + duration, so the results pipeline
+  // scores against the real role (not a hardcoded default). Ephemeral.
+  String _activeInterviewRole = 'Candidate';
+  int _activeInterviewDurationSeconds = 0;
+  String get activeInterviewRole => _activeInterviewRole;
+  int get activeInterviewDurationSeconds => _activeInterviewDurationSeconds;
+  void setActiveInterviewMeta({required String role, required int durationSeconds}) {
+    _activeInterviewRole = role.trim().isEmpty ? 'Candidate' : role.trim();
+    _activeInterviewDurationSeconds = durationSeconds > 0 ? durationSeconds : 0;
+  }
+
+  // Integrity: times the candidate backgrounded the app during the current
+  // video interview. Reset at launch, read when the result is persisted so the
+  // recruiter can see it. Ephemeral.
+  int _integrityLeftAppCount = 0;
+  int get integrityLeftAppCount => _integrityLeftAppCount;
+  void incrementIntegrityLeftApp() => _integrityLeftAppCount++;
+  void resetIntegrity() => _integrityLeftAppCount = 0;
+
+  // Facefit (pre-call facial analysis) result for the current video interview.
+  // Set from the facefit capture, consumed by the results pipeline. Ephemeral.
+  FacialSessionSummary? _facialSummary;
+  FacialSessionSummary? get facialSummary => _facialSummary;
+  void setFacialSummary(FacialSessionSummary? s) => _facialSummary = s;
 
   void setQuestions(List<String> qs) {
     _questions = qs;

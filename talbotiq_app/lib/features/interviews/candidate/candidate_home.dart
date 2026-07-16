@@ -11,17 +11,25 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/deep_link/deep_link_service.dart';
+import '../../../core/utils/date_format.dart';
+import '../../../models/app_models.dart';
 import '../../../providers/app_store.dart';
 import '../../../views/settings_page.dart';
 import '../../app_config/app_config_service.dart';
 import '../../auth/auth_service.dart';
 import '../../recruiter/store/recruiter_store.dart';
+import '../../../widgets/app_message_state.dart';
 import '../models/interview.dart';
 import '../services/interview_repository.dart';
 import 'candidate_result_page.dart';
 import 'chat_launch_adapter.dart';
+import 'facefit_page.dart';
 import 'practice_page.dart';
+import 'resume_intake_page.dart';
+import 'system_check_page.dart';
 import 'video_launch.dart';
+import 'voice_launch.dart';
 
 class CandidateHome extends StatefulWidget {
   const CandidateHome({super.key});
@@ -34,6 +42,41 @@ class _CandidateHomeState extends State<CandidateHome> {
   bool _launching = false;
 
   String get _email => FirebaseAuth.instance.currentUser?.email ?? '';
+
+  @override
+  void initState() {
+    super.initState();
+    // Consume a deep link (talbotiq://interview/<id>) that arrived before/at
+    // launch: fetch the interview and, if it's this candidate's, open it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _consumePendingDeepLink();
+    });
+  }
+
+  Future<void> _consumePendingDeepLink() async {
+    final id = PendingDeepLink.instance.take();
+    if (id == null) return;
+    final repo = context.read<InterviewRepository>();
+    try {
+      final interview = await repo.getById(id);
+      if (!mounted || interview == null) return;
+      // Only auto-open an interview actually assigned to this candidate.
+      if (interview.candidateEmailLower != _email.trim().toLowerCase()) return;
+      switch (interview.type) {
+        case InterviewType.video:
+          _launchVideo(interview);
+          break;
+        case InterviewType.chat:
+          _launchChat(interview);
+          break;
+        case InterviewType.voice:
+          _launchVoice(interview);
+          break;
+      }
+    } catch (_) {
+      // Ignore — the interview still appears in the list for manual launch.
+    }
+  }
 
   String _localPart(String email) {
     final at = email.indexOf('@');
@@ -65,6 +108,44 @@ class _CandidateHomeState extends State<CandidateHome> {
       return;
     }
 
+    // Optional résumé intake (recruiter opt-in) — grounds the avatar's
+    // questions. Cancelling the intake aborts the launch.
+    String? resumeText;
+    if (interview.collectResume) {
+      resumeText = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          builder: (ctx) => ResumeIntakePage(
+            onReady: (t) => Navigator.of(ctx).pop(t),
+          ),
+        ),
+      );
+      if (!mounted) return;
+      if (resumeText == null || resumeText.trim().isEmpty) return;
+    }
+
+    // Pre-join camera/mic check so a permission denial is handled here (retry /
+    // open settings) instead of a dead video panel once the call starts.
+    final ready = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (ctx) => SystemCheckPage(
+          onReady: () => Navigator.of(ctx).pop(true),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (ready != true) return;
+
+    // Optional pre-call facefit capture (camera was granted in the system
+    // check). Returns an 'insufficient' summary if skipped/unavailable.
+    final facial = await Navigator.of(context).push<FacialSessionSummary>(
+      MaterialPageRoute(
+        builder: (ctx) => FacefitPage(
+          onCaptured: (s) => Navigator.of(ctx).pop(s),
+        ),
+      ),
+    );
+    if (!mounted) return;
+
     setState(() => _launching = true);
     try {
       // Apply THIS interview's recruiter (org) keys to the in-memory services
@@ -89,7 +170,12 @@ class _CandidateHomeState extends State<CandidateHome> {
         personaId: interview.avatar.personaId ?? '',
         conversationName: interview.title,
         maxCallDuration: interview.durationMinutes * 60,
+        language: interview.language,
       );
+
+      // Carry the interview language so the results page transcribes in the
+      // right Deepgram locale.
+      store.setActiveInterviewLanguage(interview.language);
 
       await launchVideoConversation(
         context: context,
@@ -97,6 +183,8 @@ class _CandidateHomeState extends State<CandidateHome> {
         questions: interview.questions,
         candidateName: interview.candidateName ?? _localPart(_email),
         interview: interview,
+        resumeText: resumeText,
+        facialSummary: facial,
       );
       // The attempt has started — count it.
       repo.incrementAttempt(interview.id);
@@ -134,6 +222,24 @@ class _CandidateHomeState extends State<CandidateHome> {
     );
     // Restore the candidate's own keys once the org session ends.
     await store.reloadApiKeysFromPrefs();
+  }
+
+  Future<void> _launchVoice(Interview interview) async {
+    if (_launching) return;
+    if (!_guardAccess(interview)) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _launching = true);
+    try {
+      // launchVoiceInterview applies the org keys, runs the Gemini Live call,
+      // scores the transcript on completion, and restores the candidate's keys.
+      await launchVoiceInterview(context: context, interview: interview);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+          content: Text(
+              'Could not start the interview: ${e.toString().replaceAll('Exception: ', '')}')));
+    } finally {
+      if (mounted) setState(() => _launching = false);
+    }
   }
 
   @override
@@ -178,7 +284,7 @@ class _CandidateHomeState extends State<CandidateHome> {
                 // Firestore internals and composite-index URLs. Log it for
                 // developers and show a friendly message instead.
                 debugPrint('CandidateHome interviews stream error: ${snap.error}');
-                return const _Message(
+                return const AppMessageState(
                   icon: Icons.error_outline,
                   title: 'Could not load your interviews',
                   subtitle: 'Please check your connection and try again.',
@@ -189,7 +295,7 @@ class _CandidateHomeState extends State<CandidateHome> {
               }
               final all = snap.data!;
               if (all.isEmpty) {
-                return _Message(
+                return AppMessageState(
                   icon: Icons.inbox_outlined,
                   title: 'No interviews assigned',
                   subtitle:
@@ -200,6 +306,8 @@ class _CandidateHomeState extends State<CandidateHome> {
                   all.where((i) => i.type == InterviewType.video).toList();
               final chat =
                   all.where((i) => i.type == InterviewType.chat).toList();
+              final voice =
+                  all.where((i) => i.type == InterviewType.voice).toList();
               return ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: [
@@ -220,6 +328,16 @@ class _CandidateHomeState extends State<CandidateHome> {
                     ...chat.map((i) => _AssignedCard(
                           interview: i,
                           onLaunch: () => _launchChat(i),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+                  if (voice.isNotEmpty) ...[
+                    _Header(
+                        label: 'Voice Interviews',
+                        icon: Icons.record_voice_over_outlined),
+                    ...voice.map((i) => _AssignedCard(
+                          interview: i,
+                          onLaunch: () => _launchVoice(i),
                         )),
                   ],
                 ],
@@ -275,9 +393,9 @@ class _AssignedCard extends StatelessWidget {
     } else if (awaiting) {
       subtitle = 'Submitted — awaiting results';
     } else if (interview.isExpired) {
-      subtitle = 'Expired · ${_fmtDate(interview.expiresAt!)}';
+      subtitle = 'Expired · ${formatDateTime(interview.expiresAt!)}';
     } else if (interview.isNotYetAvailable) {
-      subtitle = 'Available from ${_fmtDate(interview.availableFrom!)}';
+      subtitle = 'Available from ${formatDateTime(interview.availableFrom!)}';
     } else if (!interview.hasAttemptsLeft) {
       subtitle = 'No attempts left';
     }
@@ -345,9 +463,6 @@ class _AssignedCard extends StatelessWidget {
     );
   }
 
-  String _fmtDate(DateTime d) =>
-      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} '
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 }
 
 class _Header extends StatelessWidget {
@@ -368,37 +483,6 @@ class _Header extends StatelessWidget {
               style: theme.textTheme.titleSmall
                   ?.copyWith(fontWeight: FontWeight.w700)),
         ],
-      ),
-    );
-  }
-}
-
-class _Message extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  const _Message(
-      {required this.icon, required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(height: 12),
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(subtitle,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          ],
-        ),
       ),
     );
   }

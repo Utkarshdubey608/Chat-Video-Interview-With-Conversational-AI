@@ -237,6 +237,19 @@ class ReportPage extends StatelessWidget {
                 style: theme.textTheme.titleMedium
                     ?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
+            // KPI profile radar (needs ≥3 axes to read as a shape). Painter
+            // expects a 0–1 scale, so normalise the 0–100 averages.
+            if (enabled.length >= 3) ...[
+              EmotionRadarChart(
+                categoryScores: {
+                  for (final k in enabled)
+                    k.label:
+                        ((report.kpiAverages[k.id] ?? 0).toDouble() / 100.0)
+                            .clamp(0.0, 1.0),
+                },
+              ),
+              const SizedBox(height: 20),
+            ],
             ...entries.map((e) => _kpiBar(context, e.key, e.value)),
           ],
         ),

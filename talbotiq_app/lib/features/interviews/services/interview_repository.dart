@@ -10,6 +10,10 @@ import 'package:flutter/foundation.dart';
 
 import '../models/interview.dart';
 
+/// Owns all Firestore access for the `interviews` collection: CRUD plus the
+/// recruiter/candidate query streams and the attempt/status/result mutations.
+/// UI and controllers go through this repository — no widget touches Firestore
+/// directly.
 class InterviewRepository {
   InterviewRepository({FirebaseFirestore? firestore})
       : _db = firestore ?? FirebaseFirestore.instance;

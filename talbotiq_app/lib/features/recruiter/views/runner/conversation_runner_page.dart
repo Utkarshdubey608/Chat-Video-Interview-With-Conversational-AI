@@ -109,6 +109,8 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
             case ConvStage.welcome:
               return _WelcomeScreen(
                 template: widget.template,
+                greeting: c.greeting,
+                candidateName: c.candidateName,
                 adaptive: c.isAdaptive,
                 onContinue: c.goToWelcomeNext,
               );
@@ -117,9 +119,15 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
             case ConvStage.systemCheck:
               return _SystemCheckScreen(
                 acked: _systemCheckAck,
-                starting: c.starting,
                 onAck: (v) => setState(() => _systemCheckAck = v),
-                onBegin: c.begin,
+                onContinue: c.goToReadiness,
+              );
+            case ConvStage.readiness:
+              return _ReadinessScreen(
+                greeting: c.greeting,
+                candidateName: c.candidateName,
+                starting: c.starting,
+                onReady: c.begin,
               );
             case ConvStage.running:
               _syncAnswerField(c);
@@ -170,15 +178,23 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
 // ── Welcome ──────────────────────────────────────────────────────────────────
 class _WelcomeScreen extends StatelessWidget {
   final InterviewTemplate template;
+  final String greeting;
+  final String? candidateName;
   final bool adaptive;
   final VoidCallback onContinue;
   const _WelcomeScreen(
-      {required this.template, required this.adaptive, required this.onContinue});
+      {required this.template,
+      required this.greeting,
+      required this.candidateName,
+      required this.adaptive,
+      required this.onContinue});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final timed = isTimedTemplate(template);
+    final hello =
+        candidateName != null ? '$greeting, $candidateName' : greeting;
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: SafeArea(
@@ -196,9 +212,13 @@ class _WelcomeScreen extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                           letterSpacing: 1.5)),
                   const SizedBox(height: 10),
-                  Text('Conversational interview',
+                  Text('$hello — welcome',
                       style: theme.textTheme.headlineMedium
                           ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('Conversational interview',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 12),
                   Text(
                     template.branding.welcomeMessage ??
@@ -381,14 +401,10 @@ class _ResumeScreenState extends State<_ResumeScreen> {
 // ── System check ──────────────────────────────────────────────────────────────
 class _SystemCheckScreen extends StatelessWidget {
   final bool acked;
-  final bool starting;
   final ValueChanged<bool> onAck;
-  final VoidCallback onBegin;
+  final VoidCallback onContinue;
   const _SystemCheckScreen(
-      {required this.acked,
-      required this.starting,
-      required this.onAck,
-      required this.onBegin});
+      {required this.acked, required this.onAck, required this.onContinue});
 
   @override
   Widget build(BuildContext context) {
@@ -420,14 +436,13 @@ class _SystemCheckScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   CustomButton(
-                    text: "I'm ready — begin",
-                    isLoading: starting,
-                    onPressed: (acked && !starting) ? onBegin : () {},
+                    text: 'Continue',
+                    onPressed: acked ? onContinue : () {},
                   ),
                   if (!acked)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Text('Tick the box above to begin.',
+                      child: Text('Tick the box above to continue.',
                           style: theme.textTheme.bodyMedium?.copyWith(
                               fontSize: 12,
                               color: theme.colorScheme.onSurfaceVariant)),
@@ -452,6 +467,107 @@ class _SystemCheckScreen extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(child: Text(text, style: theme.textTheme.bodyMedium)),
         ],
+      ),
+    );
+  }
+}
+
+// ── Readiness ─────────────────────────────────────────────────────────────────
+/// "Are you ready?" step shown after the system check and before questioning.
+/// Questioning only starts once the candidate taps "I'm ready"; "I need a
+/// moment" simply waits (mirrors the website's readiness Yes/No turn).
+class _ReadinessScreen extends StatefulWidget {
+  final String greeting;
+  final String? candidateName;
+  final bool starting;
+  final VoidCallback onReady;
+  const _ReadinessScreen({
+    required this.greeting,
+    required this.candidateName,
+    required this.starting,
+    required this.onReady,
+  });
+
+  @override
+  State<_ReadinessScreen> createState() => _ReadinessScreenState();
+}
+
+class _ReadinessScreenState extends State<_ReadinessScreen> {
+  bool _tookAMoment = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = widget.candidateName;
+    final hello =
+        name != null ? '${widget.greeting}, $name' : widget.greeting;
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(28),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: theme.colorScheme.primary,
+                    child: Icon(Icons.record_voice_over,
+                        color: theme.colorScheme.onPrimary),
+                  ),
+                  const SizedBox(height: 20),
+                  Text('$hello!',
+                      style: theme.textTheme.headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 10),
+                  Text(
+                    "I'm really looking forward to our chat. Just relax and "
+                    'answer naturally — take your time with each question. '
+                    'Are you ready to begin?',
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                  if (_tookAMoment) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Icon(Icons.favorite_outline,
+                            size: 18, color: theme.colorScheme.secondary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "No rush — take a breath. Tap \"I'm ready\" whenever "
+                            'you\'d like to start.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 28),
+                  CustomButton(
+                    text: "I'm ready",
+                    isLoading: widget.starting,
+                    icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                    onPressed: widget.starting ? () {} : widget.onReady,
+                  ),
+                  const SizedBox(height: 10),
+                  CustomButton(
+                    text: 'I need a moment',
+                    variant: ButtonVariant.outline,
+                    onPressed: widget.starting
+                        ? () {}
+                        : () => setState(() => _tookAMoment = true),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -492,6 +608,23 @@ class _ChatStage extends StatelessWidget {
     final history = engine.transcript
         .where((t) => current == null || t.id != current.id)
         .toList();
+
+    // Merge the transcript with display-only acknowledgment bubbles. Each
+    // answer's acknowledgment is inserted right after that answer (by ordinal,
+    // not by timestamp — the engine stamps the next question with the same
+    // time as the answer, so a time sort would misplace it).
+    final acks = c.ackBubbles;
+    final feed = <_FeedEntry>[];
+    var candidateSeen = 0;
+    for (final t in history) {
+      feed.add(_FeedEntry(turn: t));
+      if (t.role == 'candidate') {
+        if (candidateSeen < acks.length) {
+          feed.add(_FeedEntry(ack: acks[candidateSeen]));
+        }
+        candidateSeen++;
+      }
+    }
 
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
@@ -538,13 +671,15 @@ class _ChatStage extends StatelessWidget {
             _questionCard(context, current, c.sending),
             // History: previous exchanges, quieter.
             Expanded(
-              child: history.isEmpty
+              child: feed.isEmpty
                   ? _emptyHistory(context)
                   : ListView(
                       reverse: true,
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-                      children: history.reversed
-                          .map((t) => _bubble(context, t))
+                      children: feed.reversed
+                          .map((e) => e.ack != null
+                              ? _ackBubble(context, e.ack!)
+                              : _bubble(context, e.turn!))
                           .toList(),
                     ),
             ),
@@ -627,13 +762,9 @@ class _ChatStage extends StatelessWidget {
           if (showTyping)
             Row(
               children: [
-                SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: theme.colorScheme.primary)),
+                _ThinkingDots(color: theme.colorScheme.primary),
                 const SizedBox(width: 12),
-                Text('Preparing the next question…',
+                Text('Thinking…',
                     style: theme.textTheme.titleMedium
                         ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               ],
@@ -719,6 +850,106 @@ class _ChatStage extends StatelessWidget {
     );
   }
 
+  /// A quiet, display-only interviewer acknowledgment bubble ("Thanks — got
+  /// it.") shown between an answer and the next question.
+  Widget _ackBubble(BuildContext context, ChatAck ack) {
+    final theme = Theme.of(context);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.78),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.secondary.withValues(alpha: 0.12),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(16),
+            topRight: Radius.circular(16),
+            bottomLeft: Radius.circular(4),
+            bottomRight: Radius.circular(16),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_rounded,
+                size: 16, color: theme.colorScheme.secondary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                ack.text,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One entry in the merged chat feed: either a transcript [turn] or a
+/// display-only acknowledgment [ack].
+class _FeedEntry {
+  final ConvTurn? turn;
+  final ChatAck? ack;
+  const _FeedEntry({this.turn, this.ack});
+}
+
+/// Three pulsing dots — an animated "Thinking…" indicator. Owns an
+/// [AnimationController] that repeats while mounted and is disposed with it.
+class _ThinkingDots extends StatefulWidget {
+  final Color color;
+  const _ThinkingDots({required this.color});
+
+  @override
+  State<_ThinkingDots> createState() => _ThinkingDotsState();
+}
+
+class _ThinkingDotsState extends State<_ThinkingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            // Each dot's opacity leads the next by a third of the cycle.
+            final phase = (_ctrl.value - i * 0.2) % 1.0;
+            final t = (1 - (phase - 0.5).abs() * 2).clamp(0.0, 1.0);
+            final opacity = 0.3 + 0.7 * t;
+            return Padding(
+              padding: EdgeInsets.only(right: i < 2 ? 5 : 0),
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.color.withValues(alpha: opacity),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
 }
 
 /// Countdown pill shown in the chat header during timed conversational mode.
