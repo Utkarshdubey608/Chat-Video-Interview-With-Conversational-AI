@@ -5,7 +5,7 @@
 // exactly as the server does. Falls back to a deterministic heuristic when no
 // Gemini scoring is available, so scoring works fully offline.
 
-import '../models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 
 /// Clamp any numeric score into the inclusive 0–100 range and round to an int.
 /// Shared by both the scoring and conversation engines.

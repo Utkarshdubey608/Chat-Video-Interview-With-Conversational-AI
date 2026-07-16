@@ -9,12 +9,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../models/app_models.dart';
-import '../../../providers/app_store.dart';
-import '../../../core/services/tavus_service.dart';
-import '../../../views/setup/launch_payload.dart';
-import '../models/interview.dart';
-import 'candidate_video_shell.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/features/interviews/shared/launch_payload.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/candidate/candidate_video_shell.dart';
 
 /// Creates the Tavus conversation from [config] + [questions], seeds the
 /// AppStore and opens the video shell. Assumes `tavusService` is already keyed.

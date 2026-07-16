@@ -2,7 +2,7 @@
 //
 // No-op recorder used on the web build. Local .wav recording is a native-only
 // feature, so every method is an inert default here.
-import '../../models/app_models.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class RecordingService {
   bool get isRecording => false;

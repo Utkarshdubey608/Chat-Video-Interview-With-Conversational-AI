@@ -10,8 +10,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/recruiter_models.dart';
-import '../engine/seed.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/engine/seed.dart';
 
 /// Which feature occupies the first tab slot (formerly "Setup").
 enum FeatureSlot { videoInterview, recruiter }

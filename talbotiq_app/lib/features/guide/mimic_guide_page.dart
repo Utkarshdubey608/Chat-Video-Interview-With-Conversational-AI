@@ -7,7 +7,7 @@
 
 import 'package:flutter/material.dart';
 
-import 'mimic_guide_service.dart';
+import 'package:talbotiq/features/guide/mimic_guide_service.dart';
 
 class MimicGuidePage extends StatefulWidget {
   const MimicGuidePage({super.key});

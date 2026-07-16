@@ -8,10 +8,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../widgets/custom_buttons.dart';
-import '../../../widgets/custom_inputs.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class EvaluateInterviewPage extends StatefulWidget {
   final Interview interview;

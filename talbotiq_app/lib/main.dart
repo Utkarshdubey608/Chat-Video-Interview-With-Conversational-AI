@@ -4,16 +4,16 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'firebase_options.dart';
-import 'providers/app_store.dart';
-import 'features/recruiter/store/recruiter_store.dart';
-import 'features/recruiter/services/recruiter_gemini_service.dart';
-import 'features/auth/auth_service.dart';
-import 'features/app_config/app_config_service.dart';
-import 'features/interviews/services/interview_repository.dart';
-import 'core/deep_link/deep_link_service.dart';
-import 'core/theme/app_theme.dart';
-import 'views/splash_page.dart';
+import 'package:talbotiq/firebase_options.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/features/auth/auth_service.dart';
+import 'package:talbotiq/features/app_config/app_config_service.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/core/deep_link/deep_link_service.dart';
+import 'package:talbotiq/core/theme/app_theme.dart';
+import 'package:talbotiq/features/app/splash_page.dart';
 
 /// App-wide navigator key so the deep-link handler can drive navigation from
 /// outside the widget tree (it lives for the whole app lifetime).

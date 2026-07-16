@@ -11,10 +11,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../engine/conversation_engine.dart';
-import '../models/recruiter_models.dart';
-import '../services/recruiter_gemini_service.dart';
-import '../store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/engine/conversation_engine.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 
 enum ConvStage { welcome, resume, systemCheck, readiness, running, scoring, finished }
 

@@ -2,8 +2,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../net/api_client.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class TavusService {
   // Shared transport: request timeout + 429/5xx backoff-retry. POSTs are never

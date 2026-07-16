@@ -10,9 +10,9 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-import '../../../core/net/api_client.dart';
-import '../models/recruiter_models.dart';
-import '../engine/scoring_engine.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/engine/scoring_engine.dart';
 
 /// Clamp helper mirroring the backend's `clampInt`.
 int clampInt(num? v, int min, int max, int fallback) {

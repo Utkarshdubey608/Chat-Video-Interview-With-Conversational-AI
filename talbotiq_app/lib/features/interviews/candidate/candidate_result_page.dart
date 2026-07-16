@@ -4,7 +4,7 @@
 
 import 'package:flutter/material.dart';
 
-import '../models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
 
 class CandidateResultPage extends StatelessWidget {
   final Interview interview;

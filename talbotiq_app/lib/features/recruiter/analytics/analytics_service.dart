@@ -6,7 +6,7 @@
 // backend, no fabricated data. Every computation is null-safe and an empty
 // input yields an all-zero summary.
 
-import '../../interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
 
 /// The on-device analytics filter, mirroring the website's AnalyticsPage
 /// controls that are feasible against the mobile [Interview] model:

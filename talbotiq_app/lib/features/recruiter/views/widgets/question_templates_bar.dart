@@ -18,8 +18,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/recruiter_models.dart';
-import '../../store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 
 class QuestionTemplatesBar extends StatelessWidget {
   /// Reads the questions currently entered on the host screen (already trimmed

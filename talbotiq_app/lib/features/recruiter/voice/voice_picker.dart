@@ -23,9 +23,9 @@
 
 import 'package:flutter/material.dart';
 
-import '../../../core/services/voice_preview_service.dart';
-import 'voice_catalog.dart';
-import 'voice_models.dart';
+import 'package:talbotiq/core/services/voice_preview_service.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
 
 /// A reusable persona + voice selector bound to a [VoiceConfig].
 ///

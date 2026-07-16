@@ -24,7 +24,7 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'recruiter_credentials.dart';
+import 'package:talbotiq/core/security/recruiter_credentials.dart';
 
 abstract class RecruiterCredentialsRepository {
   /// Reads a recruiter/org's credentials.
@@ -72,8 +72,7 @@ class FirestoreRecruiterCredentialsRepository
 ///
 /// TODO(backend): implement against the deployed Cloud Functions
 /// (`saveRecruiterKeys` callable) and remove candidate-side `fetch`. Requires
-/// the functions in functions/ to be deployed and their base URL configured in
-/// GatewayConfig.
+/// the functions in functions/ to be deployed and their base URL configured.
 class ProxyRecruiterCredentialsRepository
     implements RecruiterCredentialsRepository {
   @override

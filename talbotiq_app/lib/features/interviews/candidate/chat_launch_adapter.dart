@@ -11,12 +11,12 @@
 
 import 'package:flutter/widgets.dart';
 
-import '../../recruiter/engine/defaults.dart';
-import '../../recruiter/models/recruiter_models.dart';
-import '../../recruiter/store/recruiter_store.dart';
-import '../../recruiter/views/runner/conversation_runner_page.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
+import 'package:talbotiq/features/recruiter/engine/defaults.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/views/runner/conversation_runner_page.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 Widget buildChatRunnerPage({
   required Interview interview,

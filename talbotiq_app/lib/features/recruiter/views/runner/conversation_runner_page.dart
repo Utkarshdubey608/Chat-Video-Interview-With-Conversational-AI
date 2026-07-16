@@ -14,15 +14,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
-import '../../../../widgets/custom_buttons.dart';
-import '../../../../widgets/custom_inputs.dart';
-import '../../controllers/conversation_runner_controller.dart';
-import '../../engine/conversation_engine.dart';
-import '../../models/recruiter_models.dart';
-import '../../services/recruiter_gemini_service.dart';
-import '../../store/recruiter_store.dart';
-import '../report_page.dart';
-import '../widgets/recruiter_ui.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/recruiter/controllers/conversation_runner_controller.dart';
+import 'package:talbotiq/features/recruiter/engine/conversation_engine.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/views/report_page.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 
 class ConversationRunnerPage extends StatefulWidget {
   final InterviewSession session;

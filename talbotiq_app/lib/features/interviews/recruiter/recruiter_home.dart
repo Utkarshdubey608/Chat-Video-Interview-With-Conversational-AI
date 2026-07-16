@@ -9,17 +9,17 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../core/utils/date_format.dart';
-import '../../../providers/app_store.dart';
-import '../../../views/settings_page.dart';
-import '../../app_config/app_config_service.dart';
-import '../../auth/auth_service.dart';
-import '../../recruiter/analytics/analytics_page.dart';
-import '../../../widgets/app_message_state.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
-import 'create_interview_page.dart';
-import 'evaluate_interview_page.dart';
+import 'package:talbotiq/core/utils/date_format.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/features/settings/settings_page.dart';
+import 'package:talbotiq/features/app_config/app_config_service.dart';
+import 'package:talbotiq/features/auth/auth_service.dart';
+import 'package:talbotiq/features/recruiter/analytics/analytics_page.dart';
+import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/features/interviews/recruiter/create_interview_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/evaluate_interview_page.dart';
 
 class RecruiterHome extends StatelessWidget {
   const RecruiterHome({super.key});

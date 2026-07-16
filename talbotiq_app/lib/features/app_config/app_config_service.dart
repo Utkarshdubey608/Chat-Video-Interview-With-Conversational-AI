@@ -14,10 +14,10 @@
 // this service to the proxy is a DI change (inject ProxyRecruiterCredentials-
 // Repository + route launch through the gateway), no call-site changes needed.
 
-import '../../core/security/recruiter_credentials.dart';
-import '../../core/security/recruiter_credentials_repository.dart';
-import '../../providers/app_store.dart';
-import '../recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/core/security/recruiter_credentials.dart';
+import 'package:talbotiq/core/security/recruiter_credentials_repository.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 
 class AppConfigService {
   AppConfigService({RecruiterCredentialsRepository? repository})

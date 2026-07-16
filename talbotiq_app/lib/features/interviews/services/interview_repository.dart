@@ -8,7 +8,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
-import '../models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
 
 /// Owns all Firestore access for the `interviews` collection: CRUD plus the
 /// recruiter/candidate query streams and the attempt/status/result mutations.

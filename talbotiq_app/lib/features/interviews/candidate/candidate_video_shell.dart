@@ -17,12 +17,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../providers/app_store.dart';
-import '../../../models/app_models.dart';
-import '../../../views/interview_page.dart';
-import '../../../views/results_page.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/features/interviews/candidate/interview/interview_page.dart';
+import 'package:talbotiq/features/interviews/candidate/results/results_page.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class CandidateVideoShell extends StatefulWidget {
   /// The assigned interview being run, or null for self-serve practice.

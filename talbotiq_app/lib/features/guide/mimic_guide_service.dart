@@ -16,8 +16,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import '../../core/net/api_client.dart';
-import '../recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 
 /// One chat turn in the guide conversation.
 class GuideMessage {

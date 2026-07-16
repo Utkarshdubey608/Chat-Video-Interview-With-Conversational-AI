@@ -9,12 +9,12 @@ import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
-import '../../../widgets/response_widgets.dart';
-import '../engine/conversation_engine.dart';
-import '../models/recruiter_models.dart';
-import '../store/recruiter_store.dart';
-import 'report_pdf.dart';
-import 'widgets/recruiter_ui.dart';
+import 'package:talbotiq/shared/widgets/response_widgets.dart';
+import 'package:talbotiq/features/recruiter/engine/conversation_engine.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
+import 'package:talbotiq/features/recruiter/views/report_pdf.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 
 class ReportPage extends StatelessWidget {
   final String sessionId;

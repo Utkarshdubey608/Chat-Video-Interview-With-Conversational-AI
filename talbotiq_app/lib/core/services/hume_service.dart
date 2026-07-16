@@ -2,8 +2,8 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
-import '../net/api_client.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class HumeService {
   // Shared transport: request timeout + 429/5xx backoff-retry so a stalled or

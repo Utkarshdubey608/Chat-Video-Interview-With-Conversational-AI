@@ -12,9 +12,9 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../../widgets/custom_buttons.dart';
-import '../../../widgets/custom_inputs.dart';
-import '../../recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 
 class ResumeIntakePage extends StatefulWidget {
   /// Called with the résumé text (min a few lines) when the candidate continues.

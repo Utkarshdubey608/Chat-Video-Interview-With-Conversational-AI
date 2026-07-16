@@ -7,7 +7,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import 'app_role.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
 
 /// Thin wrapper over Firebase Auth that also resolves the signed-in user's
 /// role + display name from Firestore. Exposes the current user, auth-state and

@@ -10,15 +10,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../core/services/gemini_live_service.dart';
-import '../../../core/services/gemini_service.dart';
-import '../../../models/app_models.dart';
-import '../../../providers/app_store.dart';
-import '../../app_config/app_config_service.dart';
-import '../../recruiter/voice/voice_catalog.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
-import 'voice_stage.dart';
+import 'package:talbotiq/core/services/gemini_live_service.dart';
+import 'package:talbotiq/core/services/gemini_service.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/features/app_config/app_config_service.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/features/interviews/candidate/voice_stage.dart';
 
 Future<void> launchVoiceInterview({
   required BuildContext context,

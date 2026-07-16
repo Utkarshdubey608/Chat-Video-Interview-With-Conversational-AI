@@ -19,7 +19,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../../core/services/gemini_live_service.dart';
+import 'package:talbotiq/core/services/gemini_live_service.dart';
 
 class VoiceStage extends StatefulWidget {
   /// Gemini API key. INTERIM: lives on-device (see the security note in

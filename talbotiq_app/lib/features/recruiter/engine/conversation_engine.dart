@@ -11,9 +11,9 @@
 // This engine calls the Gemini service for adaptive turns but has no Flutter
 // imports, so the deterministic (no-key) paths are unit-testable.
 
-import '../models/recruiter_models.dart';
-import '../services/recruiter_gemini_service.dart';
-import 'scoring_engine.dart';
+import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
+import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/features/recruiter/engine/scoring_engine.dart';
 
 /// Timed conversational mode = mode 'timed' with a conversationTiming config.
 bool isTimedTemplate(InterviewTemplate t) =>

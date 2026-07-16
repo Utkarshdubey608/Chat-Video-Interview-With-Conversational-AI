@@ -29,7 +29,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
-import '../../models/app_models.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 /// Lightweight per-frame snapshot pushed to the preview UI via [FacefitService.liveState].
 ///

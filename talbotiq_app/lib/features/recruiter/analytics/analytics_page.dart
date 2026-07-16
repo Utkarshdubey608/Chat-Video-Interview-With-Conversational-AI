@@ -12,11 +12,11 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../widgets/app_message_state.dart';
-import '../../interviews/models/interview.dart';
-import '../../interviews/recruiter/evaluate_interview_page.dart';
-import '../../interviews/services/interview_repository.dart';
-import 'analytics_service.dart';
+import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/recruiter/evaluate_interview_page.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/features/recruiter/analytics/analytics_service.dart';
 
 class AnalyticsPage extends StatefulWidget {
   const AnalyticsPage({super.key});

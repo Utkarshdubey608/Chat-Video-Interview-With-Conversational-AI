@@ -9,11 +9,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/utils/validators.dart';
-import '../../widgets/custom_buttons.dart';
-import '../../widgets/custom_inputs.dart';
-import 'app_role.dart';
-import 'auth_service.dart';
+import 'package:talbotiq/core/utils/validators.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
+import 'package:talbotiq/features/auth/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});

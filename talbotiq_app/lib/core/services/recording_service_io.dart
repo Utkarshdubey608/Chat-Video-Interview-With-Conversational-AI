@@ -7,7 +7,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class RecordingService {
   final AudioRecorder _recorder = AudioRecorder();

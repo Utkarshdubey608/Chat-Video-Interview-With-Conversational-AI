@@ -21,9 +21,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../../core/services/facefit_service.dart';
-import '../../../models/app_models.dart';
-import '../../../widgets/custom_buttons.dart';
+import 'package:talbotiq/core/services/facefit_service.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 
 /// Duration of the active capture window.
 const Duration kFacefitCaptureDuration = Duration(seconds: 6);

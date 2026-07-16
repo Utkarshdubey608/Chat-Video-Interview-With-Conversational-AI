@@ -8,7 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../../widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 
 class SystemCheckPage extends StatefulWidget {
   /// Called once camera + microphone are both granted and the candidate taps

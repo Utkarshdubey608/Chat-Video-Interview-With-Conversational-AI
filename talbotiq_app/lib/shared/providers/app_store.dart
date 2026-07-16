@@ -1,0 +1,685 @@
+// lib/providers/app_store.dart
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/core/services/hume_service.dart';
+import 'package:talbotiq/core/services/deepgram_service.dart';
+import 'package:talbotiq/core/services/gemini_service.dart';
+
+/// Central app-wide [ChangeNotifier]: owns runtime API keys (loaded once from
+/// prefs, applied to the AI services in-memory), the session/avatar config,
+/// theme mode, current route, and the per-interview metadata carried into
+/// scoring. Widgets should `select`/`Consumer` on the specific field they need
+/// rather than listening to the whole store.
+class AppStore extends ChangeNotifier {
+  // SharedPreferences keys
+  static const String _kStoreKey = 'talbotiq_store';
+
+  // Theme Mode
+  ThemeMode _themeMode = ThemeMode.dark;
+
+  // API credentials
+  String _tavusKey = '';
+  String _deepgramKey = '';
+  String _humeKey = '';
+  String _awsKey = '';
+  String _anthropicKey = '';
+  String _geminiKey = '';
+  String _awsProxyUrl = '';
+  String _webhookUrl = '';
+
+  // Defaults
+  String _defaultReplicaId = '';
+  String _defaultPersonaId = '';
+
+  // Persisted session configuration (edited in Settings, consumed by Setup at
+  // launch). Holds everything except the per-session candidate name.
+  DraftForm _sessionConfig = DraftForm.defaults();
+
+  // Active Session
+  TavusConversation? _currentConversation;
+  List<String> _questions = [
+    'Tell me about yourself and your background.',
+    'Describe a challenging problem you solved recently.',
+    'How do you handle pressure and tight deadlines?',
+    'Where do you see yourself in 3 years?',
+    'Do you have any questions for us?',
+  ];
+  int _currentQuestionIdx = 0;
+  bool _interviewActive = false;
+
+  // Saved Drafts
+  List<Draft> _drafts = [];
+
+  // Cached Tavus Data
+  List<TavusReplica> _cachedReplicas = [];
+  List<TavusPersona> _cachedPersonas = [];
+
+  // Live Metrics
+  int _confidence = 0;
+  int _anxiety = 0;
+  int _wpm = 0;
+  int _fillers = 0;
+  int _engagement = 0;
+
+  // Recording preferences
+  bool _storeLocalRecordings = false;
+
+  // Hume Batch Job
+  String? _humeJobId;
+  String? _humeJobStatus;
+  HumeSessionResult? _humeResult;
+  List<int> _questionTimestamps = [];
+  List<HumeEmotion> _liveEmotions = [];
+  bool _humeStreamActive = false;
+
+  // Transcript logs
+  List<TranscriptEntry> _sessionTranscript = [];
+  bool _deepgramConnected = false;
+  Future<void>? _loadFuture;
+
+  // True once the initial load from prefs has finished. Until then, setters
+  // fired during startup must NOT persist — otherwise a default value written
+  // before the load completes would overwrite the user's saved data.
+  bool _loaded = false;
+
+  // Locally-recorded interview audio (native only). Captured during the call,
+  // sent to Deepgram for transcription on the results page.
+  List<int>? _recordingBytes;
+
+  // Persisted interview recordings (kept on device when storeLocalRecordings is
+  // enabled). Managed from Settings.
+  List<SavedRecording> _recordings = [];
+
+  // Persisted interview results history (full scorecard + transcript + emotion).
+  List<InterviewResult> _interviewResults = [];
+
+  // Routing state
+  String _currentRoute = '/setup';
+  String get currentRoute => _currentRoute;
+
+  void navigateTo(String route) {
+    _currentRoute = route;
+    notifyListeners();
+  }
+
+  // Getters
+  ThemeMode get themeMode => _themeMode;
+  String get tavusKey => _tavusKey;
+  String get deepgramKey => _deepgramKey;
+  String get humeKey => _humeKey;
+  String get awsKey => _awsKey;
+  String get anthropicKey => _anthropicKey;
+  String get geminiKey => _geminiKey;
+  String get awsProxyUrl => _awsProxyUrl;
+  String get webhookUrl => _webhookUrl;
+
+  String get defaultReplicaId => _defaultReplicaId;
+  String get defaultPersonaId => _defaultPersonaId;
+
+  DraftForm get sessionConfig => _sessionConfig;
+
+  TavusConversation? get currentConversation => _currentConversation;
+  List<String> get questions => List.unmodifiable(_questions);
+  int get currentQuestionIdx => _currentQuestionIdx;
+  bool get interviewActive => _interviewActive;
+  List<Draft> get drafts => List.unmodifiable(_drafts);
+
+  List<TavusReplica> get cachedReplicas => List.unmodifiable(_cachedReplicas);
+  List<TavusPersona> get cachedPersonas => List.unmodifiable(_cachedPersonas);
+
+  int get confidence => _confidence;
+  int get anxiety => _anxiety;
+  int get wpm => _wpm;
+  int get fillers => _fillers;
+  int get engagement => _engagement;
+
+  String? get humeJobId => _humeJobId;
+  String? get humeJobStatus => _humeJobStatus;
+  HumeSessionResult? get humeResult => _humeResult;
+  List<int> get questionTimestamps => List.unmodifiable(_questionTimestamps);
+  List<HumeEmotion> get liveEmotions => List.unmodifiable(_liveEmotions);
+  bool get humeStreamActive => _humeStreamActive;
+
+  List<TranscriptEntry> get sessionTranscript =>
+      List.unmodifiable(_sessionTranscript);
+  bool get deepgramConnected => _deepgramConnected;
+  bool get storeLocalRecordings => _storeLocalRecordings;
+  List<int>? get recordingBytes => _recordingBytes;
+  List<SavedRecording> get recordings => List.unmodifiable(_recordings);
+  List<InterviewResult> get interviewResults =>
+      List.unmodifiable(_interviewResults);
+
+  AppStore() {
+    loadFromPrefs();
+  }
+
+  Future<void> loadFromPrefs() {
+    _loadFuture ??= _loadFromPrefs();
+    return _loadFuture!;
+  }
+
+  // Setters
+  void setTavusKey(String key) {
+    if (_tavusKey != key) {
+      _tavusKey = key;
+      tavusService.setKey(key);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+      _saveToPrefs();
+      notifyListeners();
+    }
+  }
+
+  void setDeepgramKey(String key) {
+    _deepgramKey = key;
+    deepgramService.setKey(key);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setHumeKey(String key) {
+    _humeKey = key;
+    humeService.setKey(key);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setAwsKey(String key) {
+    _awsKey = key;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setAnthropicKey(String key) {
+    _anthropicKey = key;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setGeminiKey(String key) {
+    _geminiKey = key;
+    geminiService.setKey(key);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setAwsProxyUrl(String url) {
+    _awsProxyUrl = url;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setWebhookUrl(String url) {
+    _webhookUrl = url;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Applies API keys to memory + service singletons WITHOUT persisting. Used to
+  /// run a recruiter's (org) interview with their keys on a candidate device
+  /// without storing them: they never hit prefs/Settings and are undone by
+  /// [reloadApiKeysFromPrefs] when the session ends (or on restart).
+  void applyEphemeralApiKeys({
+    String? tavus,
+    String? gemini,
+    String? hume,
+    String? deepgram,
+  }) {
+    if (tavus != null) {
+      _tavusKey = tavus;
+      tavusService.setKey(tavus);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+    }
+    if (gemini != null) {
+      _geminiKey = gemini;
+      geminiService.setKey(gemini);
+    }
+    if (hume != null) {
+      _humeKey = hume;
+      humeService.setKey(hume);
+    }
+    if (deepgram != null) {
+      _deepgramKey = deepgram;
+      deepgramService.setKey(deepgram);
+    }
+    notifyListeners();
+  }
+
+  /// Restores the device's own persisted API keys (undoing ephemeral org keys).
+  Future<void> reloadApiKeysFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_kStoreKey);
+    final Map<String, dynamic> data =
+        raw == null ? const {} : jsonDecode(raw) as Map<String, dynamic>;
+    _tavusKey = data['tavusKey'] ?? '';
+    _deepgramKey = data['deepgramKey'] ?? '';
+    _humeKey = data['humeKey'] ?? '';
+    _geminiKey = data['geminiKey'] ?? '';
+    tavusService.setKey(_tavusKey);
+    deepgramService.setKey(_deepgramKey);
+    humeService.setKey(_humeKey);
+    geminiService.setKey(_geminiKey);
+
+    // Ephemeral keys cleared the avatar caches; restore them from the same
+    // persisted blob so the replica/persona pickers repopulate without a
+    // restart (they belong to the device's own Tavus key).
+    if (data['cachedReplicas'] != null) {
+      final List replicasList = data['cachedReplicas'];
+      _cachedReplicas =
+          replicasList.map((r) => TavusReplica.fromJson(r)).toList();
+    } else {
+      _cachedReplicas = [];
+    }
+    if (data['cachedPersonas'] != null) {
+      final List personasList = data['cachedPersonas'];
+      _cachedPersonas =
+          personasList.map((p) => TavusPersona.fromJson(p)).toList();
+    } else {
+      _cachedPersonas = [];
+    }
+
+    notifyListeners();
+  }
+
+  void setStoreLocalRecordings(bool enable) {
+    _storeLocalRecordings = enable;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setThemeMode(ThemeMode mode) {
+    if (_themeMode != mode) {
+      _themeMode = mode;
+      _saveToPrefs();
+      notifyListeners();
+    }
+  }
+
+  void setDefaultReplicaId(String id) {
+    _defaultReplicaId = id;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setDefaultPersonaId(String id) {
+    _defaultPersonaId = id;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  // Persists the full session configuration. Each settings section merges its
+  // own fields via DraftForm.copyWith before calling this.
+  void setSessionConfig(DraftForm config) {
+    _sessionConfig = config;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setCurrentConversation(TavusConversation? c) {
+    _currentConversation = c;
+    notifyListeners();
+  }
+
+  // Full language name of the interview currently being taken (e.g. 'Spanish').
+  // Set at launch; read by the results page to pick the Deepgram locale for
+  // post-call transcription. Ephemeral (not persisted).
+  String _activeInterviewLanguage = 'English';
+  String get activeInterviewLanguage => _activeInterviewLanguage;
+  void setActiveInterviewLanguage(String language) {
+    final v = language.trim();
+    _activeInterviewLanguage = v.isEmpty ? 'English' : v;
+  }
+
+  // The current interview's role/title + duration, so the results pipeline
+  // scores against the real role (not a hardcoded default). Ephemeral.
+  String _activeInterviewRole = 'Candidate';
+  int _activeInterviewDurationSeconds = 0;
+  String get activeInterviewRole => _activeInterviewRole;
+  int get activeInterviewDurationSeconds => _activeInterviewDurationSeconds;
+  void setActiveInterviewMeta({required String role, required int durationSeconds}) {
+    _activeInterviewRole = role.trim().isEmpty ? 'Candidate' : role.trim();
+    _activeInterviewDurationSeconds = durationSeconds > 0 ? durationSeconds : 0;
+  }
+
+  // Integrity: times the candidate backgrounded the app during the current
+  // video interview. Reset at launch, read when the result is persisted so the
+  // recruiter can see it. Ephemeral.
+  int _integrityLeftAppCount = 0;
+  int get integrityLeftAppCount => _integrityLeftAppCount;
+  void incrementIntegrityLeftApp() => _integrityLeftAppCount++;
+  void resetIntegrity() => _integrityLeftAppCount = 0;
+
+  // Facefit (pre-call facial analysis) result for the current video interview.
+  // Set from the facefit capture, consumed by the results pipeline. Ephemeral.
+  FacialSessionSummary? _facialSummary;
+  FacialSessionSummary? get facialSummary => _facialSummary;
+  void setFacialSummary(FacialSessionSummary? s) => _facialSummary = s;
+
+  void setQuestions(List<String> qs) {
+    _questions = qs;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setCurrentQuestionIdx(int idx) {
+    _currentQuestionIdx = idx;
+    if (_interviewActive) {
+      pushQuestionTimestamp(DateTime.now().millisecondsSinceEpoch);
+    }
+    notifyListeners();
+  }
+
+  void setInterviewActive(bool active) {
+    _interviewActive = active;
+    if (active) {
+      pushQuestionTimestamp(DateTime.now().millisecondsSinceEpoch);
+    }
+    notifyListeners();
+  }
+
+  void updateMetrics({int? conf, int? anx, int? w, int? f, int? eng}) {
+    if (conf != null) _confidence = conf;
+    if (anx != null) _anxiety = anx;
+    if (w != null) _wpm = w;
+    if (f != null) _fillers = f;
+    if (eng != null) _engagement = eng;
+    notifyListeners();
+  }
+
+  void saveDraft(String name, DraftForm form, List<String> qs) {
+    final newDraft = Draft(
+      id: 'draft-${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      savedAt: DateTime.now().toIso8601String(),
+      form: form,
+      questions: qs,
+    );
+
+    // Remove existing draft with same name to avoid duplicates
+    _drafts.removeWhere((d) => d.name == name);
+    _drafts.insert(0, newDraft);
+
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void deleteDraft(String id) {
+    _drafts.removeWhere((d) => d.id == id);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setCachedTavusData(List<TavusReplica> replicas, List<TavusPersona> personas) {
+    _cachedReplicas = replicas;
+    _cachedPersonas = personas;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setHumeJobId(String? id) {
+    _humeJobId = id;
+    notifyListeners();
+  }
+
+  void setHumeJobStatus(String? status) {
+    _humeJobStatus = status;
+    notifyListeners();
+  }
+
+  void setHumeResult(HumeSessionResult? result) {
+    _humeResult = result;
+    notifyListeners();
+  }
+
+  void pushQuestionTimestamp(int ts) {
+    _questionTimestamps.add(ts);
+    notifyListeners();
+  }
+
+  void resetQuestionTimestamps() {
+    _questionTimestamps = [];
+    notifyListeners();
+  }
+
+  void setLiveEmotions(List<HumeEmotion> emos) {
+    _liveEmotions = emos;
+    notifyListeners();
+  }
+
+  void setHumeStreamActive(bool active) {
+    _humeStreamActive = active;
+    notifyListeners();
+  }
+
+  void pushTranscriptEntry(TranscriptEntry entry) {
+    _sessionTranscript.add(entry);
+    notifyListeners();
+  }
+
+  void updateTranscriptEntries(List<TranscriptEntry> entries) {
+    _sessionTranscript = entries;
+    notifyListeners();
+  }
+
+  void clearSessionTranscript() {
+    _sessionTranscript = [];
+    notifyListeners();
+  }
+
+  void setDeepgramConnected(bool connected) {
+    _deepgramConnected = connected;
+    notifyListeners();
+  }
+
+  void setRecordingBytes(List<int>? bytes) {
+    _recordingBytes = bytes;
+    notifyListeners();
+  }
+
+  void addRecording(SavedRecording recording) {
+    _recordings.insert(0, recording);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void deleteRecording(String id) {
+    _recordings.removeWhere((r) => r.id == id);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Saves (or replaces, keyed by conversationId) a finished interview result.
+  void addInterviewResult(InterviewResult result) {
+    _interviewResults.removeWhere(
+      (r) => r.conversationId == result.conversationId &&
+          result.conversationId.isNotEmpty,
+    );
+    _interviewResults.insert(0, result);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void deleteInterviewResult(String id) {
+    _interviewResults.removeWhere((r) => r.id == id);
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void reset() {
+    _currentConversation = null;
+    _currentQuestionIdx = 0;
+    _interviewActive = false;
+    _confidence = 0;
+    _anxiety = 0;
+    _wpm = 0;
+    _fillers = 0;
+    _engagement = 0;
+    _humeJobId = null;
+    _humeJobStatus = null;
+    _humeResult = null;
+    _questionTimestamps = [];
+    _liveEmotions = [];
+    _humeStreamActive = false;
+    _sessionTranscript = [];
+    _deepgramConnected = false;
+    _recordingBytes = null;
+    notifyListeners();
+  }
+
+  // Load from local storage
+  Future<void> _loadFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final String? rawData = prefs.getString(_kStoreKey);
+      if (rawData == null) return;
+
+      final Map<String, dynamic> data = jsonDecode(rawData);
+
+      if (data['themeMode'] != null) {
+        _themeMode = ThemeMode.values.firstWhere(
+          (e) => e.name == data['themeMode'],
+          orElse: () => ThemeMode.dark,
+        );
+      } else {
+        _themeMode = ThemeMode.dark;
+      }
+
+      _tavusKey = data['tavusKey'] ?? '';
+      _deepgramKey = data['deepgramKey'] ?? '';
+      _humeKey = data['humeKey'] ?? '';
+      _awsKey = data['awsKey'] ?? '';
+      _anthropicKey = data['anthropicKey'] ?? '';
+      _geminiKey = data['geminiKey'] ?? '';
+      _awsProxyUrl = data['awsProxyUrl'] ?? '';
+      _webhookUrl = data['webhookUrl'] ?? '';
+      _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
+
+      _defaultReplicaId = data['defaultReplicaId'] ?? '';
+      _defaultPersonaId = data['defaultPersonaId'] ?? '';
+
+      // Restore saved session config, else seed it with the default replica/persona.
+      if (data['sessionConfig'] != null) {
+        _sessionConfig = DraftForm.fromJson(data['sessionConfig']);
+      } else {
+        _sessionConfig = DraftForm.defaults().copyWith(
+          replicaId: _defaultReplicaId,
+          personaId: _defaultPersonaId,
+        );
+      }
+
+      if (data['questions'] != null) {
+        _questions = List<String>.from(data['questions']);
+      }
+
+      if (data['drafts'] != null) {
+        final List draftsList = data['drafts'];
+        _drafts = draftsList.map((d) => Draft.fromJson(d)).toList();
+      }
+
+      if (data['cachedReplicas'] != null) {
+        final List replicasList = data['cachedReplicas'];
+        _cachedReplicas = replicasList.map((r) => TavusReplica.fromJson(r)).toList();
+      }
+
+      if (data['cachedPersonas'] != null) {
+        final List personasList = data['cachedPersonas'];
+        _cachedPersonas = personasList.map((p) => TavusPersona.fromJson(p)).toList();
+      }
+
+      if (data['recordings'] != null) {
+        final List recordingsList = data['recordings'];
+        _recordings = recordingsList.map((r) => SavedRecording.fromJson(r)).toList();
+      }
+
+      if (data['interviewResults'] != null) {
+        final List resultsList = data['interviewResults'];
+        _interviewResults =
+            resultsList.map((r) => InterviewResult.fromJson(r)).toList();
+      }
+
+      // Propagate keys to services
+      tavusService.setKey(_tavusKey);
+      humeService.setKey(_humeKey);
+      deepgramService.setKey(_deepgramKey);
+      geminiService.setKey(_geminiKey);
+
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error loading store: $e');
+    } finally {
+      // Persistence is unblocked only after the initial load settles (success,
+      // early-return on empty prefs, or error) so subsequent setters can save.
+      _loaded = true;
+    }
+  }
+
+  // Save key credentials and drafts to local storage
+  Future<void> _saveToPrefs() async {
+    // Ignore writes triggered before the initial load finishes: a setter firing
+    // during startup must not overwrite persisted data with defaults.
+    if (!_loaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final Map<String, dynamic> data = {
+        'themeMode': _themeMode.name,
+        'tavusKey': _tavusKey,
+        'deepgramKey': _deepgramKey,
+        'humeKey': _humeKey,
+        'awsKey': _awsKey,
+        'anthropicKey': _anthropicKey,
+        'geminiKey': _geminiKey,
+        'awsProxyUrl': _awsProxyUrl,
+        'webhookUrl': _webhookUrl,
+        'defaultReplicaId': _defaultReplicaId,
+        'defaultPersonaId': _defaultPersonaId,
+        'sessionConfig': _sessionConfig.toJson(),
+        'storeLocalRecordings': _storeLocalRecordings,
+        'questions': _questions,
+        'drafts': _drafts.map((d) => d.toJson()).toList(),
+        'cachedReplicas': _cachedReplicas.map((r) => r.toJson()).toList(),
+        'cachedPersonas': _cachedPersonas.map((p) => p.toJson()).toList(),
+        'recordings': _recordings.map((r) => r.toJson()).toList(),
+        'interviewResults': _interviewResults.map((r) => r.toJson()).toList(),
+      };
+      await prefs.setString(_kStoreKey, jsonEncode(data));
+    } catch (e) {
+      debugPrint('Error saving store: $e');
+    }
+  }
+
+  // Clear preferences
+  Future<void> clearAllPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kStoreKey);
+    reset();
+    _themeMode = ThemeMode.dark;
+    _tavusKey = '';
+    _deepgramKey = '';
+    _humeKey = '';
+    _awsKey = '';
+    _anthropicKey = '';
+    _geminiKey = '';
+    _awsProxyUrl = '';
+    _webhookUrl = '';
+    _defaultReplicaId = '';
+    _defaultPersonaId = '';
+    _sessionConfig = DraftForm.defaults();
+    _questions = [
+      'Tell me about yourself and your background.',
+      'Describe a challenging problem you solved recently.',
+      'How do you handle pressure and tight deadlines?',
+      'Where do you see yourself in 3 years?',
+      'Do you have any questions for us?',
+    ];
+    _drafts = [];
+    _cachedReplicas = [];
+    _cachedPersonas = [];
+    _recordings = [];
+    _interviewResults = [];
+    notifyListeners();
+  }
+}

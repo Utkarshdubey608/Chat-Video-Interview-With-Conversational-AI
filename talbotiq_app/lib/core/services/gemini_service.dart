@@ -2,8 +2,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import '../net/api_client.dart';
-import '../../models/app_models.dart';
+import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
 
 class GeminiService {
   // Shared transport: enforces a request timeout and a conservative 429/503

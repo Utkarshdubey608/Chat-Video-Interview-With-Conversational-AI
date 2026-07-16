@@ -14,7 +14,7 @@
 // voice_models.dart deserialize the same JSON; this static list is the offline
 // fallback and the default for new templates.
 
-import 'voice_models.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
 
 /// Static, on-device Voice & Persona catalog.
 ///

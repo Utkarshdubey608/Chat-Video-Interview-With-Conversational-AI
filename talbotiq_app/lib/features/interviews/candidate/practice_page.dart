@@ -10,14 +10,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../models/app_models.dart';
-import '../../../providers/app_store.dart';
-import '../../../core/services/tavus_service.dart';
-import '../../../views/setup/avatar_picker.dart';
-import '../../../widgets/custom_buttons.dart';
-import '../../../widgets/custom_inputs.dart';
-import '../../recruiter/views/widgets/question_templates_bar.dart';
-import 'video_launch.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
+import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
 
 class PracticePage extends StatefulWidget {
   const PracticePage({super.key});

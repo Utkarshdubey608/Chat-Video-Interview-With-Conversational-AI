@@ -13,21 +13,21 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../models/app_models.dart';
-import '../../../core/utils/date_format.dart';
-import '../../../core/utils/validators.dart';
-import '../../../views/setup/avatar_picker.dart';
-import '../../../core/services/tavus_service.dart';
-import '../../../widgets/custom_buttons.dart';
-import '../../../widgets/custom_inputs.dart';
-import '../../auth/auth_service.dart';
-import '../../recruiter/views/widgets/question_templates_bar.dart';
-import '../../../providers/app_store.dart';
-import '../../recruiter/voice/voice_catalog.dart';
-import '../../recruiter/voice/voice_models.dart';
-import '../../recruiter/voice/voice_picker.dart';
-import '../models/interview.dart';
-import '../services/interview_repository.dart';
+import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/core/utils/date_format.dart';
+import 'package:talbotiq/core/utils/validators.dart';
+import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
+import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/shared/widgets/custom_buttons.dart';
+import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/features/auth/auth_service.dart';
+import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
+import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
+import 'package:talbotiq/features/recruiter/voice/voice_picker.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class CreateInterviewPage extends StatefulWidget {
   /// When provided, the page edits this interview instead of creating a new one.

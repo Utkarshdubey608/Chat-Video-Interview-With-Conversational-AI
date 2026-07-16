@@ -1,6 +1,6 @@
 // lib/core/theme/app_theme.dart
 import 'package:flutter/material.dart';
-import '../constants/colors.dart';
+import 'package:talbotiq/core/constants/colors.dart';
 
 class AppTheme {
   static ThemeData get darkTheme {
