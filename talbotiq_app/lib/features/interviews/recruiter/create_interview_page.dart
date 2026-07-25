@@ -1127,6 +1127,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             ),
             const SizedBox(height: 16),
             _buildAvatarSection(theme),
+            const SizedBox(height: 20),
+            _buildQuestions(theme),
           ] else if (_type == InterviewType.chat) ...[
             _buildQuestionSourceToggle(theme),
             const SizedBox(height: 16),

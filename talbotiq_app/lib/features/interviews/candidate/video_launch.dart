@@ -78,6 +78,7 @@ void _resetHumeState(AppStore store) {
   store.setHumeJobStatus(null);
   store.setHumeResult(null);
   store.resetQuestionTimestamps();
+  store.setRecordingStartTimestamp(null);
   store.setLiveEmotions([]);
   store.setHumeStreamActive(false);
   store.clearSessionTranscript();

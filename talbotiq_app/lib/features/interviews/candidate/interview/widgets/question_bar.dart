@@ -220,27 +220,7 @@ class QuestionBar extends StatelessWidget {
                   children: [
                     questionTextCol,
                     const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        TextButton.icon(
-                          icon: Icon(
-                            Icons.assignment_outlined,
-                            size: 16,
-                            color: theme.colorScheme.primary,
-                          ),
-                          label: Text(
-                            'Menu',
-                            style: TextStyle(
-                              color: theme.colorScheme.primary,
-                              fontSize: 13,
-                            ),
-                          ),
-                          onPressed: () => Scaffold.of(context).openEndDrawer(),
-                        ),
-                        controlsRow,
-                      ],
-                    ),
+                    Align(alignment: Alignment.centerRight, child: controlsRow),
                   ],
                 )
               : Row(

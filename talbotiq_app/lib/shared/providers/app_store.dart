@@ -89,6 +89,14 @@ class AppStore extends ChangeNotifier {
   // sent to Deepgram for transcription on the results page.
   List<int>? _recordingBytes;
 
+  // Wall-clock (epoch ms) moment the local .wav recording actually started
+  // (set once RecordingService.start() succeeds). This is the true zero-point
+  // of the recorded audio's timeline, distinct from _questionTimestamps[0]
+  // (set moments earlier, before the interview page even mounts) — used to
+  // align Deepgram's per-word offsets to the correct question when slicing
+  // the transcript by question.
+  int? _recordingStartTimestamp;
+
   // Persisted interview recordings (kept on device when storeLocalRecordings is
   // enabled). Managed from Settings.
   List<SavedRecording> _recordings = [];
@@ -148,6 +156,7 @@ class AppStore extends ChangeNotifier {
   bool get deepgramConnected => _deepgramConnected;
   bool get storeLocalRecordings => _storeLocalRecordings;
   List<int>? get recordingBytes => _recordingBytes;
+  int? get recordingStartTimestamp => _recordingStartTimestamp;
   List<SavedRecording> get recordings => List.unmodifiable(_recordings);
   List<InterviewResult> get interviewResults =>
       List.unmodifiable(_interviewResults);
@@ -510,6 +519,11 @@ class AppStore extends ChangeNotifier {
 
   void resetQuestionTimestamps() {
     _questionTimestamps = [];
+    notifyListeners();
+  }
+
+  void setRecordingStartTimestamp(int? ts) {
+    _recordingStartTimestamp = ts;
     notifyListeners();
   }
 

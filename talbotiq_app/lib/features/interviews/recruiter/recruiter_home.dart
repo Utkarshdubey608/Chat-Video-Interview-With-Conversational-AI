@@ -172,106 +172,11 @@ class _InterviewCard extends StatelessWidget {
     );
   }
 
-  Future<void> _showKeyDialog(BuildContext context, Interview i) async {
-    final tavusCtrl =
-        TextEditingController(text: i.keyOverrides['tavusKey'] ?? '');
-    final geminiCtrl =
-        TextEditingController(text: i.keyOverrides['geminiKey'] ?? '');
-    final humeCtrl =
-        TextEditingController(text: i.keyOverrides['humeKey'] ?? '');
-    final deepgramCtrl =
-        TextEditingController(text: i.keyOverrides['deepgramKey'] ?? '');
-    final repo = context.read<InterviewRepository>();
-    final messenger = ScaffoldMessenger.of(context);
-
-    await showDialog(
+  void _showKeyDialog(BuildContext context, Interview i) {
+    showDialog(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          bool saving = false;
-          Future<void> save() async {
-            setDialogState(() => saving = true);
-            final updated = {
-              'tavusKey': tavusCtrl.text.trim(),
-              'geminiKey': geminiCtrl.text.trim(),
-              'humeKey': humeCtrl.text.trim(),
-              'deepgramKey': deepgramCtrl.text.trim(),
-            }..removeWhere((_, v) => v.isEmpty);
-            try {
-              await repo.updateKeyOverrides(i.id, updated);
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              messenger.showSnackBar(
-                  const SnackBar(content: Text('Test key updated.')));
-            } catch (e) {
-              setDialogState(() => saving = false);
-              messenger.showSnackBar(
-                  SnackBar(content: Text('Failed to update key: $e')));
-            }
-          }
-
-          return AlertDialog(
-            title: const Text('Test API Key'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Pinned when this test was created/edited. Leave a field '
-                    'blank to fall back to your account\'s default key at launch.',
-                    style: Theme.of(dialogContext).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: tavusCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Tavus API Key'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: geminiCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Gemini API Key'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: humeCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Hume API Key'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: deepgramCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Deepgram API Key'),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: saving ? null : save,
-                child: saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Save'),
-              ),
-            ],
-          );
-        },
-      ),
+      builder: (_) => _TestKeyDialog(interview: i),
     );
-    tavusCtrl.dispose();
-    geminiCtrl.dispose();
-    humeCtrl.dispose();
-    deepgramCtrl.dispose();
   }
 
   Widget _buildDetailBadge(
@@ -643,6 +548,129 @@ class _InterviewCard extends StatelessWidget {
     if (ok != true) return;
     await repo.delete(i.id);
     if (context.mounted) Navigator.pop(context); // close the detail sheet
+  }
+}
+
+/// View/edit dialog for a single test's pinned API key overrides. A dedicated
+/// StatefulWidget (rather than manually-managed TextEditingControllers +
+/// StatefulBuilder) so Flutter's own widget lifecycle disposes the
+/// controllers exactly when this dialog's Element is actually removed —
+/// disposing them by hand right after `showDialog` returns raced with the
+/// dialog's closing animation / the underlying Firestore stream rebuilding
+/// the interview list, causing "TextEditingController used after being
+/// disposed" crashes.
+class _TestKeyDialog extends StatefulWidget {
+  final Interview interview;
+  const _TestKeyDialog({required this.interview});
+
+  @override
+  State<_TestKeyDialog> createState() => _TestKeyDialogState();
+}
+
+class _TestKeyDialogState extends State<_TestKeyDialog> {
+  late final TextEditingController _tavusCtrl;
+  late final TextEditingController _geminiCtrl;
+  late final TextEditingController _humeCtrl;
+  late final TextEditingController _deepgramCtrl;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final ov = widget.interview.keyOverrides;
+    _tavusCtrl = TextEditingController(text: ov['tavusKey'] ?? '');
+    _geminiCtrl = TextEditingController(text: ov['geminiKey'] ?? '');
+    _humeCtrl = TextEditingController(text: ov['humeKey'] ?? '');
+    _deepgramCtrl = TextEditingController(text: ov['deepgramKey'] ?? '');
+  }
+
+  @override
+  void dispose() {
+    _tavusCtrl.dispose();
+    _geminiCtrl.dispose();
+    _humeCtrl.dispose();
+    _deepgramCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final updated = {
+      'tavusKey': _tavusCtrl.text.trim(),
+      'geminiKey': _geminiCtrl.text.trim(),
+      'humeKey': _humeCtrl.text.trim(),
+      'deepgramKey': _deepgramCtrl.text.trim(),
+    }..removeWhere((_, v) => v.isEmpty);
+    try {
+      await repo.updateKeyOverrides(widget.interview.id, updated);
+      navigator.pop();
+      messenger
+          .showSnackBar(const SnackBar(content: Text('Test key updated.')));
+    } catch (e) {
+      if (mounted) setState(() => _saving = false);
+      messenger
+          .showSnackBar(SnackBar(content: Text('Failed to update key: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Test API Key'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Pinned when this test was created/edited. Leave a field '
+              'blank to fall back to your account\'s default key at launch.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _tavusCtrl,
+              decoration: const InputDecoration(labelText: 'Tavus API Key'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _geminiCtrl,
+              decoration: const InputDecoration(labelText: 'Gemini API Key'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _humeCtrl,
+              decoration: const InputDecoration(labelText: 'Hume API Key'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _deepgramCtrl,
+              decoration: const InputDecoration(labelText: 'Deepgram API Key'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Save'),
+        ),
+      ],
+    );
   }
 }
 

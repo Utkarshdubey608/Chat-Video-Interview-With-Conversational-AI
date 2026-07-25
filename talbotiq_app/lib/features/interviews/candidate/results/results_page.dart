@@ -176,6 +176,9 @@ class _ResultsPageState extends State<ResultsPage> {
         final entries = await deepgramService.transcribeFromFile(
           bytes,
           language: DeepgramService.localeFor(store.activeInterviewLanguage),
+          recordingStartTimestamp: store.recordingStartTimestamp,
+          questionTimestamps: store.questionTimestamps,
+          questionCount: store.questions.length,
         );
         if (entries.isNotEmpty) {
           store.clearSessionTranscript();

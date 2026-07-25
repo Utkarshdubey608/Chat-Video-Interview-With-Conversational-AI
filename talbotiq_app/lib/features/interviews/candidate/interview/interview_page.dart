@@ -9,11 +9,11 @@ import 'package:talbotiq/core/services/recording_service.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/features/interviews/candidate/interview/widgets/video_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/interview/widgets/question_bar.dart';
-import 'package:talbotiq/features/interviews/candidate/interview/widgets/interview_sidebar.dart';
 
 
-/// The main interview view screen that orchestrates the video feed,
-/// bottom control navigation bar, and sidebar analytics/transcript tab panels.
+/// The main interview view screen that orchestrates the video feed and the
+/// bottom question/controls bar: just the video, the current question, and
+/// an End Interview action — no side menu.
 ///
 /// The candidate's microphone is recorded to a local .wav for the duration of
 /// the call; on end the recording is transcribed by Deepgram on the results
@@ -32,7 +32,6 @@ class _InterviewPageState extends State<InterviewPage>
   bool _autoAdvance = true;
   final bool _avatarSpeaking = false;
   int _revealedIdx = -1;
-  final _overrideController = TextEditingController();
 
   // Guards against re-entrant _endInterview calls (e.g. the auto-advance timer
   // firing while the end dialog is open). A second run would call
@@ -115,7 +114,6 @@ class _InterviewPageState extends State<InterviewPage>
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
     _recorder.dispose();
-    _overrideController.dispose();
     super.dispose();
   }
 
@@ -128,6 +126,12 @@ class _InterviewPageState extends State<InterviewPage>
     debugPrint('debug[rec]: _startRecording invoked');
     final ok = await _recorder.start();
     debugPrint('debug[rec]: _recorder.start() returned $ok');
+    if (ok) {
+      // The true zero-point of the recorded audio's timeline — needed to
+      // align Deepgram's per-word offsets to the right question when the
+      // results page slices the transcript by question.
+      _store?.setRecordingStartTimestamp(DateTime.now().millisecondsSinceEpoch);
+    }
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -283,49 +287,6 @@ class _InterviewPageState extends State<InterviewPage>
     }
   }
 
-  /// Dispatches the custom conversational context override text to the live Tavus session.
-  Future<void> _sendOverride() async {
-    final store = Provider.of<AppStore>(context, listen: false);
-    final overrideText = _overrideController.text.trim();
-    if (overrideText.isEmpty) return;
-
-    // Send the override to the EXISTING live conversation. (Previously this
-    // called createConversation, which span up a brand-new billed Tavus
-    // session instead of updating the running one.)
-    final conversationId = store.currentConversation?.conversationId;
-    if (conversationId == null || conversationId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('No active conversation to override.'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
-      return;
-    }
-
-    try {
-      await tavusService.sendInteraction(conversationId, overrideText);
-      if (!mounted) return;
-
-      _overrideController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Context override sent'),
-          backgroundColor: Theme.of(context).colorScheme.primary,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to override context: $e'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
-    }
-  }
-
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -354,98 +315,43 @@ class _InterviewPageState extends State<InterviewPage>
       );
     }
 
-    final isMobile = MediaQuery.of(context).size.width < 850;
-
     return Scaffold(
       backgroundColor: theme.colorScheme.background,
-      endDrawer: isMobile
-          ? Drawer(
-              width: 320,
-              backgroundColor: theme.colorScheme.surface,
-              child: SafeArea(
-                child: InterviewSidebar(
-                  store: store,
-                  validQs: validQs,
-                  revealedIdx: _revealedIdx,
-                  onQuestionTap: (idx) {
-                    store.setCurrentQuestionIdx(idx);
-                    setState(() {
-                      _revealedIdx = idx;
-                    });
-                    _resetQuestionTimers();
-                  },
-                  isMobile: isMobile,
-                  onEndInterview: _endInterview,
-                  overrideController: _overrideController,
-                  onSendOverride: _sendOverride,
-                  // InterviewPage is only ever reached via the candidate video
-                  // flow (CandidateVideoShell), so hide upcoming questions and
-                  // disable jumping ahead.
-                  candidateMode: true,
-                ),
-              ),
-            )
-          : null,
-      body: Row(
+      body: Column(
         children: [
           Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: VideoPanel(
-                    store: store,
-                    validQs: validQs,
-                    isFullscreen: _isFullscreen,
-                    onToggleFullscreen: () {
-                      setState(() {
-                        _isFullscreen = !_isFullscreen;
-                      });
-                    },
-                  ),
-                ),
-                QuestionBar(
-                  store: store,
-                  validQs: validQs,
-                  avatarSpeaking: _avatarSpeaking,
-                  autoAdvance: _autoAdvance,
-                  revealedIdx: _revealedIdx,
-                  onToggleAutoAdvance: () {
-                    setState(() {
-                      _autoAdvance = !_autoAdvance;
-                      _resetQuestionTimers();
-                    });
-                  },
-                  onShowNow: () {
-                    setState(() {
-                      _revealedIdx = store.currentQuestionIdx;
-                    });
-                  },
-                  onPrevQuestion: _prevQuestion,
-                  onNextQuestion: _nextQuestion,
-                  onEndInterview: _endInterview,
-                ),
-              ],
-            ),
-          ),
-          if (!isMobile && !_isFullscreen)
-            InterviewSidebar(
+            child: VideoPanel(
               store: store,
               validQs: validQs,
-              revealedIdx: _revealedIdx,
-              onQuestionTap: (idx) {
-                store.setCurrentQuestionIdx(idx);
+              isFullscreen: _isFullscreen,
+              onToggleFullscreen: () {
                 setState(() {
-                  _revealedIdx = idx;
+                  _isFullscreen = !_isFullscreen;
                 });
-                _resetQuestionTimers();
               },
-              isMobile: isMobile,
-              onEndInterview: _endInterview,
-              overrideController: _overrideController,
-              onSendOverride: _sendOverride,
-              // Candidate-only flow: hide upcoming questions, no jumping ahead.
-              candidateMode: true,
             ),
+          ),
+          QuestionBar(
+            store: store,
+            validQs: validQs,
+            avatarSpeaking: _avatarSpeaking,
+            autoAdvance: _autoAdvance,
+            revealedIdx: _revealedIdx,
+            onToggleAutoAdvance: () {
+              setState(() {
+                _autoAdvance = !_autoAdvance;
+                _resetQuestionTimers();
+              });
+            },
+            onShowNow: () {
+              setState(() {
+                _revealedIdx = store.currentQuestionIdx;
+              });
+            },
+            onPrevQuestion: _prevQuestion,
+            onNextQuestion: _nextQuestion,
+            onEndInterview: _endInterview,
+          ),
         ],
       ),
     );
