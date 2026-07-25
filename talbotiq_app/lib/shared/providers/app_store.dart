@@ -249,6 +249,74 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies API keys fetched from Firestore (`recruiter_keys` or
+  /// `candidate_keys`) and PERSISTS them to prefs, so they're available on
+  /// this device without a network round-trip on every launch. Counterpart to
+  /// [applyEphemeralApiKeys] (candidate launch, in-memory-only). Called at
+  /// login and from Settings' "Retrieve from Cloud"; [clearApiKeys] undoes
+  /// this at logout.
+  ///
+  /// A blank/absent cloud value LEAVES the current local key untouched rather
+  /// than overwriting it with an empty string — otherwise pulling from a cloud
+  /// doc that was never (fully) pushed to would silently wipe out a key the
+  /// user had already entered locally.
+  void applyCloudApiKeys({
+    String tavus = '',
+    String gemini = '',
+    String hume = '',
+    String deepgram = '',
+    String aws = '',
+    String anthropic = '',
+    String awsProxyUrl = '',
+    String webhookUrl = '',
+  }) {
+    if (tavus.isNotEmpty) {
+      _tavusKey = tavus;
+      tavusService.setKey(tavus);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+    }
+    if (deepgram.isNotEmpty) {
+      _deepgramKey = deepgram;
+      deepgramService.setKey(deepgram);
+    }
+    if (hume.isNotEmpty) {
+      _humeKey = hume;
+      humeService.setKey(hume);
+    }
+    if (aws.isNotEmpty) _awsKey = aws;
+    if (anthropic.isNotEmpty) _anthropicKey = anthropic;
+    if (gemini.isNotEmpty) {
+      _geminiKey = gemini;
+      geminiService.setKey(gemini);
+    }
+    if (awsProxyUrl.isNotEmpty) _awsProxyUrl = awsProxyUrl;
+    if (webhookUrl.isNotEmpty) _webhookUrl = webhookUrl;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Removes the cloud-synced API keys from local storage (logout). Leaves
+  /// drafts/recordings/results untouched — only the credential fields reset.
+  Future<void> clearApiKeys() async {
+    _tavusKey = '';
+    _deepgramKey = '';
+    _humeKey = '';
+    _awsKey = '';
+    _anthropicKey = '';
+    _geminiKey = '';
+    _awsProxyUrl = '';
+    _webhookUrl = '';
+    tavusService.setKey('');
+    deepgramService.setKey('');
+    humeService.setKey('');
+    geminiService.setKey('');
+    _cachedReplicas = [];
+    _cachedPersonas = [];
+    await _saveToPrefs();
+    notifyListeners();
+  }
+
   /// Restores the device's own persisted API keys (undoing ephemeral org keys).
   Future<void> reloadApiKeysFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();

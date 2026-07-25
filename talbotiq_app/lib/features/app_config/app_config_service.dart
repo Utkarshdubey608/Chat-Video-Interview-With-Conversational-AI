@@ -20,24 +20,67 @@ import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 
 class AppConfigService {
-  AppConfigService({RecruiterCredentialsRepository? repository})
-      : _repo = repository ?? FirestoreRecruiterCredentialsRepository();
+  AppConfigService({
+    RecruiterCredentialsRepository? repository,
+    RecruiterCredentialsRepository? candidateRepository,
+  })  : _repo = repository ?? FirestoreRecruiterCredentialsRepository(),
+        _candidateRepo = candidateRepository ??
+            FirestoreRecruiterCredentialsRepository(
+                collection: 'candidate_keys');
 
   final RecruiterCredentialsRepository _repo;
 
-  /// Writes the recruiter's current [store] keys to their own credentials doc.
-  Future<void> pushForRecruiter(String recruiterId, AppStore store) {
-    final creds = RecruiterCredentials(
-      tavusKey: store.tavusKey,
-      deepgramKey: store.deepgramKey,
-      humeKey: store.humeKey,
-      awsKey: store.awsKey,
-      anthropicKey: store.anthropicKey,
-      geminiKey: store.geminiKey,
-      awsProxyUrl: store.awsProxyUrl,
-      webhookUrl: store.webhookUrl,
+  /// A candidate's own personal key backup — a separate, owner-only-read
+  /// Firestore collection (`candidate_keys/{uid}`), distinct from
+  /// `recruiter_keys` which candidate devices broadly read at launch.
+  final RecruiterCredentialsRepository _candidateRepo;
+
+  RecruiterCredentials _credsFromStore(AppStore store) => RecruiterCredentials(
+        tavusKey: store.tavusKey,
+        deepgramKey: store.deepgramKey,
+        humeKey: store.humeKey,
+        awsKey: store.awsKey,
+        anthropicKey: store.anthropicKey,
+        geminiKey: store.geminiKey,
+        awsProxyUrl: store.awsProxyUrl,
+        webhookUrl: store.webhookUrl,
+      );
+
+  void _applyCredsToStore(RecruiterCredentials creds, AppStore store) {
+    store.applyCloudApiKeys(
+      tavus: creds.tavusKey,
+      deepgram: creds.deepgramKey,
+      hume: creds.humeKey,
+      aws: creds.awsKey,
+      anthropic: creds.anthropicKey,
+      gemini: creds.geminiKey,
+      awsProxyUrl: creds.awsProxyUrl,
+      webhookUrl: creds.webhookUrl,
     );
-    return _repo.save(recruiterId, creds);
+  }
+
+  /// Writes the recruiter's current [store] keys to their own credentials doc.
+  Future<void> pushForRecruiter(String recruiterId, AppStore store) =>
+      _repo.save(recruiterId, _credsFromStore(store));
+
+  /// Fetches [recruiterId]'s own credentials from Firestore and persists them
+  /// to the device's local storage. Called once at login so a recruiter's
+  /// keys are available on this device without re-entering them; the caller
+  /// is responsible for clearing them again at logout (see
+  /// [AppStore.clearApiKeys]).
+  Future<void> pullForRecruiter(String recruiterId, AppStore store) async {
+    _applyCredsToStore(await _repo.fetch(recruiterId), store);
+  }
+
+  /// Writes a candidate's current [store] keys to their own `candidate_keys`
+  /// doc (owner-only — never read by anyone else's interview launch).
+  Future<void> pushForCandidate(String uid, AppStore store) =>
+      _candidateRepo.save(uid, _credsFromStore(store));
+
+  /// Fetches a candidate's own credentials from Firestore and persists them to
+  /// local storage. Mirrors [pullForRecruiter] for the candidate role.
+  Future<void> pullForCandidate(String uid, AppStore store) async {
+    _applyCredsToStore(await _candidateRepo.fetch(uid), store);
   }
 
   /// Fetches [recruiterId]'s credentials and applies them to the in-memory

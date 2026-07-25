@@ -179,11 +179,18 @@ class Interview {
   final int durationMinutes;
   final InterviewStatus status;
 
-  /// Per-test API key overrides. When a candidate launches this interview, any
-  /// key present here is used INSTEAD of the recruiter's Settings key; blank/
-  /// absent keys fall back to the recruiter's own keys (recruiter_keys doc).
-  /// Only non-empty entries are stored. Recognized keys: tavusKey, geminiKey,
-  /// humeKey, deepgramKey. See AppConfigService.applyForRecruiter.
+  /// Per-test API key snapshot. `CreateInterviewPage` populates this by
+  /// default with the recruiter's current Settings keys at the moment the
+  /// test is created/edited, so the test keeps launching with the SAME keys
+  /// even if the recruiter's own default keys change later; the "Use Custom
+  /// Keys" toggle lets a recruiter pin different keys for this test only.
+  /// When a candidate launches this interview, any key present here is used
+  /// INSTEAD of the recruiter's live Settings key; blank/absent keys (only
+  /// possible for a key the recruiter never set, or on interviews created
+  /// before this pinning existed) fall back to the recruiter's own keys
+  /// (recruiter_keys doc). Only non-empty entries are stored. Recognized
+  /// keys: tavusKey, geminiKey, humeKey, deepgramKey. See
+  /// AppConfigService.applyForRecruiter.
   final Map<String, String> keyOverrides;
 
   /// Optional access window. The candidate can only launch between

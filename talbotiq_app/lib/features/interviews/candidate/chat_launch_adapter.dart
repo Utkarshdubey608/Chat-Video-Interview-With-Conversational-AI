@@ -11,6 +11,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import 'package:talbotiq/features/recruiter/engine/conversation_engine.dart';
 import 'package:talbotiq/features/recruiter/engine/defaults.dart';
 import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
@@ -138,6 +139,10 @@ Widget buildChatRunnerPage({
         // interviews too. Only written when it actually happened.
         if (completedSession.tabSwitchCount > 0)
           'integrity': {'leftAppCount': completedSession.tabSwitchCount},
+        'responses': [
+          for (final g in primaryQuestionGroups(completedSession.transcript ?? []))
+            {'question': g.question, 'answer': g.answer},
+        ],
       });
     },
   );

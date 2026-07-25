@@ -187,6 +187,18 @@ Future<void> _scoreAndStore({
       'improvements': sc.topConcerns,
       'evaluatedBy': 'ai',
       'detail': sc.toJson(),
+      // Best-effort only: paired by position, not real attribution (see the
+      // NOTE above on why voice has no reliable per-question mapping).
+      'responsesApproximate': true,
+      'responses': [
+        for (var idx = 0; idx < scored.length; idx++)
+          {
+            'question': idx < interview.questions.length
+                ? interview.questions[idx]
+                : 'Additional response',
+            'answer': scored[idx],
+          },
+      ],
     });
   } catch (_) {
     // Scoring failed (no/short answers, network, key) — leave the interview

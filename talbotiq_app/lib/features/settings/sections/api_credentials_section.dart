@@ -1,4 +1,6 @@
 // lib/views/settings/api_credentials_section.dart
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
 import 'package:provider/provider.dart';
@@ -16,10 +18,10 @@ class ApiCredentialsSection extends StatefulWidget {
   const ApiCredentialsSection({super.key});
 
   @override
-  State<ApiCredentialsSection> createState() => _ApiCredentialsSectionState();
+  State<ApiCredentialsSection> createState() => ApiCredentialsSectionState();
 }
 
-class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
+class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
   late TextEditingController _tavusController;
   late TextEditingController _deepgramController;
   late TextEditingController _humeController;
@@ -38,6 +40,7 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
   String _tavusTestState = 'idle'; // 'idle', 'testing', 'ok', 'fail'
   String _dgTestState = 'idle';
   String _humeTestState = 'idle';
+  String _geminiTestState = 'idle';
 
   @override
   void initState() {
@@ -52,6 +55,25 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
     _awsProxyUrlController = TextEditingController(text: store.awsProxyUrl);
   }
 
+  /// Re-reads AppStore's current key values into the text fields. The
+  /// controllers are only seeded once in [initState], so anything that
+  /// changes AppStore's keys from outside this widget (e.g. "Retrieve from
+  /// Cloud" in SettingsPage) must call this explicitly or the fields keep
+  /// showing stale text even though the underlying store — and prefs — did
+  /// update.
+  void refreshFromStore() {
+    final store = Provider.of<AppStore>(context, listen: false);
+    setState(() {
+      _tavusController.text = store.tavusKey;
+      _deepgramController.text = store.deepgramKey;
+      _humeController.text = store.humeKey;
+      _awsController.text = store.awsKey;
+      _anthropicController.text = store.anthropicKey;
+      _geminiController.text = store.geminiKey;
+      _awsProxyUrlController.text = store.awsProxyUrl;
+    });
+  }
+
   @override
   void dispose() {
     _tavusController.dispose();
@@ -64,8 +86,11 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
     super.dispose();
   }
 
-  // Writes all credential fields back to the store.
-  void _save() {
+  // Writes all credential fields back to the store, without any UI feedback —
+  // shared by the explicit "Save Credentials" button and by SettingsPage's
+  // "Save to Cloud" (which must push whatever's currently typed here, not
+  // whichever value AppStore last held).
+  void commitToStore() {
     final store = Provider.of<AppStore>(context, listen: false);
     store.setTavusKey(_tavusController.text.trim());
     store.setDeepgramKey(_deepgramController.text.trim());
@@ -74,7 +99,10 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
     store.setAnthropicKey(_anthropicController.text.trim());
     store.setGeminiKey(_geminiController.text.trim());
     store.setAwsProxyUrl(_awsProxyUrlController.text.trim());
+  }
 
+  void _save() {
+    commitToStore();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Credentials saved successfully'),
@@ -206,6 +234,77 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Hume connection failed: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
+  }
+
+  // Trims an HTTP error body down to something a SnackBar can reasonably show.
+  String _shortBody(String body) =>
+      body.length > 160 ? '${body.substring(0, 160)}…' : body;
+
+  // Verifies the Gemini key with a minimal generateContent call — the SAME
+  // method (and x-goog-api-key header auth) the app's actual scoring pipeline
+  // uses (see GeminiService.analyze). Deliberately NOT models.list: that
+  // method can reject a perfectly valid generateContent-scoped key with a
+  // confusing "ACCESS_TOKEN_TYPE_UNSUPPORTED" depending on the key's Cloud
+  // Console restrictions, so testing it would give a false negative.
+  Future<void> _testGemini() async {
+    if (_geminiController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter Gemini API Key first')),
+      );
+      return;
+    }
+    setState(() => _geminiTestState = 'testing');
+    try {
+      final key = _geminiController.text.trim();
+      final res = await http.post(
+        Uri.parse(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent'),
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': key,
+        },
+        body: jsonEncode({
+          'contents': [
+            {
+              'parts': [
+                {'text': 'ping'}
+              ]
+            }
+          ],
+          'generationConfig': {'maxOutputTokens': 1},
+        }),
+      );
+      debugPrint('[TestGemini] status=${res.statusCode} body=${res.body}');
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        setState(() => _geminiTestState = 'ok');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Gemini connected successfully'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      } else {
+        setState(() => _geminiTestState = 'fail');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Gemini returned HTTP ${res.statusCode}: ${_shortBody(res.body)}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _geminiTestState = 'fail');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gemini connection failed: $e'),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -432,6 +531,7 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
                   controller: _geminiController,
                   show: _showGemini,
                   toggleShow: () => setState(() => _showGemini = !_showGemini),
+                  trailingStatus: _statusIndicator(_geminiTestState),
                 ),
                 const SizedBox(height: 20),
 
@@ -480,6 +580,13 @@ class _ApiCredentialsSectionState extends State<ApiCredentialsSection> {
                       height: 40,
                       onPressed: _testHume,
                       isLoading: _humeTestState == 'testing',
+                    ),
+                    CustomButton(
+                      text: 'Test Gemini Connection',
+                      variant: ButtonVariant.outline,
+                      height: 40,
+                      onPressed: _testGemini,
+                      isLoading: _geminiTestState == 'testing',
                     ),
                   ],
                 ),

@@ -124,7 +124,27 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
       // Integrity: how many times the candidate left the app mid-interview.
       if (store.integrityLeftAppCount > 0)
         'integrity': {'leftAppCount': store.integrityLeftAppCount},
+      'responses': _buildResponses(r.transcript, interview.questions),
     });
+  }
+
+  /// Pairs each question with the candidate's spoken answer(s) for it, so the
+  /// recruiter can review the raw response alongside the AI-scored summary.
+  List<Map<String, String>> _buildResponses(
+      List<TranscriptEntry> transcript, List<String> questions) {
+    final candidateEntries =
+        transcript.where((e) => e.role == 'candidate').toList();
+    return [
+      for (var idx = 0; idx < questions.length; idx++)
+        {
+          'question': questions[idx],
+          'answer': candidateEntries
+              .where((e) => e.questionIdx == idx)
+              .map((e) => e.text)
+              .join(' ')
+              .trim(),
+        },
+    ];
   }
 
   @override

@@ -2,13 +2,13 @@
 //
 // Candidate primary-navigation shell. Mirrors RecruiterShell: hosts the
 // candidate's top-level destinations (Home, Practice, Settings) in an
-// IndexedStack and overlays the shared FloatingNavBar. The candidate Settings
-// tab never exposes cloud key-sync (that is a recruiter-only action).
+// IndexedStack and overlays the shared FloatingNavBar.
 
 import 'package:flutter/material.dart';
 
 import 'package:talbotiq/shared/widgets/floating_nav_bar.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/settings/settings_page.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_home.dart';
 import 'package:talbotiq/features/interviews/candidate/practice_page.dart';
@@ -69,7 +69,7 @@ class _CandidateSettingsTab extends StatelessWidget {
         title: const Text('Settings'),
         actions: const [LogoutButton(), SizedBox(width: 4)],
       ),
-      body: const SettingsPage(),
+      body: const SettingsPage(role: AppRole.candidate),
     );
   }
 }

@@ -129,6 +129,151 @@ class _InterviewCard extends StatelessWidget {
     );
   }
 
+  // Compact summary of this test's pinned key overrides, with a direct
+  // view/edit action — separate from the full "Edit" form so recruiters don't
+  // have to open the whole interview editor just to check/change a key.
+  Widget _buildKeyRow(BuildContext context, Interview i) {
+    final theme = Theme.of(context);
+    String mask(String key) {
+      if (key.isEmpty) return 'Using account default';
+      return key.length > 4
+          ? '••••${key.substring(key.length - 4)}'
+          : '•' * key.length;
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Test API Key',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                  )),
+              const SizedBox(height: 4),
+              Text(
+                'Tavus: ${mask(i.keyOverrides['tavusKey'] ?? '')}   ·   '
+                'Gemini: ${mask(i.keyOverrides['geminiKey'] ?? '')}',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurface),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.key_outlined, size: 20),
+          tooltip: 'View / edit this test\'s key',
+          onPressed: () => _showKeyDialog(context, i),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showKeyDialog(BuildContext context, Interview i) async {
+    final tavusCtrl =
+        TextEditingController(text: i.keyOverrides['tavusKey'] ?? '');
+    final geminiCtrl =
+        TextEditingController(text: i.keyOverrides['geminiKey'] ?? '');
+    final humeCtrl =
+        TextEditingController(text: i.keyOverrides['humeKey'] ?? '');
+    final deepgramCtrl =
+        TextEditingController(text: i.keyOverrides['deepgramKey'] ?? '');
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          bool saving = false;
+          Future<void> save() async {
+            setDialogState(() => saving = true);
+            final updated = {
+              'tavusKey': tavusCtrl.text.trim(),
+              'geminiKey': geminiCtrl.text.trim(),
+              'humeKey': humeCtrl.text.trim(),
+              'deepgramKey': deepgramCtrl.text.trim(),
+            }..removeWhere((_, v) => v.isEmpty);
+            try {
+              await repo.updateKeyOverrides(i.id, updated);
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              messenger.showSnackBar(
+                  const SnackBar(content: Text('Test key updated.')));
+            } catch (e) {
+              setDialogState(() => saving = false);
+              messenger.showSnackBar(
+                  SnackBar(content: Text('Failed to update key: $e')));
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Test API Key'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Pinned when this test was created/edited. Leave a field '
+                    'blank to fall back to your account\'s default key at launch.',
+                    style: Theme.of(dialogContext).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: tavusCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Tavus API Key'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: geminiCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Gemini API Key'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: humeCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Hume API Key'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: deepgramCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Deepgram API Key'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: saving ? null : save,
+                child: saving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    tavusCtrl.dispose();
+    geminiCtrl.dispose();
+    humeCtrl.dispose();
+    deepgramCtrl.dispose();
+  }
+
   Widget _buildDetailBadge(
       BuildContext context, String text, Color bgColor, Color textColor) {
     return Container(
@@ -347,6 +492,8 @@ class _InterviewCard extends StatelessWidget {
                                   : 'Draft — not published'),
                   if (i.result != null && i.result!['overallScore'] != null)
                     _kv(sheetContext, 'Overall Score', '${i.result!['overallScore']}/100'),
+                  const Divider(height: 24),
+                  _buildKeyRow(sheetContext, i),
                   const Divider(height: 24),
                   Text('Prompt', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
