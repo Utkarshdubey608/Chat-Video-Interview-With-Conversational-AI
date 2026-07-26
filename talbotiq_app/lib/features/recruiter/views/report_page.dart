@@ -1,11 +1,19 @@
 // lib/features/recruiter/views/report_page.dart
 //
-// Native port of the recruiter ReportPage — scored candidate report with an
-// overall gauge, per-KPI bars, strengths/improvements, and a per-question
-// accordion. Reads the ResultReport from RecruiterStore. Reuses the app's
-// existing CircularScoreRing.
+// Scored candidate report: an at-a-glance metric row, overall gauge + AI
+// summary, per-KPI radar/bars, a per-question (or conversation) accordion and
+// an integrity note. Reads the ResultReport from RecruiterStore.
+//
+// Styling follows the analytics page's design language via the shared
+// primitives in recruiter_ui.dart (RecruiterPanel / RecruiterSectionTitle /
+// RecruiterStatCard / RecruiterResponsiveGrid): translucent panels on the
+// scaffold background, 28px radius, hairline borders, no shadows, and a
+// 12px title→content / 28px block→block spacing rhythm. Every colour comes
+// from the theme (or the theme-aware warningColor/scoreColor helpers), so the
+// page reads correctly in both light and dark modes.
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 
@@ -28,16 +36,8 @@ class ReportPage extends StatelessWidget {
     return kpiId;
   }
 
-  Color _scoreColor(BuildContext context, double score) {
-    final scheme = Theme.of(context).colorScheme;
-    if (score >= 75) return scheme.primary;
-    if (score >= 55) return const Color(0xFFE4C270);
-    return scheme.error;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final store = context.watch<RecruiterStore>();
     final session = store.sessionById(sessionId);
     final report = store.reportFor(sessionId);
@@ -45,10 +45,10 @@ class ReportPage extends StatelessWidget {
         session != null ? store.templateById(session.templateId) : null;
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.surface,
+      // Inherit the scaffold background (and let the AppBar inherit too) so
+      // this page sits on the same surface as every other recruiter screen.
       appBar: AppBar(
         title: const Text('Interview Report'),
-        backgroundColor: theme.colorScheme.surface,
         actions: [
           if (session != null && report != null)
             IconButton(
@@ -65,15 +65,17 @@ class ReportPage extends StatelessWidget {
               description: 'This interview has not been scored.',
             )
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 700),
+                  // Caps line length for the long-form summary/answer text;
+                  // a no-op on phones, keeps tablets readable.
+                  constraints: const BoxConstraints(maxWidth: 860),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       RecruiterPageHeader(
-                        kicker: 'AI Interview',
+                        kicker: 'AI Interview Report',
                         title: session.candidateName.isEmpty
                             ? 'Candidate'
                             : session.candidateName,
@@ -81,22 +83,39 @@ class ReportPage extends StatelessWidget {
                             '${template?.name ?? ''} · ${TrackType.label(session.track)}',
                       ),
                       const SizedBox(height: 20),
-                      if (report.degraded == true) _degradedBanner(context),
-                      _summaryCard(context, report),
-                      const SizedBox(height: 16),
-                      if (template != null)
-                        _kpiCard(context, template.rubric, report),
-                      const SizedBox(height: 16),
+                      if (report.degraded == true) ...[
+                        _degradedBanner(context),
+                        const SizedBox(height: 20),
+                      ],
+                      const RecruiterSectionTitle('Overview'),
+                      const SizedBox(height: 12),
+                      _statRow(context, session, report),
+                      const SizedBox(height: 28),
+                      const RecruiterSectionTitle('Assessment'),
+                      const SizedBox(height: 12),
+                      _summaryPanel(context, report),
+                      if (template != null) ...[
+                        const SizedBox(height: 28),
+                        const RecruiterSectionTitle('KPI scores'),
+                        const SizedBox(height: 12),
+                        _kpiPanel(context, template.rubric, report),
+                      ],
+                      const SizedBox(height: 28),
+                      RecruiterSectionTitle(_isConversation(session)
+                          ? 'Conversation breakdown'
+                          : 'Per-question breakdown'),
+                      const SizedBox(height: 12),
                       if (_isConversation(session))
                         _conversationBreakdown(
                             context, session, template, report)
                       else
-                        _perQuestionCard(context, session, template, report),
+                        _perQuestionPanel(context, session, template, report),
                       if (session.tabSwitchCount > 0) ...[
-                        const SizedBox(height: 16),
-                        _integrityCard(context, session),
+                        const SizedBox(height: 28),
+                        const RecruiterSectionTitle('Integrity'),
+                        const SizedBox(height: 12),
+                        _integrityPanel(context, session),
                       ],
-                      const SizedBox(height: 24),
                     ],
                   ),
                 ),
@@ -105,24 +124,67 @@ class ReportPage extends StatelessWidget {
     );
   }
 
+  // ── Overview ──────────────────────────────────────────────────────────────
+
+  Widget _statRow(
+      BuildContext context, InterviewSession session, ResultReport report) {
+    final rec = report.recommendation != null
+        ? Recommendation.label(report.recommendation!)
+        : '—';
+    final answered = _isConversation(session)
+        ? primaryQuestionGroups(session.transcript ?? []).length
+        : session.questions.length;
+    return RecruiterResponsiveGrid(
+      children: [
+        RecruiterStatCard(
+          icon: Icons.speed_rounded,
+          label: 'Overall score',
+          value: '${report.overallScore.round()}',
+          footnote: 'out of 100',
+          color: scoreColor(context, report.overallScore),
+        ),
+        RecruiterStatCard(
+          icon: Icons.how_to_reg_outlined,
+          label: 'Recommendation',
+          value: rec,
+          color: scoreColor(context, report.overallScore),
+        ),
+        RecruiterStatCard(
+          icon: Icons.forum_outlined,
+          label: 'Questions',
+          value: '$answered',
+          footnote: TrackType.label(session.track),
+        ),
+        RecruiterStatCard(
+          icon: Icons.schedule_outlined,
+          label: 'Duration',
+          value: _durationLabel(session),
+          footnote: _completedLabel(session, report),
+        ),
+      ],
+    );
+  }
+
   Widget _degradedBanner(BuildContext context) {
     final theme = Theme.of(context);
+    final warn = warningColor(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFE4C270).withValues(alpha: 0.12),
-        border: Border.all(color: const Color(0xFFE4C270).withValues(alpha: 0.4)),
-        borderRadius: BorderRadius.circular(12),
+        color: warn.withValues(alpha: 0.12),
+        border: Border.all(color: warn.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         children: [
-          const Icon(Icons.info_outline, color: Color(0xFFE4C270), size: 20),
+          Icon(Icons.info_outline, color: warn, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Heuristic scoring (no Gemini key). Add a Gemini key in Settings for content-aware scoring.',
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+              'Heuristic scoring (no Gemini key). Add a Gemini key in Settings '
+              'for content-aware scoring.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ),
         ],
@@ -130,62 +192,68 @@ class ReportPage extends StatelessWidget {
     );
   }
 
-  Widget _summaryCard(BuildContext context, ResultReport report) {
+  // ── Assessment ────────────────────────────────────────────────────────────
+
+  Widget _summaryPanel(BuildContext context, ResultReport report) {
     final theme = Theme.of(context);
     final rec = report.recommendation != null
         ? Recommendation.label(report.recommendation!)
         : '—';
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                CircularScoreRing(
-                  score: report.overallScore.round(),
-                  verdict: rec,
+    final color = scoreColor(context, report.overallScore);
+    return RecruiterPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              CircularScoreRing(
+                score: report.overallScore.round(),
+                verdict: rec,
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'OVERALL FIT',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${report.overallScore.round()} / 100',
+                      style: theme.textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.5,
+                        color: color,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    RecruiterBadge(text: rec, color: color),
+                  ],
                 ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Overall fit',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.secondary,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2)),
-                      const SizedBox(height: 4),
-                      Text('${report.overallScore.round()} / 100',
-                          style: theme.textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: _scoreColor(context, report.overallScore))),
-                      const SizedBox(height: 4),
-                      RecruiterBadge(
-                          text: rec,
-                          color: _scoreColor(context, report.overallScore)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
+              ),
+            ],
+          ),
+          if (report.summary.trim().isNotEmpty) ...[
+            const SizedBox(height: 20),
             Text(report.summary, style: theme.textTheme.bodyMedium),
-            if ((report.strengths ?? []).isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _bulletList(context, 'Strengths', report.strengths!,
-                  theme.colorScheme.primary, Icons.add),
-            ],
-            if ((report.improvements ?? []).isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _bulletList(context, 'Areas to improve', report.improvements!,
-                  const Color(0xFFE4C270), Icons.arrow_forward),
-            ],
           ],
-        ),
+          if ((report.strengths ?? []).isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _bulletList(context, 'Strengths', report.strengths!,
+                theme.colorScheme.primary, Icons.add_rounded),
+          ],
+          if ((report.improvements ?? []).isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _bulletList(context, 'Areas to improve', report.improvements!,
+                warningColor(context), Icons.arrow_forward_rounded),
+          ],
+        ],
       ),
     );
   }
@@ -196,98 +264,96 @@ class ReportPage extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title,
-            style: theme.textTheme.titleSmall
-                ?.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        ...items.map((s) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(icon, size: 15, color: color),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: Text(s,
-                          style: theme.textTheme.bodyMedium
-                              ?.copyWith(fontSize: 13))),
-                ],
-              ),
-            )),
+        Text(
+          title,
+          style:
+              theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        ...items.map(
+          (s) => Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(icon, size: 15, color: color),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text(s, style: theme.textTheme.bodyMedium)),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _kpiCard(
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+
+  Widget _kpiPanel(
       BuildContext context, KpiRubric rubric, ResultReport report) {
-    final theme = Theme.of(context);
     final enabled = rubric.kpis.where((k) => k.enabled).toList();
     final entries = enabled
         .map((k) => MapEntry(k.label, report.kpiAverages[k.id] ?? 0))
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('KPI Scores',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            // KPI profile radar (needs ≥3 axes to read as a shape). Painter
-            // expects a 0–1 scale, so normalise the 0–100 averages.
-            if (enabled.length >= 3) ...[
-              EmotionRadarChart(
-                categoryScores: {
-                  for (final k in enabled)
-                    k.label:
-                        ((report.kpiAverages[k.id] ?? 0).toDouble() / 100.0)
-                            .clamp(0.0, 1.0),
-                },
-              ),
-              const SizedBox(height: 20),
-            ],
-            ...entries.map((e) => _kpiBar(context, e.key, e.value)),
+    return RecruiterPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // KPI profile radar (needs ≥3 axes to read as a shape). Painter
+          // expects a 0–1 scale, so normalise the 0–100 averages.
+          if (enabled.length >= 3) ...[
+            EmotionRadarChart(
+              categoryScores: {
+                for (final k in enabled)
+                  k.label: ((report.kpiAverages[k.id] ?? 0).toDouble() / 100.0)
+                      .clamp(0.0, 1.0),
+              },
+            ),
+            const SizedBox(height: 20),
           ],
-        ),
+          for (final e in entries) _kpiBar(context, e.key, e.value),
+        ],
       ),
     );
   }
 
   Widget _kpiBar(BuildContext context, String label, double value) {
     final theme = Theme.of(context);
+    final color = scoreColor(context, value);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(
-                  child: Text(label,
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(fontSize: 13))),
-              Text('${value.round()}',
-                  style: TextStyle(
-                      fontFamily: 'Courier',
-                      fontWeight: FontWeight.bold,
-                      color: _scoreColor(context, value))),
+                child: Text(label, style: theme.textTheme.bodyMedium),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${value.round()}',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(100),
             child: LinearProgressIndicator(
               value: (value / 100).clamp(0, 1),
               minHeight: 8,
               backgroundColor:
-                  theme.colorScheme.onSurface.withValues(alpha: 0.08),
-              valueColor:
-                  AlwaysStoppedAnimation(_scoreColor(context, value)),
+                  theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
+              valueColor: AlwaysStoppedAnimation(color),
             ),
           ),
         ],
@@ -295,85 +361,211 @@ class ReportPage extends StatelessWidget {
     );
   }
 
-  Widget _perQuestionCard(BuildContext context, InterviewSession session,
+  // ── Breakdown accordions ──────────────────────────────────────────────────
+
+  Widget _perQuestionPanel(BuildContext context, InterviewSession session,
       InterviewTemplate? template, ResultReport report) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              child: Text('Per-question breakdown',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
+    return RecruiterPanel(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < session.questions.length; i++)
+            _accordion(
+              context: context,
+              index: i,
+              question: session.questions[i].text,
+              answer: session.questions[i].answerText,
+              flagged: session.questions[i].autoSubmitted,
+              flagLabel: 'auto-submitted',
+              result: _resultFor(report.perQuestion, session.questions[i].id),
+              template: template,
+              isLast: i == session.questions.length - 1,
             ),
-            for (int i = 0; i < session.questions.length; i++)
-              _questionTile(context, i, session.questions[i], template,
-                  report.perQuestion),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _questionTile(BuildContext context, int index, SessionQuestion q,
-      InterviewTemplate? template, List<PerQuestionResult> perQuestion) {
-    final theme = Theme.of(context);
-    PerQuestionResult? pq;
+  Widget _conversationBreakdown(BuildContext context, InterviewSession session,
+      InterviewTemplate? template, ResultReport report) {
+    final groups = primaryQuestionGroups(session.transcript ?? []);
+    return RecruiterPanel(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < groups.length; i++)
+            _accordion(
+              context: context,
+              index: i,
+              question: groups[i].question,
+              answer: groups[i].answer,
+              flagged: groups[i].autoAdvanced,
+              flagLabel: 'auto-advanced (time expired)',
+              result: _resultFor(report.perQuestion, 'q${groups[i].index}'),
+              template: template,
+              isLast: i == groups.length - 1,
+            ),
+        ],
+      ),
+    );
+  }
+
+  PerQuestionResult? _resultFor(
+      List<PerQuestionResult> perQuestion, String questionId) {
     for (final p in perQuestion) {
-      if (p.questionId == q.id) {
-        pq = p;
-        break;
-      }
+      if (p.questionId == questionId) return p;
     }
-    return ExpansionTile(
-      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      title: Text('Q${index + 1}. ${q.text}',
-          style:
-              theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-      subtitle: q.autoSubmitted
-          ? Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.bolt, size: 13, color: theme.colorScheme.secondary),
-              const SizedBox(width: 4),
-              Text('auto-submitted',
-                  style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11)),
-            ])
-          : null,
+    return null;
+  }
+
+  /// One expandable question row. Shared by both breakdown modes so the fixed
+  /// and conversational tracks look identical.
+  Widget _accordion({
+    required BuildContext context,
+    required int index,
+    required String question,
+    required String? answer,
+    required bool flagged,
+    required String flagLabel,
+    required PerQuestionResult? result,
+    required InterviewTemplate? template,
+    required bool isLast,
+  }) {
+    final theme = Theme.of(context);
+    final hasAnswer = answer != null && answer.trim().isNotEmpty;
+    return Column(
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            q.answerText != null && q.answerText!.trim().isNotEmpty
-                ? q.answerText!
-                : '(no answer provided)',
-            style: theme.textTheme.bodyMedium?.copyWith(
-                fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+        Theme(
+          // Strip ExpansionTile's own top/bottom dividers so the rows read as
+          // one continuous list inside the panel.
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            backgroundColor: Colors.transparent,
+            collapsedBackgroundColor: Colors.transparent,
+            title: Text(
+              'Q${index + 1}. $question',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            subtitle: flagged
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.bolt,
+                            size: 13, color: theme.colorScheme.secondary),
+                        const SizedBox(width: 4),
+                        Text(
+                          flagLabel,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : null,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  hasAnswer ? answer : '(no answer provided)',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontStyle: hasAnswer ? null : FontStyle.italic,
+                  ),
+                ),
+              ),
+              if (result != null && result.kpiScores.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final e in result.kpiScores.entries)
+                      RecruiterBadge(
+                        text: '${_kpiLabel(template, e.key)} ${e.value.round()}',
+                        color: scoreColor(context, e.value),
+                      ),
+                  ],
+                ),
+              ],
+              if (result != null && result.feedback.trim().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  result.feedback,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ],
           ),
         ),
-        const SizedBox(height: 10),
-        if (pq != null && pq.kpiScores.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: pq.kpiScores.entries.map((e) {
-              final label = _kpiLabel(template, e.key);
-              return RecruiterBadge(
-                text: '$label ${e.value.round()}',
-                color: _scoreColor(context, e.value),
-              );
-            }).toList(),
+        if (!isLast)
+          Divider(
+            height: 1,
+            indent: 16,
+            endIndent: 16,
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.3),
           ),
-        if (pq != null) ...[
-          const SizedBox(height: 10),
-          Text(pq.feedback,
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12)),
-        ],
       ],
     );
+  }
+
+  // ── Integrity ─────────────────────────────────────────────────────────────
+
+  Widget _integrityPanel(BuildContext context, InterviewSession session) {
+    final theme = Theme.of(context);
+    return RecruiterPanel(
+      child: Row(
+        children: [
+          Icon(Icons.shield_outlined, color: theme.colorScheme.error),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              '${session.tabSwitchCount} app-switch event(s) logged during the '
+              'interview.',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  bool _isConversation(InterviewSession session) =>
+      session.questions.isEmpty &&
+      session.transcript != null &&
+      session.transcript!.isNotEmpty;
+
+  /// Elapsed interview time. Sessions store ISO-8601 strings and no explicit
+  /// duration, so derive it; falls back to em-dash when either end is missing.
+  String _durationLabel(InterviewSession session) {
+    final startRaw = session.startedAt ?? session.createdAt;
+    final endRaw = session.completedAt;
+    if (endRaw == null) return '—';
+    final start = DateTime.tryParse(startRaw);
+    final end = DateTime.tryParse(endRaw);
+    if (start == null || end == null) return '—';
+    final d = end.difference(start);
+    if (d.isNegative) return '—';
+    if (d.inHours > 0) return '${d.inHours}h ${d.inMinutes % 60}m';
+    if (d.inMinutes > 0) return '${d.inMinutes}m ${d.inSeconds % 60}s';
+    return '${d.inSeconds}s';
+  }
+
+  String _completedLabel(InterviewSession session, ResultReport report) {
+    final raw = session.completedAt ?? report.generatedAt;
+    final dt = DateTime.tryParse(raw);
+    if (dt == null) return '';
+    return DateFormat('d MMM yyyy, HH:mm').format(dt.toLocal());
   }
 
   Future<void> _exportPdf(BuildContext context, InterviewSession session,
@@ -382,121 +574,14 @@ class ReportPage extends StatelessWidget {
     try {
       final bytes = await buildReportPdf(
           session: session, template: template, report: report);
-      final safeName = (session.candidateName.isEmpty
-              ? 'candidate'
-              : session.candidateName)
-          .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
+      final safeName =
+          (session.candidateName.isEmpty ? 'candidate' : session.candidateName)
+              .replaceAll(RegExp(r'[^A-Za-z0-9]+'), '_');
       await Printing.sharePdf(bytes: bytes, filename: 'report_$safeName.pdf');
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('Could not export PDF: $e')),
       );
     }
-  }
-
-  bool _isConversation(InterviewSession session) =>
-      session.questions.isEmpty &&
-      session.transcript != null &&
-      session.transcript!.isNotEmpty;
-
-  Widget _conversationBreakdown(BuildContext context, InterviewSession session,
-      InterviewTemplate? template, ResultReport report) {
-    final theme = Theme.of(context);
-    final groups = primaryQuestionGroups(session.transcript ?? []);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              child: Text('Conversation breakdown',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold)),
-            ),
-            for (int i = 0; i < groups.length; i++)
-              _conversationTile(
-                  context, i, groups[i], template, report.perQuestion),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _conversationTile(BuildContext context, int displayIndex,
-      PrimaryQuestionGroup g, InterviewTemplate? template,
-      List<PerQuestionResult> perQuestion) {
-    final theme = Theme.of(context);
-    PerQuestionResult? pq;
-    for (final p in perQuestion) {
-      if (p.questionId == 'q${g.index}') {
-        pq = p;
-        break;
-      }
-    }
-    return ExpansionTile(
-      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      title: Text('Q${displayIndex + 1}. ${g.question}',
-          style:
-              theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-      subtitle: g.autoAdvanced
-          ? Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.bolt, size: 13, color: theme.colorScheme.secondary),
-              const SizedBox(width: 4),
-              Text('auto-advanced (time expired)',
-                  style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11)),
-            ])
-          : null,
-      children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            g.answer.trim().isNotEmpty ? g.answer : '(no answer provided)',
-            style: theme.textTheme.bodyMedium?.copyWith(
-                fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
-          ),
-        ),
-        const SizedBox(height: 10),
-        if (pq != null && pq.kpiScores.isNotEmpty)
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: pq.kpiScores.entries.map((e) {
-              return RecruiterBadge(
-                text: '${_kpiLabel(template, e.key)} ${e.value.round()}',
-                color: _scoreColor(context, e.value),
-              );
-            }).toList(),
-          ),
-        if (pq != null) ...[
-          const SizedBox(height: 10),
-          Text(pq.feedback,
-              style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12)),
-        ],
-      ],
-    );
-  }
-
-  Widget _integrityCard(BuildContext context, InterviewSession session) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Icon(Icons.shield_outlined, color: theme.colorScheme.error),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Integrity: ${session.tabSwitchCount} app-switch event(s) logged during the interview.',
-                style: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

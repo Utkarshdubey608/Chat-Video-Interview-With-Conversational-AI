@@ -155,7 +155,7 @@ class _AvatarTile extends StatelessWidget {
                       padding:
                           const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                       decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceVariant,
+                        color: theme.colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
                             color: theme.colorScheme.outline.withOpacity(0.6)),

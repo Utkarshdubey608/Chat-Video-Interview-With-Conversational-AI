@@ -155,7 +155,7 @@ class _InterviewSidebarState extends State<InterviewSidebar> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceVariant.withOpacity(0.5),
+              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
               border: Border(
                 top: BorderSide(
                   color: theme.colorScheme.outline.withOpacity(0.12),

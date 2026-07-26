@@ -179,9 +179,20 @@ class _ResultsPageState extends State<ResultsPage> {
     final store = Provider.of<AppStore>(context, listen: false);
 
     // Preferred path (all platforms): Tavus's own server-side transcript.
+    //
+    // Use the key that CREATED this conversation. tavusService already holds
+    // it (practice sets it straight on the service from its own form field and
+    // never writes it to AppStore), and a conversation can only be read back
+    // with the same account's key — reading it with store.tavusKey instead
+    // made Tavus reject a practice conversation as
+    // `400 Invalid conversation_id`. store.tavusKey is only the fallback, for
+    // when the service has no key (e.g. after an app relaunch).
     final conv = store.currentConversation;
-    if (conv != null && conv.conversationId.isNotEmpty && store.tavusKey.isNotEmpty) {
-      tavusService.setKey(store.tavusKey);
+    final tavusKey = tavusService.getKey().trim().isNotEmpty
+        ? tavusService.getKey().trim()
+        : store.tavusKey.trim();
+    if (conv != null && conv.conversationId.isNotEmpty && tavusKey.isNotEmpty) {
+      tavusService.setKey(tavusKey);
 
       setState(() => _fetchingTranscript = true);
       try {
@@ -534,6 +545,7 @@ class _ResultsPageState extends State<ResultsPage> {
           transcript: List<TranscriptEntry>.from(store.sessionTranscript),
           scorecard: scorecard,
           humeResult: store.humeResult,
+          isPractice: store.activeInterviewIsPractice,
         ),
       );
       // The recording has now been analysed and saved — clear the "pending"
@@ -581,171 +593,15 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  /// Confirms and deletes a saved interview result from history.
-  Future<void> _deleteResult(BuildContext context, InterviewResult r) async {
-    final theme = Theme.of(context);
-    final store = Provider.of<AppStore>(context, listen: false);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Result?'),
-        content: Text('Permanently delete the result for "${r.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel',
-                style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-          ),
-          CustomButton(
-            text: 'Delete',
-            variant: ButtonVariant.danger,
-            onPressed: () => Navigator.pop(context, true),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    store.deleteInterviewResult(r.id);
-    // If we were viewing the deleted result, drop the cache key so the page
-    // falls back to the current session on next entry.
-    if (_loadedConvId == r.conversationId) _loadedConvId = null;
-  }
-
-  /// Builds the "Previous Interviews" history card (view / delete past results).
-  Widget _buildHistoryCard(BuildContext context, AppStore store) {
-    final results = store.interviewResults;
-    if (results.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final currentConvId = store.currentConversation?.conversationId ?? '';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.history, size: 20, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Previous Interviews (${results.length})',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              ...results.map((r) {
-                final viewing = _loadedConvId == r.conversationId;
-                final date =
-                    r.createdAt.contains('T') ? r.createdAt.split('T').first : r.createdAt;
-                final isCurrent = r.conversationId == currentConvId;
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: viewing
-                        ? theme.colorScheme.primary.withOpacity(0.08)
-                        : theme.colorScheme.onSurface.withOpacity(0.04),
-                    border: Border.all(
-                      color: viewing
-                          ? theme.colorScheme.primary.withOpacity(0.4)
-                          : theme.colorScheme.outline.withOpacity(0.12),
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withOpacity(0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Text(
-                          '${r.score}',
-                          style: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    r.name,
-                                    style: theme.textTheme.bodyMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (isCurrent) ...[
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '· current',
-                                    style: TextStyle(
-                                      color: theme.colorScheme.primary,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '$date · ${r.wpm} wpm · ${r.fillers} fillers',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontSize: 11,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: viewing
-                            ? null
-                            : () {
-                                setState(() => _loadedConvId = r.conversationId);
-                                _applyResult(r);
-                              },
-                        child: Text(viewing ? 'Viewing' : 'View'),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.delete_outline,
-                            color: theme.colorScheme.error, size: 20),
-                        onPressed: () => _deleteResult(context, r),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   /// Builds the interview transcript card from the session transcript
   /// (produced by transcribing the candidate's recording via Deepgram).
   Widget _buildTranscriptCard(BuildContext context, AppStore store) {
     final theme = Theme.of(context);
-    final entries = store.sessionTranscript;
+    // Excludes Tavus-injected config turns persisted before the
+    // parse-time filter existed (see isNonDialogueTurn).
+    final entries = store.sessionTranscript
+        .where((e) => !isNonDialogueTurn(e.text))
+        .toList();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -908,41 +764,11 @@ class _ResultsPageState extends State<ResultsPage> {
         !_humeProcessing;
 
     if (noCurrentResult) {
-      // No result for the current session — but if past results exist, let the
-      // user pick one to view rather than showing a dead end.
-      if (store.interviewResults.isNotEmpty) {
-        return Scaffold(
-          backgroundColor: theme.colorScheme.surface,
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Center(
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 950),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Interview Results',
-                      style: theme.textTheme.headlineMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Select a previous interview below to view its full scorecard.',
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 24),
-                    _buildHistoryCard(context, store),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-
+      // Past attempts are no longer listed here — the Practice History tab is
+      // the single place to browse and reopen them, so this page only ever
+      // shows the CURRENT session.
       return Scaffold(
-        backgroundColor: theme.colorScheme.surface,
+        backgroundColor: theme.scaffoldBackgroundColor,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1010,7 +836,11 @@ class _ResultsPageState extends State<ResultsPage> {
     final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      // Must be opaque. This page renders inside CandidateVideoShell's Stack,
+      // which has no Scaffold of its own, so a transparent background let the
+      // black backdrop behind show through — in light theme that put dark body
+      // text and light cards on black, which read as a broken screen.
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: Stack(
         children: [
           SingleChildScrollView(
@@ -1127,8 +957,6 @@ class _ResultsPageState extends State<ResultsPage> {
                             ],
                           ),
                     const SizedBox(height: 24),
-
-                    _buildHistoryCard(context, store),
 
                     if (_hProcessingAndPending(store)) ...[
                       Container(

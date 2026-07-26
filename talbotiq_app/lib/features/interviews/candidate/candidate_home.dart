@@ -186,21 +186,10 @@ class _CandidateHomeState extends State<CandidateHome> {
     );
     debugPrint('[launch] system check returned: $ready (mounted=$mounted)');
     if (!mounted) return;
-    // Previously a bare `return` — indistinguishable from a crash, since it
-    // drops straight back to this list with no message at all. SystemCheckPage
-    // pops `true` only from its "Join interview" button; anything else here
-    // means the candidate backed out, or the page popped without completing.
-    if (ready != true) {
-      await _showLaunchError(
-        'the camera & microphone check',
-        'The system check closed without confirming camera and microphone '
-            'access (it returned "$ready" instead of "true").\n\n'
-            'If you tapped "Join interview" and still see this, camera or '
-            'microphone permission is not actually granted — the button is '
-            'inactive until both show a green tick.',
-      );
-      return;
-    }
+    // SystemCheckPage pops `true` only from its "Join interview" button, so
+    // anything else means the candidate backed out. That is a cancellation,
+    // not an error — abort quietly and leave them on their interview list.
+    if (ready != true) return;
 
     // Optional pre-call facefit capture (camera was granted in the system
     // check). Returns an 'insufficient' summary if skipped/unavailable.
@@ -212,8 +201,14 @@ class _CandidateHomeState extends State<CandidateHome> {
         ),
       ),
     );
-    debugPrint('[launch] facefit returned (mounted=$mounted)');
+    debugPrint('[launch] facefit returned ${facial == null ? 'null (backed out)' : 'a summary'} (mounted=$mounted)');
     if (!mounted) return;
+    // A null result means the candidate pressed BACK out of the attention
+    // check — that is a cancellation and must abort the launch. "Skip" is a
+    // different thing: it pops an 'insufficient' summary (non-null) and
+    // legitimately continues. Without this check a back-press fell through and
+    // started the interview anyway, which is the opposite of what Back means.
+    if (facial == null) return;
 
     setState(() => _launching = true);
     // Tracks how far the launch got, so a failure can name the exact step
@@ -535,7 +530,7 @@ class _AssignedCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceVariant,
+          color: theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(100),
         ),
         child: Text(
@@ -661,7 +656,7 @@ class _AssignedCard extends StatelessWidget {
                         _buildStatusBadge(
                           context,
                           '${interview.questions.length} Qs · ${interview.durationMinutes} min',
-                          theme.colorScheme.surfaceVariant,
+                          theme.colorScheme.surfaceContainerHighest,
                           theme.colorScheme.onSurfaceVariant,
                         ),
                         if (published) ...[

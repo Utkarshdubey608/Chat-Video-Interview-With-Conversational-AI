@@ -430,7 +430,7 @@ class _PersonaTile extends StatelessWidget {
       child: Material(
         color: selected
             ? scheme.primary.withOpacity(0.10)
-            : scheme.surfaceVariant.withOpacity(0.35),
+            : scheme.surfaceContainerHighest.withOpacity(0.35),
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
@@ -515,7 +515,7 @@ class _VoiceDropdown extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       decoration: InputDecoration(
         filled: true,
-        fillColor: scheme.surfaceVariant.withOpacity(0.35),
+        fillColor: scheme.surfaceContainerHighest.withOpacity(0.35),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         border: OutlineInputBorder(
@@ -615,7 +615,7 @@ class _VoiceSummary extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: scheme.surfaceVariant.withOpacity(0.25),
+        color: scheme.surfaceContainerHighest.withOpacity(0.25),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: scheme.outline.withOpacity(0.3)),
       ),

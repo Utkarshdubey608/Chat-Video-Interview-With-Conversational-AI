@@ -327,7 +327,7 @@ class _InterviewPageState extends State<InterviewPage>
 
     if (store.currentConversation == null) {
       return Scaffold(
-        backgroundColor: theme.colorScheme.background,
+        backgroundColor: theme.colorScheme.surface,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,

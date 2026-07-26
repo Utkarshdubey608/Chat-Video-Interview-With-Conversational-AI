@@ -202,10 +202,10 @@ class _FacefitPageState extends State<FacefitPage> with WidgetsBindingObserver {
     await Future<void>.delayed(const Duration(milliseconds: 300));
 
     if (!mounted) return;
+    // onCaptured pops this page (with the summary) — do NOT pop again here.
+    // A second pop can land on the route BELOW once the first is mid-exit,
+    // silently tearing an extra screen off the stack.
     widget.onCaptured(summary);
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
   }
 
   bool get _permanentlyBlocked =>

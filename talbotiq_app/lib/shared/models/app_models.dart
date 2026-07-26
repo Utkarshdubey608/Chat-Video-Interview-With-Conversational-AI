@@ -514,6 +514,13 @@ class InterviewResult {
   final ATSScorecard? scorecard;
   final HumeSessionResult? humeResult;
 
+  /// True when this came from the candidate's own self-serve PRACTICE tab,
+  /// false for a recruiter-assigned interview. Both land in the same history
+  /// list, so this is what keeps the candidate's Practice History from
+  /// exposing an assigned interview's AI report before the recruiter has
+  /// published it.
+  final bool isPractice;
+
   InterviewResult({
     required this.id,
     required this.conversationId,
@@ -525,6 +532,7 @@ class InterviewResult {
     required this.transcript,
     required this.scorecard,
     required this.humeResult,
+    this.isPractice = false,
   });
 
   factory InterviewResult.fromJson(Map<String, dynamic> json) {
@@ -546,6 +554,11 @@ class InterviewResult {
       humeResult: json['humeResult'] != null
           ? HumeSessionResult.fromJson(json['humeResult'])
           : null,
+      // Defaults to false for results stored before this field existed: an
+      // assigned interview wrongly shown to the candidate would leak an
+      // unpublished result, whereas an old practice run merely not appearing
+      // in history is cosmetic. Fail closed.
+      isPractice: json['isPractice'] == true,
     );
   }
 
@@ -560,6 +573,7 @@ class InterviewResult {
     'transcript': transcript.map((e) => e.toJson()).toList(),
     'scorecard': scorecard?.toJson(),
     'humeResult': humeResult?.toJson(),
+    'isPractice': isPractice,
   };
 }
 

@@ -173,7 +173,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                     const SizedBox(height: 20),
                     // Track Dropdown
                     DropdownButtonFormField<InterviewType?>(
-                      value: _track,
+                      initialValue: _track,
                       isExpanded: true,
                       decoration: _inputDecoration(context, 'Track', Icons.tune_outlined),
                       items: [
@@ -189,7 +189,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                     const SizedBox(height: 16),
                     // Test Dropdown
                     DropdownButtonFormField<String?>(
-                      value: _testId,
+                      initialValue: _testId,
                       isExpanded: true,
                       decoration: _inputDecoration(context, 'Test', Icons.folder_copy_outlined),
                       items: [
@@ -426,7 +426,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                       ),
                       icon: const Icon(Icons.filter_list_rounded, size: 16),
                       label: Text(
-                        _activeFilterCount > 0 ? 'Filters (${_activeFilterCount})' : 'Filter',
+                        _activeFilterCount > 0 ? 'Filters ($_activeFilterCount)' : 'Filter',
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
@@ -470,7 +470,7 @@ class _FilterChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(100),
           side: BorderSide(color: theme.colorScheme.outline.withValues(alpha: 0.15)),
         ),
-        backgroundColor: theme.colorScheme.surfaceVariant.withValues(alpha: 0.3),
+        backgroundColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
         padding: const EdgeInsets.symmetric(horizontal: 4),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         onDeleted: onDeleted,

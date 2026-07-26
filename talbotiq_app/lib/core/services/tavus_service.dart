@@ -5,6 +5,52 @@ import 'package:http/http.dart' as http;
 import 'package:talbotiq/core/net/api_client.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 
+/// True when a stored transcript turn is Tavus-injected CONFIGURATION rather
+/// than spoken dialogue — the interviewer system prompt, or a context block
+/// Tavus prepends to the conversation (e.g. the "user's timezone is unknown"
+/// temporal reference).
+///
+/// Legacy shim + belt-and-braces. `_transcriptEntryFromItem` drops
+/// `system`-role messages at parse time, but (a) results saved before that fix
+/// already have them persisted as `avatar` turns, and (b) Tavus does not label
+/// every injected block with a `system` role. The two transcript views filter
+/// with this on render.
+///
+/// Matching is intentionally conservative so a genuinely long interviewer
+/// answer is never hidden: the big system prompt needs BOTH bulk and a marker,
+/// while the short injected context blocks are matched on their own
+/// distinctive, machine-generated phrasing.
+bool isNonDialogueTurn(String text) {
+  final t = text.trim();
+  if (t.isEmpty) return false;
+
+  // Short, machine-generated context blocks — matched on phrasing alone.
+  const contextMarkers = [
+    "user's timezone is unknown",
+    'current date and time at the',
+    'If temporal information becomes relevant',
+    'start of the conversation** in different timezones',
+  ];
+  for (final m in contextMarkers) {
+    if (t.contains(m)) return true;
+  }
+
+  // The full interviewer system prompt — needs bulk AND a marker.
+  if (t.length < 400) return false;
+  const promptMarkers = [
+    'INTERVIEW SCRIPT',
+    'STRICT RULES',
+    'spoken aloud via TTS',
+    'live video conference call',
+    'Do NOT invent, add, skip, reorder',
+    'You are Alex',
+  ];
+  for (final m in promptMarkers) {
+    if (t.contains(m)) return true;
+  }
+  return false;
+}
+
 class TavusService {
   // Shared transport: request timeout + 429/5xx backoff-retry. POSTs are never
   // retried on timeout (ApiClient treats them as non-idempotent) so we never
@@ -211,7 +257,7 @@ class TavusService {
       if (kDebugMode) {
         print('debug: GET response status: ${response.statusCode}');
         final bodyPreview = response.body.length > 1000
-            ? response.body.substring(0, 1000) + '...'
+            ? '${response.body.substring(0, 1000)}...'
             : response.body;
         print('debug: GET response body: $bodyPreview');
       }
@@ -293,10 +339,16 @@ class TavusService {
         }
         if (kDebugMode) print('debug: transcript empty on attempt $attempt, will retry after ${delay.inSeconds}s');
       } on ApiException catch (e) {
-        // Auth failures and a missing conversation will never resolve by
-        // retrying — surface them immediately. Only empty results, rate limits
-        // (429) and server errors (5xx) are worth polling for.
-        if (e.isAuthError || e.statusCode == 404) rethrow;
+        // Only empty results, rate limits (429) and server errors (5xx) are
+        // worth polling for. Every other 4xx is a permanent answer — a bad
+        // key, a bad id, a malformed request — and will still be wrong on
+        // attempt 18, so surface it immediately instead of burning ~2 minutes
+        // of backoff. (This is what turned a single "400 Invalid
+        // conversation_id" into an 18-attempt retry storm in the logs.)
+        final code = e.statusCode;
+        final permanent =
+            code != null && code >= 400 && code < 500 && code != 429;
+        if (e.isAuthError || permanent) rethrow;
         if (kDebugMode) print('debug: fetchTranscriptWithRetry transient error on attempt $attempt: ${e.message}');
       } catch (e) {
         if (kDebugMode) print('debug: fetchTranscriptWithRetry error on attempt $attempt: $e');
@@ -486,6 +538,21 @@ class TavusService {
         (item['role'] ?? item['speaker'] ?? item['participant_type'] ?? 'user')
             .toString()
             .toLowerCase();
+
+    // Tavus returns the conversation's SYSTEM INSTRUCTION as a `system`-role
+    // message inside the transcript. It is configuration, not dialogue, so
+    // drop it — the role mapping below sends anything non-user to 'avatar',
+    // which previously rendered the entire interviewer prompt (persona rules,
+    // the question script, guardrails) into the candidate-visible transcript.
+    const nonDialogueRoles = {'system', 'context', 'developer', 'tool'};
+    if (nonDialogueRoles.contains(rawRole)) return null;
+
+    // Tavus does not label every injected block with a `system` role (its
+    // temporal/timezone context arrives as a normal turn), so also drop
+    // anything that reads as configuration. Keeps it out of storage entirely
+    // rather than relying only on the render-time filter.
+    if (isNonDialogueTurn(text)) return null;
+
     final String role =
         (rawRole == 'user' ||
             rawRole == 'candidate' ||
@@ -532,7 +599,7 @@ class TavusService {
       if (kDebugMode) {
         print('debug: GET recording uri status: ${response.statusCode}');
         final bodyPreview = response.body.length > 2000
-            ? response.body.substring(0, 2000) + '...'
+            ? '${response.body.substring(0, 2000)}...'
             : response.body;
         print('debug: GET recording uri body preview: $bodyPreview');
       }

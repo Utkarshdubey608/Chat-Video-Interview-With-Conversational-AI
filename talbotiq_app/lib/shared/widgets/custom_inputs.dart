@@ -166,7 +166,7 @@ class CustomSelectDropdown<T> extends StatelessWidget {
               value: value,
               items: items,
               onChanged: onChanged,
-              dropdownColor: theme.colorScheme.surfaceVariant,
+              dropdownColor: theme.colorScheme.surfaceContainerHighest,
               icon: Icon(Icons.arrow_drop_down, color: theme.colorScheme.onSurfaceVariant),
               style: TextStyle(
                 fontSize: 14,
@@ -205,7 +205,7 @@ class InputButtonDecorator extends StatelessWidget {
       height: 56, // Matches standard M3 text field height with vertical padding
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surfaceVariant,
+        color: theme.inputDecorationTheme.fillColor ?? theme.colorScheme.surfaceContainerHighest,
         border: Border.all(
           color: theme.colorScheme.outline.withOpacity(0.12),
           width: 1,
@@ -271,7 +271,7 @@ class CustomSlider extends StatelessWidget {
             inactiveTrackColor: theme.colorScheme.outline.withOpacity(0.2),
             thumbColor: theme.colorScheme.primary,
             overlayColor: theme.colorScheme.primary.withOpacity(0.12),
-            valueIndicatorColor: theme.colorScheme.surfaceVariant,
+            valueIndicatorColor: theme.colorScheme.surfaceContainerHighest,
             trackHeight: 4,
           ),
           child: Slider(
@@ -335,7 +335,7 @@ class CustomToggle extends StatelessWidget {
           Switch(
             value: checked,
             onChanged: onChanged,
-            activeColor: theme.colorScheme.primary,
+            activeThumbColor: theme.colorScheme.primary,
             activeTrackColor: theme.colorScheme.primary.withOpacity(0.24),
             inactiveThumbColor: theme.colorScheme.onSurfaceVariant,
             inactiveTrackColor: theme.colorScheme.outline.withOpacity(0.12),

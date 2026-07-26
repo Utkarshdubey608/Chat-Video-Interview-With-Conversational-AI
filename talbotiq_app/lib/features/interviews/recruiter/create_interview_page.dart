@@ -28,6 +28,7 @@ import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_picker.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class CreateInterviewPage extends StatefulWidget {
@@ -611,6 +612,17 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             status: InterviewStatus.assigned,
           ));
         }
+        // Keep the test's metadata doc in step with the edited title/type so
+        // the dashboard's test list stays accurate.
+        await repo.upsertTest(TestSummary(
+          testId: testId,
+          recruiterId: existing.recruiterId,
+          title: _titleController.text.trim().isEmpty
+              ? 'Interview'
+              : _titleController.text.trim(),
+          type: _type,
+          createdAt: existing.createdAt,
+        ));
         if (!mounted) return;
         Navigator.of(context).pop();
         final added = entries.length - 1;
@@ -632,6 +644,17 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           status: InterviewStatus.assigned,
         ));
       }
+      // One metadata doc for the whole batch, so the dashboard can list this
+      // test without reading its candidates. createdAt is left to the server.
+      await repo.upsertTest(TestSummary(
+        testId: testId,
+        recruiterId: user.uid,
+        title: _titleController.text.trim().isEmpty
+            ? 'Interview'
+            : _titleController.text.trim(),
+        type: _type,
+        createdAt: null,
+      ));
       if (!mounted) return;
       Navigator.of(context).pop();
       final n = unique.length;

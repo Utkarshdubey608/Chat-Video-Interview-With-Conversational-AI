@@ -58,6 +58,9 @@ Future<void> launchVideoConversation({
         ? interview!.durationMinutes * 60
         : config.maxCallDuration,
   );
+  // Practice == launched with no assigned Interview. Recorded before the call
+  // so the finished result can be filed under Practice History (or not).
+  store.setActiveInterviewIsPractice(interview == null);
   store.setQuestions(questions);
   store.setCurrentConversation(conv);
   store.setInterviewActive(true);

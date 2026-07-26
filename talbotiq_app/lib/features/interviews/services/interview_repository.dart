@@ -9,6 +9,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/models/test_summary.dart';
 
 /// Owns all Firestore access for the `interviews` collection: CRUD plus the
 /// recruiter/candidate query streams and the attempt/status/result mutations.
@@ -23,6 +24,11 @@ class InterviewRepository {
   CollectionReference<Map<String, dynamic>> get _col =>
       _db.collection('interviews');
 
+  /// Per-batch metadata, one doc per `testId` (see [TestSummary]). Lets the
+  /// dashboard page over tests instead of reading every interview to group them.
+  CollectionReference<Map<String, dynamic>> get _tests =>
+      _db.collection('tests');
+
   static String normalizeEmail(String email) => email.trim().toLowerCase();
 
   /// Creates a new assigned interview; returns the created id.
@@ -31,7 +37,110 @@ class InterviewRepository {
     return ref.id;
   }
 
+  // ── Paged reads ───────────────────────────────────────────────────────────
+  //
+  // `watchForRecruiter` below streams the recruiter's ENTIRE collection. That
+  // is fine for the analytics dashboard (which must aggregate everything) but
+  // does not scale for the candidate list: 1,000+ candidates means one huge
+  // read and 1,000 widgets. The methods here fetch bounded pages instead, and
+  // use Firestore's count() aggregate so the UI can still show TRUE totals
+  // ("312 candidates") without downloading the rows to count them.
+
+  /// Default candidates per page. Small enough to render instantly, large
+  /// enough that a recruiter rarely pages more than once or twice.
+  static const int defaultPageSize = 25;
+
+  /// Fetches one page of the recruiter's interviews, newest first.
+  ///
+  /// Pass [startAfter] (the previous page's [PagedInterviews.lastDoc]) to get
+  /// the next page. Optionally narrow to a single [testId], or to candidates
+  /// whose email starts with [emailPrefix].
+  ///
+  /// Cursor is the document snapshot, not a `createdAt` value: `createdAt` is
+  /// a server timestamp and reads back momentarily null on a just-created doc,
+  /// which would make a value-based cursor skip or repeat rows.
+  Future<PagedInterviews> fetchRecruiterPage({
+    required String recruiterId,
+    int limit = defaultPageSize,
+    DocumentSnapshot<Map<String, dynamic>>? startAfter,
+    String? testId,
+    String? emailPrefix,
+  }) async {
+    if (recruiterId.isEmpty) return const PagedInterviews.empty();
+
+    // The recruiterId equality must stay on every query: firestore.rules
+    // grants recruiter reads via `resource.data.recruiterId == uid`, and
+    // dropping it makes the query unprovable and fails with permission-denied.
+    Query<Map<String, dynamic>> q =
+        _col.where('recruiterId', isEqualTo: recruiterId);
+    if (testId != null && testId.isNotEmpty) {
+      q = q.where('testId', isEqualTo: testId);
+    }
+
+    final prefix = emailPrefix?.trim().toLowerCase() ?? '';
+    if (prefix.isEmpty) {
+      q = q.orderBy('createdAt', descending: true);
+    } else {
+      // A range filter forces its field to be the first orderBy, so an email
+      // search is ordered by email rather than recency. \uf8ff is the highest
+      // code point Firestore sorts, making [prefix, prefix+\uf8ff) a
+      // "starts-with" range.
+      q = q
+          .where('candidateEmailLower', isGreaterThanOrEqualTo: prefix)
+          .where('candidateEmailLower', isLessThan: '$prefix\uf8ff')
+          .orderBy('candidateEmailLower');
+    }
+
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+
+    // Ask for one extra row: if it comes back there is another page, and we
+    // learn that without a second round trip.
+    final snap = await q.limit(limit + 1).get();
+    final docs = snap.docs;
+    final hasMore = docs.length > limit;
+    final pageDocs = hasMore ? docs.sublist(0, limit) : docs;
+
+    return PagedInterviews(
+      items: _parseDocs(pageDocs),
+      lastDoc: pageDocs.isEmpty ? null : pageDocs.last,
+      hasMore: hasMore,
+    );
+  }
+
+  /// Server-side count of the recruiter's interviews, optionally scoped to one
+  /// [testId] and/or [status]. Uses Firestore's count() aggregate, which bills
+  /// far less than reading the documents and does not transfer them, so the UI
+  /// can show real totals while only holding a page in memory.
+  Future<int> countForRecruiter({
+    required String recruiterId,
+    String? testId,
+    InterviewStatus? status,
+  }) async {
+    if (recruiterId.isEmpty) return 0;
+    try {
+      Query<Map<String, dynamic>> q =
+          _col.where('recruiterId', isEqualTo: recruiterId);
+      if (testId != null && testId.isNotEmpty) {
+        q = q.where('testId', isEqualTo: testId);
+      }
+      if (status != null) {
+        q = q.where('status', isEqualTo: status.wire);
+      }
+      final agg = await q.count().get();
+      return agg.count ?? 0;
+    } catch (e) {
+      // A missing composite index or offline device must not break the list —
+      // callers treat -1 as "unknown" and fall back to the loaded count.
+      debugPrint('InterviewRepository.countForRecruiter failed: $e');
+      return -1;
+    }
+  }
+
   /// Live list of interviews a recruiter created, newest first.
+  ///
+  /// UNBOUNDED — reads every matching document. Keep this for consumers that
+  /// genuinely need the whole corpus (the analytics dashboard aggregates over
+  /// it). List UIs should use [fetchRecruiterPage] instead.
   Stream<List<Interview>> watchForRecruiter(String recruiterId) {
     return _col
         .where('recruiterId', isEqualTo: recruiterId)
@@ -135,6 +244,100 @@ class InterviewRepository {
     });
   }
 
+  // ── Tests (batch metadata) ────────────────────────────────────────────────
+
+  /// Records/updates the metadata doc for a test. Called when a test is created
+  /// or edited, and by [backfillTests]. merge:true keeps this idempotent.
+  Future<void> upsertTest(TestSummary test) {
+    if (test.testId.isEmpty) return Future.value();
+    return _tests.doc(test.testId).set(test.toMap(), SetOptions(merge: true));
+  }
+
+  /// One page of the recruiter's tests, newest first.
+  Future<PagedTests> fetchTestsPage({
+    required String recruiterId,
+    int limit = 20,
+    DocumentSnapshot<Map<String, dynamic>>? startAfter,
+  }) async {
+    if (recruiterId.isEmpty) return const PagedTests.empty();
+    Query<Map<String, dynamic>> q = _tests
+        .where('recruiterId', isEqualTo: recruiterId)
+        .orderBy('createdAt', descending: true);
+    if (startAfter != null) q = q.startAfterDocument(startAfter);
+
+    final snap = await q.limit(limit + 1).get();
+    final docs = snap.docs;
+    final hasMore = docs.length > limit;
+    final pageDocs = hasMore ? docs.sublist(0, limit) : docs;
+
+    final out = <TestSummary>[];
+    for (final d in pageDocs) {
+      try {
+        out.add(TestSummary.fromDoc(d));
+      } catch (e) {
+        debugPrint('InterviewRepository: skipping bad test doc ${d.id}: $e');
+      }
+    }
+    return PagedTests(
+      items: out,
+      lastDoc: pageDocs.isEmpty ? null : pageDocs.last,
+      hasMore: hasMore,
+    );
+  }
+
+  /// Creates the `tests` metadata docs for a recruiter's pre-existing
+  /// interviews — the one-off migration for tests created before this
+  /// collection existed.
+  ///
+  /// Reads every interview for the recruiter ONCE (the very cost this
+  /// collection exists to avoid, paid a single time), derives one summary per
+  /// distinct `testId`, and batch-writes them. Fully idempotent thanks to
+  /// merge:true, so a repeat run is harmless and it doubles as a "rebuild the
+  /// test index" repair action. Returns how many test docs were written.
+  Future<int> backfillTests(String recruiterId) async {
+    if (recruiterId.isEmpty) return 0;
+    final snap =
+        await _col.where('recruiterId', isEqualTo: recruiterId).get();
+
+    // Keep the newest interview per test: its title/type/createdAt is the most
+    // representative for the batch.
+    final byTest = <String, Interview>{};
+    for (final doc in snap.docs) {
+      Interview i;
+      try {
+        i = Interview.fromDoc(doc);
+      } catch (e) {
+        debugPrint('backfillTests: skipping bad doc ${doc.id}: $e');
+        continue;
+      }
+      final key = i.testId.isNotEmpty ? i.testId : i.id;
+      final existing = byTest[key];
+      if (existing == null ||
+          (i.createdAt != null &&
+              (existing.createdAt == null ||
+                  i.createdAt!.isAfter(existing.createdAt!)))) {
+        byTest[key] = i;
+      }
+    }
+    if (byTest.isEmpty) return 0;
+
+    // Firestore caps a batch at 500 writes; stay well under.
+    const chunk = 400;
+    final summaries =
+        byTest.values.map(TestSummary.fromInterview).toList(growable: false);
+    for (var i = 0; i < summaries.length; i += chunk) {
+      final end =
+          (i + chunk < summaries.length) ? i + chunk : summaries.length;
+      final batch = _db.batch();
+      for (final t in summaries.sublist(i, end)) {
+        batch.set(_tests.doc(t.testId), t.toMap(), SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+    debugPrint('backfillTests: wrote ${summaries.length} test doc(s)');
+    return summaries.length;
+  }
+
   /// "End test" — publish results for every candidate of [testId] owned by
   /// [recruiterId], in one batch.
   Future<void> publishTest(String testId, String recruiterId) async {
@@ -169,4 +372,45 @@ class InterviewRepository {
       await batch.commit();
     }
   }
+}
+
+/// One page of interviews plus the cursor needed to fetch the next.
+class PagedInterviews {
+  final List<Interview> items;
+
+  /// Cursor for the next page — pass as `startAfter`. Null when the page is
+  /// empty.
+  final DocumentSnapshot<Map<String, dynamic>>? lastDoc;
+
+  /// Whether at least one more document exists after this page.
+  final bool hasMore;
+
+  const PagedInterviews({
+    required this.items,
+    required this.lastDoc,
+    required this.hasMore,
+  });
+
+  const PagedInterviews.empty()
+      : items = const [],
+        lastDoc = null,
+        hasMore = false;
+}
+
+/// One page of test summaries plus the cursor for the next.
+class PagedTests {
+  final List<TestSummary> items;
+  final DocumentSnapshot<Map<String, dynamic>>? lastDoc;
+  final bool hasMore;
+
+  const PagedTests({
+    required this.items,
+    required this.lastDoc,
+    required this.hasMore,
+  });
+
+  const PagedTests.empty()
+      : items = const [],
+        lastDoc = null,
+        hasMore = false;
 }

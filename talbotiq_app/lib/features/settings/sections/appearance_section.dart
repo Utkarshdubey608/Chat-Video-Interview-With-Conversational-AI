@@ -87,7 +87,7 @@ class _ThemeOptionCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? theme.colorScheme.primary.withOpacity(0.08)
-              : theme.colorScheme.surfaceVariant.withOpacity(0.5),
+              : theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
           border: Border.all(
             color: selected
                 ? theme.colorScheme.primary
