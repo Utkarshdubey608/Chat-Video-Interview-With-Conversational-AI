@@ -56,7 +56,7 @@ class GeminiService {
   ];
 
   String _apiKey = '';
-  String _model = 'gemini-2.5-flash';
+  final String _model = 'gemini-2.5-flash';
 
   void setKey(String key) {
     _apiKey = key;

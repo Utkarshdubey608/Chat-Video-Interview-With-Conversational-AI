@@ -145,7 +145,7 @@ class DeepgramService {
       if (kDebugMode) {
         print('debug: Deepgram status: ${response.statusCode}');
         final preview = response.body.length > 1000
-            ? response.body.substring(0, 1000) + '...'
+            ? '${response.body.substring(0, 1000)}...'
             : response.body;
         print('debug: Deepgram body preview: $preview');
       }

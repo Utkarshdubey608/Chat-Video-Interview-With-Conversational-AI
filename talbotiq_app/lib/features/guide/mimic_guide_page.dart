@@ -86,7 +86,7 @@ class _MimicGuidePageState extends State<MimicGuidePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
+      backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
         backgroundColor: theme.colorScheme.surface,
         elevation: 0,
@@ -136,7 +136,7 @@ class _MimicGuidePageState extends State<MimicGuidePage> {
 
   Widget _buildBubble(ThemeData theme, GuideMessage m) {
     final isUser = m.isUser;
-    final bg = isUser ? theme.colorScheme.primary : theme.colorScheme.surfaceVariant;
+    final bg = isUser ? theme.colorScheme.primary : theme.colorScheme.surfaceContainerHighest;
     final fg = isUser ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -170,7 +170,7 @@ class _MimicGuidePageState extends State<MimicGuidePage> {
         margin: const EdgeInsets.symmetric(vertical: 5),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceVariant,
+          color: theme.colorScheme.surfaceContainerHighest,
           borderRadius: const BorderRadius.only(
             topLeft: Radius.circular(16),
             topRight: Radius.circular(16),

@@ -26,7 +26,7 @@ class JsonPreviewPane extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant,
+        color: theme.colorScheme.surfaceContainerHighest,
         border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
         borderRadius: BorderRadius.circular(12),
       ),

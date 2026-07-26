@@ -223,7 +223,7 @@ Generated: $today''';
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceVariant,
+                  color: theme.colorScheme.surfaceContainerHighest,
                   border: Border.all(
                     color: theme.colorScheme.outline.withValues(alpha: 0.12),
                   ),

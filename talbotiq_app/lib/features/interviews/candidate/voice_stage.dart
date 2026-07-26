@@ -40,6 +40,11 @@ class VoiceStage extends StatefulWidget {
   final String? model;
   final String? voiceName;
 
+  /// Recruiter-configured whole-interview time limit. Overrides
+  /// GeminiLiveService's default cap so the call honours what the recruiter
+  /// actually set, and drives the header countdown.
+  final Duration? maxDuration;
+
   /// Called when the interview reaches a terminal state (ended or error), so
   /// the host flow can advance (e.g. to scoring / a thank-you screen). Receives
   /// the candidate's spoken responses (final caption lines) so the host can
@@ -55,6 +60,7 @@ class VoiceStage extends StatefulWidget {
     this.companyName = 'TalbotIQ',
     this.model,
     this.voiceName,
+    this.maxDuration,
     this.onFinished,
   });
 
@@ -129,7 +135,9 @@ class _VoiceStageState extends State<VoiceStage>
   }
 
   Future<void> _connect() async {
-    final service = GeminiLiveService();
+    final service = widget.maxDuration != null
+        ? GeminiLiveService(maxDuration: widget.maxDuration!)
+        : GeminiLiveService();
     _service = service;
     _sub = service.events.listen(_onEvent);
     if (!mounted) return;
@@ -352,6 +360,10 @@ class _VoiceStageState extends State<VoiceStage>
                   ),
                 ),
               ),
+              if (_service?.remaining != null) ...[
+                _CountdownBadge(service: _service!),
+                const SizedBox(width: 10),
+              ],
               _LiveDot(connecting: connecting),
               const SizedBox(width: 6),
               Text(
@@ -436,6 +448,13 @@ class _VoiceStageState extends State<VoiceStage>
 
   Widget _buildEnded(ThemeData theme) {
     final cs = theme.colorScheme;
+    final timedOut = _service?.endedByTimeout ?? false;
+    // Nothing the candidate said was ever transcribed. Claiming "All done,
+    // thank you!" here is misleading — the interview effectively didn't happen,
+    // and the recruiter will receive an unscored record. Say so, and point at
+    // the usual cause (mic permission / muted).
+    final capturedNothing = !_captions
+        .any((c) => c.role == CaptionRole.candidate && c.text.trim().isNotEmpty);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -444,18 +463,38 @@ class _VoiceStageState extends State<VoiceStage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.check_circle_rounded, size: 48, color: cs.primary),
+              Icon(
+                capturedNothing
+                    ? Icons.mic_off_rounded
+                    : Icons.check_circle_rounded,
+                size: 48,
+                color: capturedNothing ? cs.error : cs.primary,
+              ),
               const SizedBox(height: 16),
               Text(
-                'All done, thank you!',
+                capturedNothing
+                    ? 'We didn’t hear any answers'
+                    : timedOut
+                        ? 'Time is up'
+                        : 'All done, thank you!',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineSmall
                     ?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               Text(
-                'Your voice interview with ${widget.companyName} is complete. '
-                'The hiring team will be in touch about next steps.',
+                capturedNothing
+                    ? 'The interview ended without capturing any spoken '
+                        'answers. Check that your microphone is unmuted and '
+                        'that this app has microphone permission, then ask '
+                        '${widget.companyName} about retaking it.'
+                    : timedOut
+                        ? 'Time is up. Your interview has been automatically '
+                            'submitted. Please wait while we process your '
+                            'responses.'
+                        : 'Your voice interview with ${widget.companyName} is '
+                            'complete. The hiring team will be in touch about '
+                            'next steps.',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium
                     ?.copyWith(color: cs.onSurfaceVariant),
@@ -552,6 +591,62 @@ class _Caption {
   final String text;
   final bool isFinal;
   const _Caption(this.role, this.text, this.isFinal);
+}
+
+/// Header countdown for the recruiter-configured limit. Owns its own ticker so
+/// only this chip repaints each second — driving it from the parent would
+/// rebuild the whole live screen (orb, captions, controls) every second.
+class _CountdownBadge extends StatefulWidget {
+  final GeminiLiveService service;
+  const _CountdownBadge({required this.service});
+
+  @override
+  State<_CountdownBadge> createState() => _CountdownBadgeState();
+}
+
+class _CountdownBadgeState extends State<_CountdownBadge> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining = widget.service.remaining;
+    if (remaining == null) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final warning = remaining.inSeconds <= 60;
+    final color = warning ? cs.error : cs.onSurfaceVariant;
+    final m = remaining.inSeconds ~/ 60;
+    final s = remaining.inSeconds % 60;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.hourglass_bottom, size: 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          '$m:${s.toString().padLeft(2, '0')}',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: color,
+            fontWeight: FontWeight.bold,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _LiveDot extends StatelessWidget {

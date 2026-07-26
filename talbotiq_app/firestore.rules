@@ -46,6 +46,18 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // tests: per-batch metadata (title/type/createdAt) for the recruiter
+    // dashboard's test list. Owned solely by the recruiter who created it;
+    // candidates never read it (they only ever see their own interview doc).
+    match /tests/{testId} {
+      allow read: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid;
+      allow create, update: if isRecruiter()
+                     && request.resource.data.recruiterId == request.auth.uid;
+      allow delete: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid;
+    }
+
     // interviews:
     //   - recruiters manage the interviews they created
     //   - candidates may read + update (status/result) interviews assigned to

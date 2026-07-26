@@ -1,7 +1,7 @@
 // lib/features/interviews/candidate/candidate_shell.dart
 //
 // Candidate primary-navigation shell. Mirrors RecruiterShell: hosts the
-// candidate's top-level destinations (Home, Practice, Settings) in an
+// candidate's top-level destinations (Home, Practice, History, Settings) in an
 // IndexedStack and overlays the shared FloatingNavBar.
 
 import 'package:flutter/material.dart';
@@ -12,6 +12,7 @@ import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/settings/settings_page.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_home.dart';
 import 'package:talbotiq/features/interviews/candidate/practice_page.dart';
+import 'package:talbotiq/features/interviews/candidate/practice_history_page.dart';
 
 class CandidateShell extends StatefulWidget {
   const CandidateShell({super.key});
@@ -33,6 +34,7 @@ class _CandidateShellState extends State<CandidateShell> {
         children: const [
           CandidateHome(),
           PracticePage(),
+          PracticeHistoryPage(),
           _CandidateSettingsTab(),
         ],
       ),
@@ -48,6 +50,10 @@ class _CandidateShellState extends State<CandidateShell> {
               icon: Icons.smart_toy_outlined,
               activeIcon: Icons.smart_toy,
               label: 'Practice'),
+          FloatingNavItem(
+              icon: Icons.history_outlined,
+              activeIcon: Icons.history_rounded,
+              label: 'History'),
           FloatingNavItem(
               icon: Icons.settings_outlined,
               activeIcon: Icons.settings_rounded,

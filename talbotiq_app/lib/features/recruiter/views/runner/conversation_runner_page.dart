@@ -6,6 +6,7 @@
 // completion. Adaptive templates ground the interviewer in the candidate's
 // résumé; timed conversational mode shows a thinking/answer countdown.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -39,6 +40,9 @@ class ConversationRunnerPage extends StatefulWidget {
   /// Candidate mode hides the result on completion (recruiter publishes it).
   final bool candidateMode;
 
+  /// Recruiter-configured whole-interview time limit, in seconds. Null = none.
+  final int? maxDurationSeconds;
+
   const ConversationRunnerPage({
     super.key,
     required this.session,
@@ -46,6 +50,7 @@ class ConversationRunnerPage extends StatefulWidget {
     this.fixedQuestionsOverride,
     this.onFinished,
     this.candidateMode = false,
+    this.maxDurationSeconds,
   });
 
   @override
@@ -67,6 +72,7 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
       store: Provider.of<RecruiterStore>(context, listen: false),
       fixedQuestionsOverride: widget.fixedQuestionsOverride,
       onFinished: widget.onFinished,
+      maxDurationSeconds: widget.maxDurationSeconds,
     );
   }
 
@@ -137,7 +143,7 @@ class _ConversationRunnerPageState extends State<ConversationRunnerPage> {
                 answerCtrl: _answerCtrl,
               );
             case ConvStage.scoring:
-              return const _ScoringScreen();
+              return _ScoringScreen(timedOut: c.timedOut);
             case ConvStage.finished:
               return _CompletionScreen(
                 sessionId: widget.session.id,
@@ -642,12 +648,21 @@ class _ChatStage extends StatelessWidget {
                         'Question ${engine.progressCurrent} of ${engine.plannedQuestionCount}',
                     color: theme.colorScheme.secondary,
                   ),
-                  if (timed && phase != null)
-                    _TimerPill(
-                      thinking: thinking,
-                      warning: warning,
-                      remaining: remaining,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (c.overallDeadlineMs != null) ...[
+                        _OverallCountdownBadge(deadlineMs: c.overallDeadlineMs!),
+                        const SizedBox(width: 8),
+                      ],
+                      if (timed && phase != null)
+                        _TimerPill(
+                          thinking: thinking,
+                          warning: warning,
+                          remaining: remaining,
+                        ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -988,6 +1003,68 @@ class _TimerPill extends StatelessWidget {
   }
 }
 
+/// Whole-interview countdown for the recruiter-configured cap. Distinct from
+/// [_TimerPill] (per-question), and self-ticking so an untimed chat isn't
+/// rebuilt every second just to advance this clock.
+class _OverallCountdownBadge extends StatefulWidget {
+  final int deadlineMs;
+  const _OverallCountdownBadge({required this.deadlineMs});
+
+  @override
+  State<_OverallCountdownBadge> createState() => _OverallCountdownBadgeState();
+}
+
+class _OverallCountdownBadgeState extends State<_OverallCountdownBadge> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final left = widget.deadlineMs - DateTime.now().millisecondsSinceEpoch;
+    final secs = left <= 0 ? 0 : (left / 1000).floor();
+    final warning = secs <= 60;
+    final color = warning ? theme.colorScheme.error : theme.colorScheme.primary;
+    final m = secs ~/ 60;
+    final s = secs % 60;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.hourglass_bottom, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(
+            '$m:${s.toString().padLeft(2, '0')} left',
+            style: TextStyle(
+              fontFeatures: const [FontFeature.tabularFigures()],
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Answer input with a voice (speech-to-text) mic. While listening, recognized
 /// words stream into the answer field; the candidate can still type/edit.
 class _ChatInputBar extends StatefulWidget {
@@ -1267,20 +1344,31 @@ class _SendButton extends StatelessWidget {
 
 // ── Scoring ────────────────────────────────────────────────────────────────
 class _ScoringScreen extends StatelessWidget {
-  const _ScoringScreen();
+  final bool timedOut;
+  const _ScoringScreen({this.timedOut = false});
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 20),
-            Text('Scoring your interview…', style: theme.textTheme.titleMedium),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(
+                timedOut
+                    ? 'Time is up. Your interview has been automatically '
+                        'submitted. Please wait while we process your responses.'
+                    : 'Scoring your interview…',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium,
+              ),
+            ],
+          ),
         ),
       ),
     );

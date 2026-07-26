@@ -223,7 +223,7 @@ class _PracticePageState extends State<PracticePage> {
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                     margin: const EdgeInsets.symmetric(horizontal: 32),
                     decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceVariant,
+                      color: theme.colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
                         color: theme.colorScheme.outline.withOpacity(0.12),

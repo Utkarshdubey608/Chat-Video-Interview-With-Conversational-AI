@@ -116,6 +116,11 @@ class AppStore extends ChangeNotifier {
   InterviewProcessingStage _processingStage = InterviewProcessingStage.idle;
   String? _processingError;
 
+  // True while a self-serve PRACTICE run is active (launched from the Practice
+  // tab with no assigned Interview). Stamped onto the finished
+  // InterviewResult so Practice History can exclude recruiter-assigned runs.
+  bool _activeInterviewIsPractice = false;
+
   // Wall-clock (epoch ms) moment the local .wav recording actually started
   // (set once RecordingService.start() succeeds). This is the true zero-point
   // of the recorded audio's timeline, distinct from _questionTimestamps[0]
@@ -186,6 +191,7 @@ class AppStore extends ChangeNotifier {
   String? get pendingAnalysisConvId => _pendingAnalysisConvId;
   InterviewProcessingStage get processingStage => _processingStage;
   String? get processingError => _processingError;
+  bool get activeInterviewIsPractice => _activeInterviewIsPractice;
   int? get recordingStartTimestamp => _recordingStartTimestamp;
   List<SavedRecording> get recordings => List.unmodifiable(_recordings);
   List<InterviewResult> get interviewResults =>
@@ -612,6 +618,13 @@ class AppStore extends ChangeNotifier {
 
   /// Resets processing status ahead of a new interview so a previous session's
   /// stage/error never leaks into the next one.
+  /// Marks whether the run being launched is self-serve practice. Set by
+  /// video_launch (practice == no assigned Interview) before the call starts.
+  void setActiveInterviewIsPractice(bool value) {
+    _activeInterviewIsPractice = value;
+    notifyListeners();
+  }
+
   void resetProcessingStage() {
     _pendingAnalysisConvId = null;
     _processingStage = InterviewProcessingStage.idle;
@@ -669,6 +682,9 @@ class AppStore extends ChangeNotifier {
     _pendingAnalysisConvId = null;
     _processingStage = InterviewProcessingStage.idle;
     _processingError = null;
+    // Fail closed: an unset flag must never mark an assigned run as practice.
+    // Every launch sets it explicitly, so this is just hygiene.
+    _activeInterviewIsPractice = false;
     notifyListeners();
   }
 
