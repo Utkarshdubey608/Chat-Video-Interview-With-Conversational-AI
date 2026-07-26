@@ -44,6 +44,12 @@ class _ResultsPageState extends State<ResultsPage> {
 
   bool _fetchingTranscript = false;
 
+  // Which pipeline actually produced the transcript Gemini will see —
+  // 'tavus' | 'deepgram' | null (not yet resolved). Passed into
+  // geminiService.analyze() so its prompt names the real ASR source instead
+  // of a hardcoded one that may not match what was actually used.
+  String? _transcriptSource;
+
   // ResultsPage lives inside an IndexedStack (always mounted), so initState
   // runs only once at app startup. We instead react to the /results route
   // becoming active — but only (re)generate for a NEW interview. Results are
@@ -87,12 +93,13 @@ class _ResultsPageState extends State<ResultsPage> {
       return; // already showing this session's result
     }
 
-    // A freshly-recorded interview that just ended is the ONLY trigger for
-    // running analysis. `recordingBytes` is set in _endInterview and is never
-    // persisted, so on an app relaunch it is null — meaning we never
+    // A freshly-ended interview is the ONLY trigger for running analysis.
+    // `pendingAnalysisConvId` is set in _endInterview (on every platform) and
+    // is never persisted, so on an app relaunch it is null — meaning we never
     // regenerate; we restore the saved result instead.
-    final hasFreshRecording = store.recordingBytes?.isNotEmpty ?? false;
-    if (hasFreshRecording && convId.isNotEmpty) {
+    final isPendingFreshAnalysis =
+        store.pendingAnalysisConvId == convId && convId.isNotEmpty;
+    if (isPendingFreshAnalysis) {
       final cached = store.interviewResults
           .where((r) => r.conversationId == convId)
           .toList();
@@ -149,51 +156,70 @@ class _ResultsPageState extends State<ResultsPage> {
 
   /// Initialises results page by fetching transcripts and starting Hume processing.
   Future<void> _initResults() async {
-    // On web the transcript is captured live via Deepgram during the call. On
-    // mobile the WebView owns the mic, so we instead pull Tavus's own
-    // server-side transcript (enable_transcription) once the call has ended.
+    final store = Provider.of<AppStore>(context, listen: false);
+    store.setProcessingStage(InterviewProcessingStage.fetchingTranscript);
+    _transcriptSource = null;
+
+    // Both paths run post-call, never live during the interview. Tavus's own
+    // server-side transcript is tried first on every platform; transcribing
+    // our own locally-recorded .wav via Deepgram is the fallback (native
+    // only — see recording_service.dart) if Tavus's transcript is empty.
     await _ensureTranscript();
     if (!mounted) return;
+    store.setProcessingStage(InterviewProcessingStage.evaluating);
     _startHumeProcess();
   }
 
-  /// Builds the session transcript. Prefers the candidate's locally-recorded
-  /// .wav (transcribed via Deepgram's pre-recorded endpoint). Falls back to
-  /// Tavus's server-side transcript only when no local recording is available
-  /// (e.g. on web, where the transcript is captured live during the call).
+  /// Builds the session transcript. Prefers Tavus's own server-side
+  /// transcript (sliced per-question — see TavusService.sliceTranscriptByQuestion),
+  /// the same source and slicing on every platform. Falls back to
+  /// transcribing the candidate's locally-recorded .wav via Deepgram (native
+  /// only) if Tavus's transcript is empty/unavailable.
   Future<void> _ensureTranscript() async {
     final store = Provider.of<AppStore>(context, listen: false);
 
-    // Preferred path: transcribe the locally-recorded interview audio.
-    final bytes = store.recordingBytes;
-    debugPrint(
-      'debug[rec]: results recordingBytes=${bytes?.length ?? 0}, deepgramKey=${store.deepgramKey.isNotEmpty}',
-    );
-    if (bytes != null && bytes.isNotEmpty && store.deepgramKey.isNotEmpty) {
+    // Preferred path (all platforms): Tavus's own server-side transcript.
+    final conv = store.currentConversation;
+    if (conv != null && conv.conversationId.isNotEmpty && store.tavusKey.isNotEmpty) {
+      tavusService.setKey(store.tavusKey);
+
       setState(() => _fetchingTranscript = true);
       try {
-        deepgramService.setKey(store.deepgramKey);
-        final entries = await deepgramService.transcribeFromFile(
-          bytes,
-          language: DeepgramService.localeFor(store.activeInterviewLanguage),
+        final raw = await tavusService.fetchTranscriptWithRetry(
+          conv.conversationId,
+          maxAttempts: 18,
+          initialDelay: const Duration(seconds: 5),
         );
-        if (entries.isNotEmpty) {
+        final sliced = tavusService.sliceTranscriptByQuestion(
+          raw,
+          store.questions,
+        );
+        debugPrint(
+          'DEBUG: Tavus transcript: ${raw.length} entries, sliced across '
+          '${store.questions.length} questions.',
+        );
+
+        if (sliced.isNotEmpty) {
           store.clearSessionTranscript();
-          for (final e in entries) {
+          for (final e in sliced) {
             store.pushTranscriptEntry(e);
           }
+          _transcriptSource = 'tavus';
+
+          // Derive speech metrics from the candidate's turns so the scorecard
+          // isn't all zeros.
           final int fillers = store.sessionTranscript
               .where((t) => t.role == 'candidate')
               .fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
           final int wpm = deepgramService.calcWpm(store.sessionTranscript);
-          store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: fillers);
+          store.updateMetrics(w: wpm, f: fillers);
         }
       } catch (e) {
-        debugPrint('Deepgram file transcription failed: $e');
+        debugPrint('Tavus transcript fetch failed: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Unable to transcribe recording: $e'),
+              content: Text('Unable to fetch transcript from Tavus: $e'),
               backgroundColor: Colors.amber,
             ),
           );
@@ -203,45 +229,44 @@ class _ResultsPageState extends State<ResultsPage> {
       }
     }
 
-    // If the local recording already produced a transcript, we're done.
+    // Tavus already gave us a transcript — done.
     if (store.sessionTranscript.isNotEmpty) return;
 
-    // Fallback path: pull Tavus's own server-side transcript.
-    final conv = store.currentConversation;
-    if (conv == null || conv.conversationId.isEmpty || store.tavusKey.isEmpty) {
-      return;
-    }
-
-    tavusService.setKey(store.tavusKey);
+    // Fallback path (native only): transcribe our own locally-recorded audio.
+    final bytes = store.recordingBytes;
+    debugPrint(
+      'debug[rec]: results recordingBytes=${bytes?.length ?? 0}, deepgramKey=${store.deepgramKey.isNotEmpty}',
+    );
+    if (bytes == null || bytes.isEmpty || store.deepgramKey.isEmpty) return;
 
     setState(() => _fetchingTranscript = true);
     try {
-      final entries = await tavusService.fetchTranscriptWithRetry(
-        conv.conversationId,
-        maxAttempts: 18,
-        initialDelay: const Duration(seconds: 5),
+      deepgramService.setKey(store.deepgramKey);
+      final entries = await deepgramService.transcribeFromFile(
+        bytes,
+        language: DeepgramService.localeFor(store.activeInterviewLanguage),
+        recordingStartTimestamp: store.recordingStartTimestamp,
+        questionTimestamps: store.questionTimestamps,
+        questionCount: store.questions.length,
       );
-      debugPrint('DEBUG: Tavus API returned ${entries.length} transcript entries.');
-
-      // Found transcript! Clear local transcript list to prevent duplicates
-      store.clearSessionTranscript();
-      for (final e in entries) {
-        store.pushTranscriptEntry(e);
+      if (entries.isNotEmpty) {
+        store.clearSessionTranscript();
+        for (final e in entries) {
+          store.pushTranscriptEntry(e);
+        }
+        _transcriptSource = 'deepgram';
+        final int fillers = store.sessionTranscript
+            .where((t) => t.role == 'candidate')
+            .fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
+        final int wpm = deepgramService.calcWpm(store.sessionTranscript);
+        store.updateMetrics(w: wpm > 0 ? wpm : store.wpm, f: fillers);
       }
-
-      // Derive speech metrics from the candidate's turns so the scorecard
-      // isn't all zeros (these are computed live from Deepgram on web).
-      final int fillers = store.sessionTranscript
-          .where((t) => t.role == 'candidate')
-          .fold(0, (acc, e) => acc + deepgramService.countFillers(e.text));
-      final int wpm = deepgramService.calcWpm(store.sessionTranscript);
-      store.updateMetrics(w: wpm, f: fillers);
     } catch (e) {
-      debugPrint('Transcript fetch failed after retries: $e');
+      debugPrint('Deepgram file transcription failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Unable to fetch transcript: $e'),
+            content: Text('Unable to transcribe recording: $e'),
             backgroundColor: Colors.amber,
           ),
         );
@@ -416,20 +441,24 @@ class _ResultsPageState extends State<ResultsPage> {
     final store = Provider.of<AppStore>(context, listen: false);
 
     if (store.geminiKey.isEmpty) {
+      const msg =
+          'Failed: Google Gemini API key is missing. Go to Settings and add your key.';
       setState(() {
-        _geminiError =
-            'Failed: Google Gemini API key is missing. Go to Settings and add your key.';
+        _geminiError = msg;
         _geminiLoading = false;
       });
+      store.setProcessingStage(InterviewProcessingStage.failed, error: msg);
       return;
     }
 
     if (store.sessionTranscript.isEmpty) {
+      const msg =
+          'Failed: No transcript entries captured. ATS scorecard requires interview dialogue.';
       setState(() {
-        _geminiError =
-            'Failed: No transcript entries captured. ATS scorecard requires interview dialogue.';
+        _geminiError = msg;
         _geminiLoading = false;
       });
+      store.setProcessingStage(InterviewProcessingStage.failed, error: msg);
       return;
     }
 
@@ -472,6 +501,7 @@ class _ResultsPageState extends State<ResultsPage> {
         wpm: store.wpm,
         totalFillers: store.fillers,
         facialSummary: summary,
+        transcriptSource: _transcriptSource,
       );
 
       if (mounted) {
@@ -487,6 +517,10 @@ class _ResultsPageState extends State<ResultsPage> {
       final score = store.humeResult?.compositeScore ??
           scorecard.overallFitScore ??
           0;
+      // For an assigned interview, CandidateVideoShell._maybeStoreResult picks
+      // this up (it reacts to interviewResults gaining a matching entry) and
+      // carries the stage the rest of the way to sendingToRecruiter/complete.
+      store.setProcessingStage(InterviewProcessingStage.sendingToRecruiter);
       store.addInterviewResult(
         InterviewResult(
           id: 'res-${DateTime.now().millisecondsSinceEpoch}',
@@ -506,9 +540,14 @@ class _ResultsPageState extends State<ResultsPage> {
       // bytes so navigating back or relaunching never re-runs analysis.
       store.setRecordingBytes(null);
     } catch (e) {
+      // Must run regardless of mounted, same reasoning as the success path
+      // above — the candidate-facing pending screen needs this even if
+      // ResultsPage itself isn't currently visible.
+      final msg = e.toString().replaceAll('Exception: ', '');
+      store.setProcessingStage(InterviewProcessingStage.failed, error: msg);
       if (!mounted) return;
       setState(() {
-        _geminiError = e.toString().replaceAll('Exception: ', '');
+        _geminiError = msg;
       });
     } finally {
       if (mounted) setState(() => _geminiLoading = false);
@@ -727,7 +766,7 @@ class _ResultsPageState extends State<ResultsPage> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Transcribed from your recording via Deepgram Nova-3.',
+              'Transcript captured from your interview session.',
               style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
             ),
             const SizedBox(height: 16),

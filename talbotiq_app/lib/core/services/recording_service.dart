@@ -4,7 +4,9 @@
 // On end, the file's bytes are sent to Deepgram's pre-recorded endpoint for
 // transcription (see results_page).
 //
-// Native (Android/iOS) uses the `record` package; web is a no-op stub because
-// the web build already captures the transcript via Deepgram live streaming.
+// Native (Android/iOS) uses the `record` package; web is a no-op stub — the
+// browser mic is owned by Tavus's page inside the call iframe, so there's no
+// separate local recording to make. Results page falls back to Tavus's own
+// server-side transcript in that case (see results_page.dart _ensureTranscript).
 export 'package:talbotiq/core/services/recording_service_stub.dart'
     if (dart.library.io) 'recording_service_io.dart';

@@ -38,6 +38,15 @@ class CandidateHome extends StatefulWidget {
 class _CandidateHomeState extends State<CandidateHome> {
   bool _launching = false;
 
+  /// Human-readable name of the launch step currently in flight, shown in the
+  /// loading overlay. Whatever it last displayed is the step that failed.
+  String _launchStage = '';
+
+  void _setStage(String stage) {
+    debugPrint('[launch] $stage');
+    if (mounted) setState(() => _launchStage = stage);
+  }
+
   String get _email => FirebaseAuth.instance.currentUser?.email ?? '';
 
   @override
@@ -78,6 +87,52 @@ class _CandidateHomeState extends State<CandidateHome> {
   String _localPart(String email) {
     final at = email.indexOf('@');
     return at > 0 ? email.substring(0, at) : email;
+  }
+
+  /// Shows a launch failure as a blocking dialog rather than a SnackBar.
+  /// A failed launch drops the candidate straight back to this list, which on
+  /// its own is indistinguishable from "the app just closed the interview" —
+  /// a transient SnackBar is far too easy to miss for something that ends the
+  /// whole attempt. The full error text is shown (and selectable) so it can
+  /// be reported verbatim.
+  Future<void> _showLaunchError(String stage, Object error) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Could not start the interview'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Failed at: $stage',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              SelectableText(
+                error.toString().replaceAll('Exception: ', ''),
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'If this mentions a network or host error, check this '
+                'device’s internet connection and try again.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   bool _guardAccess(Interview interview) {
@@ -129,11 +184,27 @@ class _CandidateHomeState extends State<CandidateHome> {
         ),
       ),
     );
+    debugPrint('[launch] system check returned: $ready (mounted=$mounted)');
     if (!mounted) return;
-    if (ready != true) return;
+    // Previously a bare `return` — indistinguishable from a crash, since it
+    // drops straight back to this list with no message at all. SystemCheckPage
+    // pops `true` only from its "Join interview" button; anything else here
+    // means the candidate backed out, or the page popped without completing.
+    if (ready != true) {
+      await _showLaunchError(
+        'the camera & microphone check',
+        'The system check closed without confirming camera and microphone '
+            'access (it returned "$ready" instead of "true").\n\n'
+            'If you tapped "Join interview" and still see this, camera or '
+            'microphone permission is not actually granted — the button is '
+            'inactive until both show a green tick.',
+      );
+      return;
+    }
 
     // Optional pre-call facefit capture (camera was granted in the system
     // check). Returns an 'insufficient' summary if skipped/unavailable.
+    debugPrint('[launch] opening facefit…');
     final facial = await Navigator.of(context).push<FacialSessionSummary>(
       MaterialPageRoute(
         builder: (ctx) => FacefitPage(
@@ -141,10 +212,18 @@ class _CandidateHomeState extends State<CandidateHome> {
         ),
       ),
     );
+    debugPrint('[launch] facefit returned (mounted=$mounted)');
     if (!mounted) return;
 
     setState(() => _launching = true);
+    // Tracks how far the launch got, so a failure can name the exact step
+    // instead of a generic "could not start" (this sequence hits Firestore
+    // and then Tavus over HTTP — on a flaky/offline device several distinct
+    // failures all LOOK identical to the candidate: spinner, then back to
+    // the dashboard).
+    var stage = 'fetching recruiter keys (Firestore)';
     try {
+      _setStage('Step 1/3 — fetching recruiter keys…');
       // Apply THIS interview's recruiter (org) keys to the in-memory services
       // only — never persisted, never shown in the candidate's Settings. Each
       // launch re-establishes the right org's keys, so one org's interview
@@ -153,11 +232,23 @@ class _CandidateHomeState extends State<CandidateHome> {
           interview.recruiterId, store,
           overrides: interview.keyOverrides);
       if (!mounted) return;
+      debugPrint('[launchVideo] 2/4 recruiter keys ok — hasTavusKey=$hasKey');
       if (!hasKey) {
-        messenger.showSnackBar(const SnackBar(
-          content: Text(
-              'Video is not available yet — the recruiter has not configured a Tavus key.'),
-        ));
+        // Dialog, not a SnackBar: this aborts the launch and drops the
+        // candidate back to the list, which is indistinguishable from a
+        // crash if the only feedback is a toast that scrolls by. Note this
+        // is specifically the TAVUS key — chat/voice interviews only need a
+        // Gemini key, so they keep working while video silently fails here.
+        if (mounted) setState(() => _launching = false);
+        await _showLaunchError(
+          'checking the recruiter’s API keys',
+          'No Tavus API key is configured for this recruiter, so the video '
+              'avatar cannot be started.\n\n'
+              'Chat and voice interviews only need a Gemini key, which is why '
+              'those still work.\n\n'
+              'Fix: the recruiter should open Settings → API Credentials, add '
+              'their Tavus key, then tap "Save to Cloud".',
+        );
         return;
       }
 
@@ -174,6 +265,8 @@ class _CandidateHomeState extends State<CandidateHome> {
       // right Deepgram locale.
       store.setActiveInterviewLanguage(interview.language);
 
+      stage = 'creating the Tavus conversation (network)';
+      _setStage('Step 2/3 — creating the video session…');
       await launchVideoConversation(
         context: context,
         config: config,
@@ -183,12 +276,19 @@ class _CandidateHomeState extends State<CandidateHome> {
         resumeText: resumeText,
         facialSummary: facial,
       );
-      // The attempt has started — count it.
-      repo.incrementAttempt(interview.id);
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(
-          content: Text(
-              'Could not start the interview: ${e.toString().replaceAll('Exception: ', '')}')));
+      _setStage('Step 3/3 — opening the interview…');
+      // The attempt has started — count it. Best-effort: not awaited (so a
+      // slow/failed write never delays entering the interview), so it must
+      // catch its own errors — an unawaited Future's rejection would
+      // otherwise be an uncaught async error even though this call is
+      // textually inside this try/catch.
+      repo
+          .incrementAttempt(interview.id)
+          .catchError((e) => debugPrint('incrementAttempt failed: $e'));
+    } catch (e, st) {
+      debugPrint('[launchVideo] FAILED at "$stage": $e\n$st');
+      if (mounted) setState(() => _launching = false);
+      await _showLaunchError(stage, e);
     } finally {
       if (mounted) setState(() => _launching = false);
     }
@@ -197,28 +297,47 @@ class _CandidateHomeState extends State<CandidateHome> {
   Future<void> _launchChat(Interview interview) async {
     if (_launching) return;
     if (!_guardAccess(interview)) return;
+    final messenger = ScaffoldMessenger.of(context);
     final repo = context.read<InterviewRepository>();
     final recruiterStore = context.read<RecruiterStore>();
     final store = context.read<AppStore>();
     setState(() => _launching = true);
-    // Apply the org's Gemini key (for scoring) in-memory before running.
-    await context.read<AppConfigService>().applyForRecruiter(
-        interview.recruiterId, store,
-        overrides: interview.keyOverrides);
-    if (!mounted) return;
-    repo.incrementAttempt(interview.id); // count this attempt
-    if (mounted) setState(() => _launching = false);
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => buildChatRunnerPage(
-          interview: interview,
-          repository: repo,
-          recruiterStore: recruiterStore,
-        ),
-      ),
-    );
-    // Restore the candidate's own keys once the org session ends.
-    await store.reloadApiKeysFromPrefs();
+    try {
+      // Apply the org's Gemini key (for scoring) in-memory before running.
+      await context.read<AppConfigService>().applyForRecruiter(
+          interview.recruiterId, store,
+          overrides: interview.keyOverrides);
+      if (!mounted) return;
+      // Best-effort — see the video path's comment on why this must catch its
+      // own errors despite being unawaited.
+      repo
+          .incrementAttempt(interview.id)
+          .catchError((e) => debugPrint('incrementAttempt failed: $e')); // count this attempt
+      if (mounted) setState(() => _launching = false);
+      // Build the page HERE, not inside the MaterialPageRoute builder.
+      // buildChatRunnerPage() writes an ephemeral template into RecruiterStore
+      // (notifyListeners), and a route builder runs during Flutter's build
+      // phase — mutating a provider there throws "setState()/markNeedsBuild()
+      // called during build" and the route fails to render. Constructing the
+      // widget eagerly keeps that write outside the build phase.
+      final chatPage = buildChatRunnerPage(
+        interview: interview,
+        repository: repo,
+        recruiterStore: recruiterStore,
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => chatPage),
+      );
+      // Restore the candidate's own keys once the org session ends.
+      await store.reloadApiKeysFromPrefs();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+          content: Text(
+              'Could not start the interview: ${e.toString().replaceAll('Exception: ', '')}')));
+    } finally {
+      if (mounted) setState(() => _launching = false);
+    }
   }
 
   Future<void> _launchVoice(Interview interview) async {
@@ -324,9 +443,33 @@ class _CandidateHomeState extends State<CandidateHome> {
             },
           ),
           if (_launching)
-            const ColoredBox(
-              color: Color(0x88000000),
-              child: Center(child: CircularProgressIndicator()),
+            ColoredBox(
+              color: const Color(0xCC000000),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 20),
+                    // The launch sequence can abort at several points that all
+                    // look identical (spinner, then back to this list). Naming
+                    // the current step on screen means the last step shown IS
+                    // the one that failed — no log capture required.
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(
+                        _launchStage.isEmpty ? 'Starting…' : _launchStage,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
         ],
       ),

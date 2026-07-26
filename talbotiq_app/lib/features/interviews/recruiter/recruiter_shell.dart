@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 
 import 'package:talbotiq/shared/widgets/floating_nav_bar.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/settings/settings_page.dart';
 import 'package:talbotiq/features/recruiter/analytics/analytics_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/recruiter_home.dart';
@@ -71,7 +72,7 @@ class _RecruiterSettingsTab extends StatelessWidget {
         title: const Text('Settings'),
         actions: const [LogoutButton(), SizedBox(width: 4)],
       ),
-      body: const SettingsPage(showCloudSync: true),
+      body: const SettingsPage(role: AppRole.recruiter),
     );
   }
 }

@@ -165,22 +165,43 @@ class _FacefitPageState extends State<FacefitPage> with WidgetsBindingObserver {
     final summary = await _service.captureFor(kFacefitCaptureDuration);
     _countdownTimer?.cancel();
     if (!mounted) return;
-    _finish(summary);
+    await _finish(summary);
   }
 
   /// Skip / fallback: hand back an 'insufficient' summary (totalFrames: 0).
-  void _skip() {
-    _finish(FacefitService.insufficientSummary(
+  Future<void> _skip() {
+    return _finish(FacefitService.insufficientSummary(
       note: _cam?.isGranted == true
           ? 'Candidate skipped the attention check.'
           : 'Camera permission was not granted; attention check skipped.',
     ));
   }
 
-  void _finish(FacialSessionSummary summary) {
+  Future<void> _finish(FacialSessionSummary summary) async {
     if (_completed) return;
     _completed = true;
     _countdownTimer?.cancel();
+    await _liveSub?.cancel();
+    _liveSub = null;
+
+    // Fully release the camera BEFORE handing control back to the caller.
+    // The caller (candidate_home._launchVideo) immediately opens the Tavus
+    // WebView, which requests camera+mic via getUserMedia(); Android refuses
+    // while this page's CameraController still holds the device. Releasing it
+    // fire-and-forget in dispose() meant the handoff raced the teardown — the
+    // leaked session showed up in logcat as "ConsumerBase is abandoned" and
+    // CameraCaptureSessionImpl.finalize() (i.e. the session was GC'd, never
+    // closed). Practice video never hits this because it skips this page.
+    try {
+      await _service.dispose();
+    } catch (e) {
+      debugPrint('Facefit camera teardown failed: $e');
+    }
+    // Give the camera HAL a moment to actually surrender the device — close()
+    // returning does not guarantee the hardware is free for the next client.
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    if (!mounted) return;
     widget.onCaptured(summary);
     if (mounted && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();

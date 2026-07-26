@@ -128,9 +128,30 @@ class _SystemCheckPageState extends State<SystemCheckPage>
                 ),
               ],
               const SizedBox(height: 12),
-              CustomButton(
-                text: 'Join interview',
-                onPressed: _bothGranted ? widget.onReady : () {},
+              // Dimmed + explains itself when it can't proceed. CustomButton's
+              // onPressed is non-nullable, so the old `: () {}` fallback gave a
+              // button that looked fully enabled but silently did nothing —
+              // candidates tapped "Join interview", got no response, backed
+              // out, and landed back on their interview list as if the app had
+              // crashed.
+              Opacity(
+                opacity: _bothGranted ? 1.0 : 0.45,
+                child: CustomButton(
+                  text: 'Join interview',
+                  onPressed: _bothGranted
+                      ? widget.onReady
+                      : () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Camera and microphone access are both required '
+                                'before you can join. Tap "Allow access" above.',
+                              ),
+                              duration: Duration(seconds: 5),
+                            ),
+                          );
+                        },
+                ),
               ),
               if (!_bothGranted) ...[
                 const SizedBox(height: 8),

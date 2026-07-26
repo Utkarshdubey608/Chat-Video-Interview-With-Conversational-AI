@@ -218,13 +218,24 @@ class DeepgramService {
   }
 
   /// Transcribe a locally-recorded audio file (e.g. the candidate's .wav) by
-  /// POSTing its raw bytes to Deepgram's pre-recorded endpoint. Returns a list
-  /// with a single TranscriptEntry containing the combined transcript text.
+  /// POSTing its raw bytes to Deepgram's pre-recorded endpoint.
+  ///
+  /// When [recordingStartTimestamp] and [questionTimestamps] are provided
+  /// (both epoch-ms wall-clock values — see AppStore), the response's
+  /// word-level timings are sliced into one TranscriptEntry PER QUESTION, so a
+  /// recruiter reviewing per-question responses sees each answer under the
+  /// right question instead of the whole call collapsed into question 1.
+  /// Falls back to a single combined entry (questionIdx 0) when that slicing
+  /// isn't possible (missing timestamps, or no words matched any window) —
+  /// this must never regress to returning nothing.
   Future<List<TranscriptEntry>> transcribeFromFile(
     List<int> bytes, {
     String model = 'nova-3',
     String language = 'en-US',
     String contentType = 'audio/wav',
+    int? recordingStartTimestamp,
+    List<int> questionTimestamps = const [],
+    int questionCount = 0,
   }) async {
     if (_apiKey.isEmpty) throw Exception('No Deepgram API key set');
     if (bytes.isEmpty) return [];
@@ -269,15 +280,31 @@ class DeepgramService {
     }
 
     final Map<String, dynamic> data = jsonDecode(response.body);
+    final alternative =
+        data['results']?['channels']?[0]?['alternatives']?[0] as Map?;
     String transcript = '';
     try {
-      transcript =
-          data['results']?['channels']?[0]?['alternatives']?[0]?['transcript'] ?? '';
+      transcript = alternative?['transcript'] ?? '';
     } catch (_) {
       transcript = '';
     }
 
     if (transcript.isEmpty) return [];
+
+    final wordsJson = alternative?['words'] as List?;
+    if (recordingStartTimestamp != null &&
+        questionTimestamps.isNotEmpty &&
+        questionCount > 0 &&
+        wordsJson != null &&
+        wordsJson.isNotEmpty) {
+      final sliced = _sliceByQuestion(
+        wordsJson,
+        recordingStartTimestamp: recordingStartTimestamp,
+        questionTimestamps: questionTimestamps,
+        questionCount: questionCount,
+      );
+      if (sliced.isNotEmpty) return sliced;
+    }
 
     return [
       TranscriptEntry(
@@ -287,6 +314,60 @@ class DeepgramService {
         questionIdx: 0,
       ),
     ];
+  }
+
+  /// Groups Deepgram's word-level timings into one TranscriptEntry per
+  /// question, using [questionTimestamps] (wall-clock epoch ms, one push per
+  /// question-index change plus a leading "interview became active" marker —
+  /// see AppStore.setCurrentQuestionIdx/setInterviewActive) converted to
+  /// seconds-from-recording-start via [recordingStartTimestamp].
+  List<TranscriptEntry> _sliceByQuestion(
+    List wordsJson, {
+    required int recordingStartTimestamp,
+    required List<int> questionTimestamps,
+    required int questionCount,
+  }) {
+    // questionTimestamps carries exactly one extra LEADING entry (the
+    // interview-active marker pushed just before question 0's own push) —
+    // drop it so position i lines up with the real start of question i.
+    final extra = questionTimestamps.length - questionCount;
+    final starts = extra > 0
+        ? questionTimestamps.sublist(extra)
+        : questionTimestamps;
+    if (starts.isEmpty) return [];
+
+    // Convert each question's start to seconds elapsed since the recording
+    // actually began (clamped to 0 — the first question may be marked
+    // fractionally before the recorder finished starting).
+    final startSecs = starts
+        .map((ts) => ((ts - recordingStartTimestamp) / 1000.0).clamp(0.0, double.infinity))
+        .toList();
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final entries = <TranscriptEntry>[];
+    for (var idx = 0; idx < questionCount; idx++) {
+      if (idx >= startSecs.length) break;
+      final start = startSecs[idx];
+      final end = (idx + 1) < startSecs.length ? startSecs[idx + 1] : double.infinity;
+
+      final wordsInWindow = wordsJson.where((w) {
+        final wStart = (w is Map ? w['start'] as num? : null)?.toDouble();
+        return wStart != null && wStart >= start && wStart < end;
+      }).map((w) {
+        final m = w as Map;
+        return (m['punctuated_word'] ?? m['word'] ?? '').toString();
+      }).where((s) => s.isNotEmpty);
+
+      final text = wordsInWindow.join(' ').trim();
+      if (text.isEmpty) continue;
+      entries.add(TranscriptEntry(
+        role: 'candidate',
+        text: text,
+        timestamp: now + idx,
+        questionIdx: idx,
+      ));
+    }
+    return entries;
   }
 }
 

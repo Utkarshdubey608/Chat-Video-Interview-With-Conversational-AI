@@ -8,6 +8,24 @@ import 'package:talbotiq/core/services/hume_service.dart';
 import 'package:talbotiq/core/services/deepgram_service.dart';
 import 'package:talbotiq/core/services/gemini_service.dart';
 
+/// Stages of the post-interview processing pipeline (transcript → AI scoring
+/// → handoff to the recruiter), surfaced to the candidate-facing "submitted"
+/// screen ([_VideoPendingScreen] in candidate_video_shell.dart) so a stalled
+/// or failed step is visible instead of an indefinite spinner.
+enum InterviewProcessingStage {
+  idle,
+  fetchingTranscript,
+  evaluating,
+  sendingToRecruiter,
+  complete,
+  // Gemini scoring failed, but the raw transcript/responses still made it to
+  // the recruiter (as an unscored draft they can regenerate) — a soft
+  // failure, distinct from [failed], which means even that fallback couldn't
+  // be saved.
+  submittedWithoutScoring,
+  failed,
+}
+
 /// Central app-wide [ChangeNotifier]: owns runtime API keys (loaded once from
 /// prefs, applied to the AI services in-memory), the session/avatar config,
 /// theme mode, current route, and the per-interview metadata carried into
@@ -89,6 +107,23 @@ class AppStore extends ChangeNotifier {
   // sent to Deepgram for transcription on the results page.
   List<int>? _recordingBytes;
 
+  // Post-interview processing pipeline status, keyed to the conversation that
+  // just ended. Unlike `recordingBytes` (native-only), this is set the moment
+  // _endInterview navigates to /results regardless of platform, so it's what
+  // actually gates whether ResultsPage should run the analysis pipeline for a
+  // freshly-finished session vs. just restoring a cached result.
+  String? _pendingAnalysisConvId;
+  InterviewProcessingStage _processingStage = InterviewProcessingStage.idle;
+  String? _processingError;
+
+  // Wall-clock (epoch ms) moment the local .wav recording actually started
+  // (set once RecordingService.start() succeeds). This is the true zero-point
+  // of the recorded audio's timeline, distinct from _questionTimestamps[0]
+  // (set moments earlier, before the interview page even mounts) — used to
+  // align Deepgram's per-word offsets to the correct question when slicing
+  // the transcript by question.
+  int? _recordingStartTimestamp;
+
   // Persisted interview recordings (kept on device when storeLocalRecordings is
   // enabled). Managed from Settings.
   List<SavedRecording> _recordings = [];
@@ -148,6 +183,10 @@ class AppStore extends ChangeNotifier {
   bool get deepgramConnected => _deepgramConnected;
   bool get storeLocalRecordings => _storeLocalRecordings;
   List<int>? get recordingBytes => _recordingBytes;
+  String? get pendingAnalysisConvId => _pendingAnalysisConvId;
+  InterviewProcessingStage get processingStage => _processingStage;
+  String? get processingError => _processingError;
+  int? get recordingStartTimestamp => _recordingStartTimestamp;
   List<SavedRecording> get recordings => List.unmodifiable(_recordings);
   List<InterviewResult> get interviewResults =>
       List.unmodifiable(_interviewResults);
@@ -246,6 +285,74 @@ class AppStore extends ChangeNotifier {
       _deepgramKey = deepgram;
       deepgramService.setKey(deepgram);
     }
+    notifyListeners();
+  }
+
+  /// Applies API keys fetched from Firestore (`recruiter_keys` or
+  /// `candidate_keys`) and PERSISTS them to prefs, so they're available on
+  /// this device without a network round-trip on every launch. Counterpart to
+  /// [applyEphemeralApiKeys] (candidate launch, in-memory-only). Called at
+  /// login and from Settings' "Retrieve from Cloud"; [clearApiKeys] undoes
+  /// this at logout.
+  ///
+  /// A blank/absent cloud value LEAVES the current local key untouched rather
+  /// than overwriting it with an empty string — otherwise pulling from a cloud
+  /// doc that was never (fully) pushed to would silently wipe out a key the
+  /// user had already entered locally.
+  void applyCloudApiKeys({
+    String tavus = '',
+    String gemini = '',
+    String hume = '',
+    String deepgram = '',
+    String aws = '',
+    String anthropic = '',
+    String awsProxyUrl = '',
+    String webhookUrl = '',
+  }) {
+    if (tavus.isNotEmpty) {
+      _tavusKey = tavus;
+      tavusService.setKey(tavus);
+      _cachedReplicas = [];
+      _cachedPersonas = [];
+    }
+    if (deepgram.isNotEmpty) {
+      _deepgramKey = deepgram;
+      deepgramService.setKey(deepgram);
+    }
+    if (hume.isNotEmpty) {
+      _humeKey = hume;
+      humeService.setKey(hume);
+    }
+    if (aws.isNotEmpty) _awsKey = aws;
+    if (anthropic.isNotEmpty) _anthropicKey = anthropic;
+    if (gemini.isNotEmpty) {
+      _geminiKey = gemini;
+      geminiService.setKey(gemini);
+    }
+    if (awsProxyUrl.isNotEmpty) _awsProxyUrl = awsProxyUrl;
+    if (webhookUrl.isNotEmpty) _webhookUrl = webhookUrl;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Removes the cloud-synced API keys from local storage (logout). Leaves
+  /// drafts/recordings/results untouched — only the credential fields reset.
+  Future<void> clearApiKeys() async {
+    _tavusKey = '';
+    _deepgramKey = '';
+    _humeKey = '';
+    _awsKey = '';
+    _anthropicKey = '';
+    _geminiKey = '';
+    _awsProxyUrl = '';
+    _webhookUrl = '';
+    tavusService.setKey('');
+    deepgramService.setKey('');
+    humeService.setKey('');
+    geminiService.setKey('');
+    _cachedReplicas = [];
+    _cachedPersonas = [];
+    await _saveToPrefs();
     notifyListeners();
   }
 
@@ -445,6 +552,11 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setRecordingStartTimestamp(int? ts) {
+    _recordingStartTimestamp = ts;
+    notifyListeners();
+  }
+
   void setLiveEmotions(List<HumeEmotion> emos) {
     _liveEmotions = emos;
     notifyListeners();
@@ -477,6 +589,33 @@ class AppStore extends ChangeNotifier {
 
   void setRecordingBytes(List<int>? bytes) {
     _recordingBytes = bytes;
+    notifyListeners();
+  }
+
+  /// Marks [conversationId] as needing the post-interview analysis pipeline
+  /// (transcript → Gemini → recruiter handoff) and puts the candidate-facing
+  /// status at its first stage. Called once, right when the candidate ends the
+  /// call and is navigated to /results — on every platform, not just native
+  /// (where a local recording exists).
+  void markPendingAnalysis(String conversationId) {
+    _pendingAnalysisConvId = conversationId;
+    _processingStage = InterviewProcessingStage.fetchingTranscript;
+    _processingError = null;
+    notifyListeners();
+  }
+
+  void setProcessingStage(InterviewProcessingStage stage, {String? error}) {
+    _processingStage = stage;
+    _processingError = error;
+    notifyListeners();
+  }
+
+  /// Resets processing status ahead of a new interview so a previous session's
+  /// stage/error never leaks into the next one.
+  void resetProcessingStage() {
+    _pendingAnalysisConvId = null;
+    _processingStage = InterviewProcessingStage.idle;
+    _processingError = null;
     notifyListeners();
   }
 
@@ -527,6 +666,9 @@ class AppStore extends ChangeNotifier {
     _sessionTranscript = [];
     _deepgramConnected = false;
     _recordingBytes = null;
+    _pendingAnalysisConvId = null;
+    _processingStage = InterviewProcessingStage.idle;
+    _processingError = null;
     notifyListeners();
   }
 

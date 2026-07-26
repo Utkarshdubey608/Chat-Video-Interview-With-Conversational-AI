@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/shared/widgets/apple_ui.dart';
 import 'package:talbotiq/features/app_config/app_config_service.dart';
+import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/guide/mimic_guide_page.dart';
 import 'package:talbotiq/features/settings/sections/api_credentials_section.dart';
 import 'package:talbotiq/features/settings/sections/session_setup_section.dart';
@@ -17,12 +18,12 @@ import 'package:talbotiq/features/settings/sections/appearance_section.dart';
 /// active category section. Each category lives in its own file under
 /// `views/settings/` and owns its own controllers + Save action.
 class SettingsPage extends StatefulWidget {
-  /// When true (recruiter surface only) the page shows a "Sync API keys to
-  /// cloud" action so candidate devices can pull the org's keys. Never enabled
-  /// for candidates — they only ever consume keys.
-  final bool showCloudSync;
+  /// Which account type is viewing Settings — decides the cloud-sync card's
+  /// copy and which Firestore collection ("recruiter_keys" vs
+  /// "candidate_keys") Save/Retrieve act on.
+  final AppRole role;
 
-  const SettingsPage({super.key, this.showCloudSync = false});
+  const SettingsPage({super.key, required this.role});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -31,6 +32,11 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   int _category = 0;
   bool _syncing = false;
+  bool _retrieving = false;
+
+  // Lets _retrieveKeysFromCloud() push freshly-pulled keys into the API
+  // Credentials fields, which otherwise only read AppStore once in initState.
+  final _apiCredsKey = GlobalKey<ApiCredentialsSectionState>();
 
   // Category metadata; index maps 1:1 to the sections kept alive below.
   static const List<_CategoryMeta> _categories = [
@@ -42,12 +48,12 @@ class _SettingsPageState extends State<SettingsPage> {
   ];
 
   // The live section widgets, kept alive so unsaved edits survive switching.
-  static const List<Widget> _sections = [
-    ApiCredentialsSection(),
-    SessionSetupSection(),
-    RecordingStorageSection(),
-    WebhookSection(),
-    AppearanceSection(),
+  late final List<Widget> _sections = [
+    ApiCredentialsSection(key: _apiCredsKey),
+    const SessionSetupSection(),
+    const RecordingStorageSection(),
+    const WebhookSection(),
+    const AppearanceSection(),
   ];
 
   @override
@@ -74,10 +80,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           : null,
                     ),
                     const SizedBox(height: 24),
-                    if (widget.showCloudSync) ...[
-                      _buildCloudSyncCard(theme),
-                      const SizedBox(height: 24),
-                    ],
+                    _buildCloudSyncCard(theme),
+                    const SizedBox(height: 24),
                     if (isWide) _buildWide(theme) else _buildNarrow(theme),
                     const SizedBox(height: 24),
                     _buildGuideEntry(theme),
@@ -125,29 +129,70 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // Pushes this recruiter's saved API keys to the cloud so their candidates'
-  // devices can pull them at launch (see AppConfigService). Recruiter-only —
-  // gated by [SettingsPage.showCloudSync].
-  Future<void> _syncKeys() async {
+  bool get _isRecruiter => widget.role == AppRole.recruiter;
+
+  // Pushes this account's saved API keys to their own cloud credentials doc
+  // (recruiter_keys/{uid} for recruiters, candidate_keys/{uid} for candidates)
+  // — see AppConfigService.
+  Future<void> _saveKeysToCloud() async {
     if (_syncing) return;
     final messenger = ScaffoldMessenger.of(context);
     final appConfig = context.read<AppConfigService>();
     final store = context.read<AppStore>();
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    // Commit whatever's currently typed in the API Credentials fields before
+    // pushing — otherwise this would push AppStore's last-saved value, which
+    // can be stale (or blank) if the user typed a new key but never hit that
+    // section's own "Save Credentials" button first.
+    _apiCredsKey.currentState?.commitToStore();
     setState(() => _syncing = true);
     try {
-      await appConfig.pushForRecruiter(uid, store);
+      if (_isRecruiter) {
+        await appConfig.pushForRecruiter(uid, store);
+      } else {
+        await appConfig.pushForCandidate(uid, store);
+      }
       messenger.showSnackBar(
-        const SnackBar(content: Text('API keys synced to cloud.')),
+        const SnackBar(content: Text('API keys saved to cloud.')),
       );
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('Sync failed: $e')));
+      messenger.showSnackBar(SnackBar(content: Text('Save failed: $e')));
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
   }
 
-  // Recruiter-only card: sync saved API keys to the cloud for candidate pull.
+  // Fetches this account's own keys from the cloud and persists them locally
+  // — restores keys lost after e.g. a logout/login or reinstall.
+  Future<void> _retrieveKeysFromCloud() async {
+    if (_retrieving) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final appConfig = context.read<AppConfigService>();
+    final store = context.read<AppStore>();
+    final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    setState(() => _retrieving = true);
+    try {
+      if (_isRecruiter) {
+        await appConfig.pullForRecruiter(uid, store);
+      } else {
+        await appConfig.pullForCandidate(uid, store);
+      }
+      // AppStore/prefs are updated by now, but the API Credentials fields were
+      // only seeded once from the store — push the fresh values in explicitly.
+      _apiCredsKey.currentState?.refreshFromStore();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('API keys retrieved from cloud.')),
+      );
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Retrieve failed: $e')));
+    } finally {
+      if (mounted) setState(() => _retrieving = false);
+    }
+  }
+
+  // Cloud-sync card: save/retrieve this account's own API keys. Shown for
+  // both roles; recruiters additionally rely on Save so their candidates'
+  // devices can pull the org's keys at interview launch.
   Widget _buildCloudSyncCard(ThemeData theme) {
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -156,39 +201,87 @@ class _SettingsPageState extends State<SettingsPage> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: theme.colorScheme.outline.withOpacity(0.6)),
       ),
-      child: ListTile(
-        leading: const AppleIconBadge(
-          icon: Icons.cloud_upload_outlined,
-          color: Color(0xFF0EA5E9),
-          size: 32,
-        ),
-        title: Text(
-          'Sync API keys to cloud',
-          style: theme.textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: theme.colorScheme.onSurface,
-          ),
-        ),
-        subtitle: Text(
-          'Push your saved keys so candidates you assign can reach Tavus / Gemini during their interviews.',
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-        ),
-        trailing: _syncing
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(100)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const AppleIconBadge(
+                  icon: Icons.cloud_outlined,
+                  color: Color(0xFF0EA5E9),
+                  size: 32,
                 ),
-                onPressed: _syncKeys,
-                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                label: const Text('Sync'),
-              ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Cloud key backup',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isRecruiter
+                            ? 'Save your API keys to the cloud so candidates you assign can reach Tavus / Gemini during their interviews, and so they survive a sign-out or new device.'
+                            : 'Save your API keys to the cloud so they survive a sign-out or new device.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(100)),
+                    ),
+                    onPressed: _retrieving ? null : _retrieveKeysFromCloud,
+                    icon: _retrieving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cloud_download_outlined, size: 18),
+                    label: const Text('Retrieve from Cloud'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(100)),
+                    ),
+                    onPressed: _syncing ? null : _saveKeysToCloud,
+                    icon: _syncing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Icon(Icons.cloud_upload_outlined, size: 18),
+                    label: const Text('Save to Cloud'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

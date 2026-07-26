@@ -42,13 +42,20 @@ abstract class RecruiterCredentialsRepository {
 /// header for the migration.
 class FirestoreRecruiterCredentialsRepository
     implements RecruiterCredentialsRepository {
-  FirestoreRecruiterCredentialsRepository({FirebaseFirestore? firestore})
-      : _db = firestore ?? FirebaseFirestore.instance;
+  FirestoreRecruiterCredentialsRepository({
+    FirebaseFirestore? firestore,
+    this.collection = 'recruiter_keys',
+  }) : _db = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _db;
 
+  /// Firestore collection holding the credential docs. Defaults to
+  /// `recruiter_keys`; pass `candidate_keys` for a candidate's own personal
+  /// key backup (see `candidate_keys/{uid}` in firestore.rules).
+  final String collection;
+
   DocumentReference<Map<String, dynamic>> _doc(String recruiterId) =>
-      _db.collection('recruiter_keys').doc(recruiterId);
+      _db.collection(collection).doc(recruiterId);
 
   @override
   Future<RecruiterCredentials> fetch(String recruiterId) async {

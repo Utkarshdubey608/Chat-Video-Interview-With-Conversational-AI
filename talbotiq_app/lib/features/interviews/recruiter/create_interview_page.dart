@@ -381,16 +381,27 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     });
   }
 
-  /// Non-empty per-test key overrides, or an empty map when custom keys are
-  /// off. Blank fields are omitted so they fall back to the recruiter's keys.
+  /// Per-test key snapshot, pinned at save time so this test keeps working on
+  /// the same keys even if the recruiter's own default keys change later. When
+  /// "Use Custom Keys" is on, the typed override values are used instead;
+  /// otherwise this snapshots the recruiter's CURRENT Settings keys. Blank
+  /// entries are omitted (they'd fall back to the recruiter's live default at
+  /// launch, which only happens for a key nobody has ever set).
   Map<String, String> get _keyOverrides {
-    if (!_useCustomKeys) return const {};
-    final entries = {
-      'tavusKey': _tavusKeyController.text.trim(),
-      'geminiKey': _geminiKeyController.text.trim(),
-      'humeKey': _humeKeyController.text.trim(),
-      'deepgramKey': _deepgramKeyController.text.trim(),
-    };
+    final store = context.read<AppStore>();
+    final entries = _useCustomKeys
+        ? {
+            'tavusKey': _tavusKeyController.text.trim(),
+            'geminiKey': _geminiKeyController.text.trim(),
+            'humeKey': _humeKeyController.text.trim(),
+            'deepgramKey': _deepgramKeyController.text.trim(),
+          }
+        : {
+            'tavusKey': store.tavusKey.trim(),
+            'geminiKey': store.geminiKey.trim(),
+            'humeKey': store.humeKey.trim(),
+            'deepgramKey': store.deepgramKey.trim(),
+          };
     entries.removeWhere((_, v) => v.isEmpty);
     return entries;
   }
@@ -1116,6 +1127,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             ),
             const SizedBox(height: 16),
             _buildAvatarSection(theme),
+            const SizedBox(height: 20),
+            _buildQuestions(theme),
           ] else if (_type == InterviewType.chat) ...[
             _buildQuestionSourceToggle(theme),
             const SizedBox(height: 16),
@@ -1776,7 +1789,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Optional override for this specific interview. Leave custom keys disabled to use the global keys configured in your Settings.',
+                    'This test is pinned to your current Settings keys when saved, so it keeps working even if you change your default keys later. Turn on custom keys to use different ones for this test only.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       fontSize: 12,

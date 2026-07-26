@@ -63,6 +63,11 @@ class _LoginPageState extends State<LoginPage> {
 
     final auth = context.read<AuthService>();
     try {
+      // AuthGate handles routing AND auto-pulling this account's cloud-synced
+      // API keys on the resulting auth-state change (it's the one place that
+      // sees every way a session becomes active, including an app relaunch
+      // that resumes an existing session — not just this form) — so this
+      // only needs to perform the sign-in/sign-up itself.
       if (_isSignUp) {
         await auth.signUp(
           email: email,
@@ -73,7 +78,6 @@ class _LoginPageState extends State<LoginPage> {
       } else {
         await auth.signIn(email: email, password: password);
       }
-      // AuthGate handles routing on the auth-state change.
     } on FirebaseAuthException catch (e) {
       setState(() => _error = _friendlyError(e));
     } catch (e) {

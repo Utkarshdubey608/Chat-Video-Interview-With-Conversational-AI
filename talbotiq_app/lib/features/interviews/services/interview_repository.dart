@@ -125,6 +125,16 @@ class InterviewRepository {
     });
   }
 
+  /// Updates just this test's pinned API key overrides — a narrower write than
+  /// [CreateInterviewPage]'s full edit form, used by the "Test Key" quick-edit
+  /// dialog on the interview card.
+  Future<void> updateKeyOverrides(String id, Map<String, String> keyOverrides) {
+    return _col.doc(id).update({
+      'keyOverrides': keyOverrides,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   /// "End test" — publish results for every candidate of [testId] owned by
   /// [recruiterId], in one batch.
   Future<void> publishTest(String testId, String recruiterId) async {

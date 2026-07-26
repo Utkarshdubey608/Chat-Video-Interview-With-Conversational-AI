@@ -52,7 +52,8 @@ Future<void> launchVoiceInterview({
         companyName: interview.recruiterName ?? 'TalbotIQ',
         voiceName: interview.voiceName,
         // Fire-and-forget scoring on graceful completion; the candidate never
-        // sees the score. A failed/short interview stays retakeable.
+        // sees the score. Completion (a placeholder result, upgraded if/when
+        // scoring succeeds) is written unconditionally in _scoreAndStore.
         onFinished: (state, responses) {
           if (state == GeminiLiveState.ended) {
             _scoreAndStore(
@@ -67,8 +68,14 @@ Future<void> launchVoiceInterview({
     ),
   );
 
-  // The attempt has started — count it, then restore the candidate's own keys.
-  repo.incrementAttempt(interview.id);
+  // The attempt has started — count it, then restore the candidate's own
+  // keys. Best-effort/unawaited, so it must catch its own errors — an
+  // unawaited Future's rejection is otherwise an uncaught async error (e.g.
+  // if Firestore is unreachable), regardless of any try/catch around the
+  // caller's `await launchVoiceInterview(...)`.
+  repo
+      .incrementAttempt(interview.id)
+      .catchError((e) => debugPrint('incrementAttempt failed: $e'));
   await store.reloadApiKeysFromPrefs();
 }
 
@@ -128,6 +135,28 @@ Future<void> _scoreAndStore({
   required Interview interview,
   required List<String> responses,
 }) async {
+  // The candidate finished the call — mark it completed with an empty/
+  // unscored placeholder immediately, before attempting AI scoring below.
+  // Mirrors the video track's fix (see candidate_video_shell.dart): scoring
+  // can fail, or the transcript can be too short to score, but the candidate
+  // genuinely completed the interview and must not be offered a "fresh"
+  // relaunch that silently burns another attempt with nothing to show for
+  // the first one. `evaluatedBy: ''` tells the recruiter's review screen
+  // nothing has scored this yet, so they can evaluate it manually.
+  try {
+    await repo.completeWithResult(interview.id, {
+      'overallScore': 0,
+      'summary': '',
+      'recommendation': '',
+      'strengths': const <String>[],
+      'improvements': const <String>[],
+      'evaluatedBy': '',
+    });
+  } catch (_) {
+    // Placeholder write failed (e.g. offline) — fall through and still try
+    // the real scoring attempt below.
+  }
+
   try {
     // Drop an obvious leading readiness/short-affirmation reply ("Yes, I'm
     // ready") if present. The Live model always opens with "are you ready?", so
@@ -141,8 +170,8 @@ Future<void> _scoreAndStore({
     }
 
     final combined = scored.join(' ').trim();
-    // Not enough was said to score meaningfully — leave the interview
-    // in-progress/retakeable rather than writing a placeholder result.
+    // Not enough was said to score meaningfully — leave the placeholder above
+    // as the final result rather than attempting to score it.
     if (combined.length < 30) return;
 
     geminiService.setKey(store.geminiKey);
@@ -182,14 +211,27 @@ Future<void> _scoreAndStore({
     await repo.completeWithResult(interview.id, {
       'overallScore': sc.overallFitScore ?? 0,
       'summary': sc.hiringRecommendationRationale,
-      'recommendation': sc.hiringRecommendation,
+      'recommendation': mapHiringRecommendationToCanonical(sc.hiringRecommendation),
       'strengths': sc.topStrengths,
       'improvements': sc.topConcerns,
       'evaluatedBy': 'ai',
       'detail': sc.toJson(),
+      // Best-effort only: paired by position, not real attribution (see the
+      // NOTE above on why voice has no reliable per-question mapping).
+      'responsesApproximate': true,
+      'responses': [
+        for (var idx = 0; idx < scored.length; idx++)
+          {
+            'question': idx < interview.questions.length
+                ? interview.questions[idx]
+                : 'Additional response',
+            'answer': scored[idx],
+          },
+      ],
     });
   } catch (_) {
-    // Scoring failed (no/short answers, network, key) — leave the interview
-    // retakeable instead of persisting a bad result.
+    // Scoring failed (no/short answers, network, key) — the placeholder
+    // written above already marked the interview completed; the recruiter
+    // evaluates it manually instead.
   }
 }

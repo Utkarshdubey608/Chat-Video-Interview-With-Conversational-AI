@@ -244,15 +244,22 @@ class TavusService {
       final response = await _api.get(url, headers: _authHeaders());
       if (kDebugMode) {
         print('debug: GET transcript status: ${response.statusCode}');
-        final bodyPreview = response.body.length > 2000
-            ? response.body.substring(0, 2000) + '...'
-            : response.body;
-        print('debug: GET transcript body preview: $bodyPreview');
+        // debugPrint (not print) so the full body survives Android logcat's
+        // ~1000-char-per-line truncation — this is the exact raw response
+        // Tavus returns for the ended conversation, unabridged.
+        debugPrint('debug: [Tavus] raw transcript response body:\n${response.body}');
       }
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
-        return _parseTranscriptResponse(body);
+        final parsed = _parseTranscriptResponse(body);
+        if (kDebugMode) {
+          debugPrint(
+            'debug: [Tavus] parsed ${parsed.length} transcript entries:\n'
+            '${parsed.map((e) => '  [${e.role}] ${e.text}').join('\n')}',
+          );
+        }
+        return parsed;
       } else {
         // Carry the status code so fetchTranscriptWithRetry can fast-fail on
         // auth / not-found instead of pointlessly retrying.
@@ -378,6 +385,92 @@ class TavusService {
     }
 
     return entries;
+  }
+
+  // Stopwords stripped before comparing an avatar utterance to a scripted
+  // question, so matching keys on the distinctive nouns/verbs ("pressure",
+  // "deadlines") rather than words nearly every question shares ("how",
+  // "do", "you").
+  static const Set<String> _stopWords = {
+    'a', 'an', 'the', 'is', 'are', 'do', 'does', 'did', 'you', 'your',
+    'to', 'of', 'and', 'in', 'on', 'for', 'me', 'i', 'we', 'us', 'it',
+    'that', 'this', 'with', 'how', 'what', 'where', 'when', 'why', 'who',
+    'have', 'has', 'had', 'can', 'could', 'would', 'will', 'tell', 'about',
+    'be', 'or', 'as', 'from', 'yourself',
+  };
+
+  Set<String> _significantTokens(String text) => text
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty && !_stopWords.contains(w))
+      .toSet();
+
+  /// Jaccard similarity (0-1) between two strings' significant tokens.
+  double _similarity(String a, String b) {
+    final ta = _significantTokens(a);
+    final tb = _significantTokens(b);
+    if (ta.isEmpty || tb.isEmpty) return 0.0;
+    final intersection = ta.intersection(tb).length;
+    final union = ta.union(tb).length;
+    return union == 0 ? 0.0 : intersection / union;
+  }
+
+  /// Assigns each entry's `questionIdx` by walking the transcript in its
+  /// actual conversational order and fuzzy-matching each avatar utterance
+  /// against [questions] to detect when a new question starts — candidate
+  /// lines are attributed to whichever question most recently matched.
+  ///
+  /// This replaces an earlier wall-clock-timestamp-bucketing approach that
+  /// compared entry timestamps against `AppStore.questionTimestamps` (when
+  /// the *local UI* advanced to each question). That signal turned out to be
+  /// unreliable in practice: the local UI's pacing (manual next/prev taps, or
+  /// a fixed auto-advance timer) has no real connection to when Tavus's
+  /// avatar actually asked each question in the live call, so timestamp
+  /// bucketing could — and did, in testing — dump an entire session's answers
+  /// into one question's bucket while leaving the rest blank. Using the
+  /// transcript's own chronological avatar/candidate ordering (ground truth
+  /// from the actual conversation) instead of a disconnected local proxy is
+  /// far more robust.
+  List<TranscriptEntry> sliceTranscriptByQuestion(
+    List<TranscriptEntry> entries,
+    List<String> questions,
+  ) {
+    if (entries.isEmpty || questions.isEmpty) return entries;
+
+    // Minimum token-overlap ratio for an avatar line to count as "asking"
+    // a given question rather than small talk ("Thanks for sharing that.").
+    const matchThreshold = 0.34;
+
+    var currentIdx = 0;
+    final result = <TranscriptEntry>[];
+    for (final e in entries) {
+      if (e.role == 'avatar') {
+        // Only consider questions at or after the current one — the avatar
+        // moves forward through the script, never backward, so this also
+        // guards against a stray high-overlap match to an already-asked
+        // question re-appearing (e.g. in a wrap-up remark).
+        var bestIdx = -1;
+        var bestScore = 0.0;
+        for (var i = currentIdx; i < questions.length; i++) {
+          final score = _similarity(e.text, questions[i]);
+          if (score > bestScore) {
+            bestScore = score;
+            bestIdx = i;
+          }
+        }
+        if (bestIdx != -1 && bestScore >= matchThreshold) {
+          currentIdx = bestIdx;
+        }
+      }
+      result.add(TranscriptEntry(
+        text: e.text,
+        role: e.role,
+        timestamp: e.timestamp,
+        questionIdx: currentIdx,
+      ));
+    }
+    return result;
   }
 
   TranscriptEntry? _transcriptEntryFromItem(dynamic item) {
