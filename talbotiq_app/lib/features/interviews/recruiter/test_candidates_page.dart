@@ -194,6 +194,80 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
     }
   }
 
+  /// Deletes the whole test and every candidate's data for it.
+  ///
+  /// Irreversible and bulk, so it requires typing DELETE rather than a single
+  /// tap — a mis-tap here would wipe every response for the test.
+  Future<void> _confirmDeleteTest() async {
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    final countLabel =
+        _total >= 0 ? '$_total candidate(s)' : 'every candidate';
+
+    final ctrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('Delete entire test?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This permanently deletes "${widget.test.title}" and the '
+                  'assignments, answers and AI reports of $countLabel who took '
+                  'it. This cannot be undone.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Text('Type DELETE to confirm',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(isDense: true),
+                  onChanged: (_) => setLocal(() {}),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: ctrl.text.trim().toUpperCase() == 'DELETE'
+                    ? () => Navigator.pop(ctx, true)
+                    : null,
+                child: Text('Delete test',
+                    style: TextStyle(color: theme.colorScheme.error)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    ctrl.dispose();
+    if (ok != true) return;
+
+    try {
+      final n = await repo.deleteTest(_testId, _uid);
+      if (!mounted) return;
+      // Nothing left to show — return to the dashboard.
+      navigator.pop();
+      messenger.showSnackBar(SnackBar(
+          content: Text('Test deleted ($n candidate record(s) removed).')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -208,6 +282,25 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
               icon: const Icon(Icons.publish_outlined),
               onPressed: _publishAll,
             ),
+          PopupMenuButton<String>(
+            tooltip: 'Test actions',
+            onSelected: (v) {
+              if (v == 'delete') _confirmDeleteTest();
+            },
+            itemBuilder: (ctx) => [
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_forever_outlined,
+                        size: 18, color: Theme.of(ctx).colorScheme.error),
+                    const SizedBox(width: 10),
+                    const Text('Delete entire test'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(
@@ -750,6 +843,25 @@ class _InterviewCard extends StatelessWidget {
                             : 'Evaluate & publish'),
                       ),
                     ),
+                  if (i.result != null) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 48,
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100)),
+                        ),
+                        // Clears the answers/report but keeps the candidate
+                        // assigned, so they can retake — unlike "Delete", which
+                        // removes them from the test entirely.
+                        onPressed: () => _confirmClearResult(context, i),
+                        icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                        label: const Text('Delete response (allow retake)'),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -798,13 +910,57 @@ class _InterviewCard extends StatelessWidget {
     );
   }
 
+  /// Wipes this candidate's answers + AI report and returns them to "assigned"
+  /// so they can sit the test again. Keeps the assignment itself.
+  Future<void> _confirmClearResult(BuildContext context, Interview i) async {
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    final name = i.candidateName?.trim().isNotEmpty == true
+        ? i.candidateName!.trim()
+        : i.candidateEmail;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this response?'),
+        content: Text(
+          "$name's answers and AI report for this test will be permanently "
+          'deleted, and they will be able to take it again. The assignment '
+          'itself is kept.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Delete response',
+                style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await repo.clearResult(i.id);
+      if (context.mounted) Navigator.pop(context); // close the detail sheet
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Response deleted; candidate can retake.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+    }
+  }
+
   Future<void> _confirmDelete(BuildContext context, Interview i) async {
     final repo = context.read<InterviewRepository>();
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Delete interview?'),
-        content: Text('“${i.title}” will be removed for the candidate too.'),
+        title: const Text('Remove candidate from test?'),
+        content: Text(
+          'This deletes the assignment AND any response for “${i.title}”. '
+          'The candidate will no longer see this test at all. To wipe only '
+          'their answers and let them retake, use "Delete response" instead.',
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),

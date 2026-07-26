@@ -338,6 +338,67 @@ class InterviewRepository {
     return summaries.length;
   }
 
+  /// Clears one candidate's RESPONSE while keeping them assigned to the test:
+  /// drops the stored result, un-publishes it, and resets the status so they can
+  /// take it again. Distinct from [delete], which removes the assignment
+  /// entirely.
+  Future<void> clearResult(String id) {
+    return _col.doc(id).update({
+      'result': FieldValue.delete(),
+      'resultPublished': false,
+      'status': InterviewStatus.assigned.wire,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Deletes an ENTIRE test: every candidate assignment/response belonging to
+  /// [testId], plus the test's own metadata doc. Irreversible.
+  ///
+  /// Returns how many candidate documents were removed. Ownership is verified
+  /// against [recruiterId] on the query, so this can never reach another
+  /// recruiter's data even if a stale testId is passed.
+  Future<int> deleteTest(String testId, String recruiterId) async {
+    if (testId.isEmpty || recruiterId.isEmpty) return 0;
+
+    final q = await _col
+        .where('recruiterId', isEqualTo: recruiterId)
+        .where('testId', isEqualTo: testId)
+        .get();
+    final docs = q.docs.toList();
+
+    // Tests created before `testId` was populated group under the interview's
+    // OWN id, so that document would not match the query above. Include it, but
+    // only after confirming it belongs to this recruiter.
+    if (docs.every((d) => d.id != testId)) {
+      final legacy = await _col.doc(testId).get();
+      if (legacy.exists && legacy.data()?['recruiterId'] == recruiterId) {
+        docs.add(legacy as QueryDocumentSnapshot<Map<String, dynamic>>);
+      }
+    }
+
+    // Firestore hard-caps a batch at 500 writes; stay well under and commit
+    // chunk by chunk.
+    const chunk = 400;
+    for (var i = 0; i < docs.length; i += chunk) {
+      final end = (i + chunk < docs.length) ? i + chunk : docs.length;
+      final batch = _db.batch();
+      for (final d in docs.sublist(i, end)) {
+        batch.delete(d.reference);
+      }
+      await batch.commit();
+    }
+
+    // Remove the metadata doc last: if anything above fails, the test still
+    // shows on the dashboard rather than leaving orphaned candidate rows that
+    // nothing links to.
+    try {
+      await _tests.doc(testId).delete();
+    } catch (e) {
+      debugPrint('deleteTest: metadata doc cleanup failed for $testId: $e');
+    }
+    return docs.length;
+  }
+
   /// "End test" — publish results for every candidate of [testId] owned by
   /// [recruiterId], in one batch.
   Future<void> publishTest(String testId, String recruiterId) async {

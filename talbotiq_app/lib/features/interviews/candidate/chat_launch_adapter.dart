@@ -130,6 +130,9 @@ Widget buildChatRunnerPage({
     // generate them (résumé-grounded via the runner's built-in résumé step).
     fixedQuestionsOverride: isAdaptive ? null : fixed,
     candidateMode: true,
+    // Recruiter-configured whole-interview limit; null = no cap.
+    maxDurationSeconds:
+        interview.durationMinutes > 0 ? interview.durationMinutes * 60 : null,
     onFinished: (completedSession, report) {
       // Store an UNPUBLISHED canonical result so the recruiter can review,
       // edit and publish it. The candidate does not see it yet.

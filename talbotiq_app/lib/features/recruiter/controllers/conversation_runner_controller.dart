@@ -45,8 +45,23 @@ class ConversationRunnerController extends ChangeNotifier
   final void Function(InterviewSession completedSession, ResultReport report)?
       onFinished;
 
+  /// Recruiter-configured whole-interview time limit, in seconds. Independent
+  /// of per-question timed mode (`isTimed`/`conversationTiming`, which govern
+  /// one question's thinking→answer window). Null = no overall cap, e.g. a
+  /// recruiter previewing a template.
+  final int? maxDurationSeconds;
+
   late ConversationEngine engine;
   ConvStage stage = ConvStage.welcome;
+
+  /// True only when [_finish] was triggered by the overall cap expiring, so the
+  /// UI can explain why the interview submitted itself.
+  bool timedOut = false;
+
+  /// Absolute epoch-ms deadline for the whole interview, or null if uncapped.
+  /// Absolute (rather than a decrementing counter) so a delayed or dropped tick
+  /// cannot let the session overrun.
+  int? overallDeadlineMs;
 
   String _resumeText;
   bool starting = false; // begin() in flight
@@ -108,6 +123,7 @@ class ConversationRunnerController extends ChangeNotifier
     required this.store,
     this.fixedQuestionsOverride,
     this.onFinished,
+    this.maxDurationSeconds,
   }) : _resumeText = session.resumeText ?? '' {
     engine = ConversationEngine(
       template: template,
@@ -191,6 +207,9 @@ class ConversationRunnerController extends ChangeNotifier
       _immersive = true;
     }
     stage = ConvStage.running;
+    if (maxDurationSeconds != null) {
+      overallDeadlineMs = _now + maxDurationSeconds! * 1000;
+    }
     notifyListeners();
     final startedMs = _now;
     try {
@@ -215,7 +234,10 @@ class ConversationRunnerController extends ChangeNotifier
       return;
     }
     _rearmTimedAwaiting();
-    if (isTimed) {
+    // Tick when EITHER a per-question timer or the overall cap is active. An
+    // untimed conversation with only an overall cap previously never ticked, so
+    // the cap could never fire.
+    if (isTimed || overallDeadlineMs != null) {
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
     }
     notifyListeners();
@@ -223,6 +245,17 @@ class ConversationRunnerController extends ChangeNotifier
 
   void _onTick() {
     if (stage != ConvStage.running) return;
+    final deadline = overallDeadlineMs;
+    if (deadline != null && _now >= deadline) {
+      // Time's up: finish and score whatever was answered so far, exactly as a
+      // natural completion would.
+      timedOut = true;
+      unawaited(_finish());
+      return;
+    }
+    // Only the per-question path notifies each second; the overall countdown
+    // chip ticks itself, so an untimed interview isn't rebuilt every second.
+    if (!isTimed) return;
     final expired = engine.advanceTiming(_now);
     if (expired) {
       final draft = engine.awaitingInterviewer?.draft ?? '';

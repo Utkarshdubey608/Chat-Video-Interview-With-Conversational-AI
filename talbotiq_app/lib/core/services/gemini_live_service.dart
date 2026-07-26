@@ -171,6 +171,43 @@ class GeminiLiveService {
   bool _endedByUser = false; // graceful End tapped; suppress close-as-error
   bool _finished = false; // a terminal event has been emitted
 
+  bool _audioSessionReady = false;
+
+  // Streaming playback: queued WAV segments of the current interviewer turn.
+  // ~0.5s of PCM24k mono is enough of a lead-in to play smoothly while the rest
+  // is still generating.
+  static const int _minFlushBytes = 24000;
+  final List<Uint8List> _clipQueue = [];
+  bool _playing = false;
+
+  /// True once the model has signalled turnComplete, so the queue draining is
+  /// the end of the reply (and not just a lull between chunks).
+  bool _turnAudioComplete = false;
+
+  // Debug-only mic telemetry (see sendAudioChunk).
+  int _micChunks = 0;
+  int _micBytes = 0;
+  int _micPeak = 0;
+
+  /// True only when the terminal [GeminiLiveState.ended] was reached because
+  /// [maxDuration] elapsed (rather than the candidate tapping End, or the idle
+  /// watchdog) — lets the host UI explain why the call submitted itself.
+  bool endedByTimeout = false;
+
+  // Wall-clock moment [connect] armed the max-duration timer, so the host UI
+  // can render a countdown via [remaining] without needing a per-tick event.
+  DateTime? _connectedAt;
+
+  /// Time left before [maxDuration] force-ends the call, or null before
+  /// [connect] armed the timer. Derived from elapsed wall-clock time, so it is
+  /// correct however often the caller polls it.
+  Duration? get remaining {
+    final startedAt = _connectedAt;
+    if (startedAt == null) return null;
+    final left = maxDuration - DateTime.now().difference(startedAt);
+    return left.isNegative ? Duration.zero : left;
+  }
+
   GeminiLiveState _state = GeminiLiveState.connecting;
   GeminiLiveState get state => _state;
 
@@ -271,14 +308,45 @@ class GeminiLiveService {
     final channel = _channel;
     if (channel == null) return;
     final b64 = base64Encode(pcm16);
+
+    // `mediaChunks` — NOT `audio`. BidiGenerateContentRealtimeInput has carried
+    // `media_chunks` since the API shipped; `audio` is a newer alias that not
+    // every model/revision accepts. Protobuf silently DISCARDS unrecognised
+    // fields, so sending the wrong one produces no error at all: the
+    // interviewer still speaks (its kickoff is plain text) while the
+    // candidate's audio is dropped on the floor — i.e. "it can't hear me".
     _sendJson({
       'realtimeInput': {
-        'audio': {
-          'data': b64,
-          'mimeType': 'audio/pcm;rate=$_inputSampleRate',
-        },
+        'mediaChunks': [
+          {
+            'mimeType': 'audio/pcm;rate=$_inputSampleRate',
+            'data': b64,
+          },
+        ],
       },
     });
+
+    if (kDebugMode) {
+      _micChunks++;
+      _micBytes += pcm16.lengthInBytes;
+      // Peak amplitude over this chunk (PCM16 little-endian), so the log
+      // distinguishes "mic is delivering silence" from "mic is fine but Gemini
+      // isn't transcribing" — without it, both look identical.
+      var peak = 0;
+      for (var i = 0; i + 1 < pcm16.lengthInBytes; i += 2) {
+        var v = pcm16[i] | (pcm16[i + 1] << 8);
+        if (v >= 0x8000) v -= 0x10000;
+        final a = v.abs();
+        if (a > peak) peak = a;
+      }
+      if (peak > _micPeak) _micPeak = peak;
+      // Roughly once a second at 16 kHz mono.
+      if (_micChunks % 30 == 0) {
+        debugPrint('debug[live]: mic chunks=$_micChunks bytes=$_micBytes '
+            'peak=$_micPeak/32767 muted=$_muted');
+        _micPeak = 0;
+      }
+    }
   }
 
   /// Mutes/unmutes the microphone. While muted, captured chunks are dropped so
@@ -385,7 +453,9 @@ class GeminiLiveService {
           'automaticActivityDetection': {
             'startOfSpeechSensitivity': 'START_SENSITIVITY_HIGH',
             'endOfSpeechSensitivity': 'END_SENSITIVITY_HIGH',
-            'prefixPaddingMs': 20,
+            // 20ms clipped the onset of words, which cost recognition
+            // accuracy and made the model slower to commit to a turn.
+            'prefixPaddingMs': 150,
             'silenceDurationMs': 500,
           },
         },
@@ -441,6 +511,10 @@ class GeminiLiveService {
   Future<void> _onSetupComplete() async {
     if (_setupComplete) return;
     _setupComplete = true;
+    if (kDebugMode) debugPrint('debug[live]: setupComplete — audio accepted');
+    // Set the session BEFORE the mic starts and before any playback, so the
+    // first interviewer utterance cannot clobber the input path.
+    await _configureAudioSession();
     _emitState(GeminiLiveState.greeting);
     // Native audio only speaks when prompted — send the opening turn now.
     if (_kickoffPrompt.isNotEmpty) {
@@ -461,6 +535,10 @@ class GeminiLiveService {
             final inline = part['inlineData'];
             if (inline is Map && inline['data'] is String) {
               _outBuffer.add(base64Decode(inline['data'] as String));
+              // Start speaking as soon as there's a lead-in buffer rather than
+              // waiting for the whole turn.
+              _turnAudioComplete = false;
+              _enqueueAudio(force: false);
             }
           }
         }
@@ -499,9 +577,11 @@ class GeminiLiveService {
     if (sc['interrupted'] == true) {
       _pendingInterviewer.clear();
       _outBuffer.clear();
-      // Stop current playback (fire-and-forget; ordering with the state event
-      // below is not important — the UI just needs to know it was interrupted).
-      unawaited(_stopPlayback());
+      _turnAudioComplete = true;
+      // Drop queued segments too — with streaming playback the rest of the
+      // interrupted reply is still sitting in the queue and would otherwise
+      // keep talking over the candidate.
+      unawaited(_clearAudioQueue());
       _emit(const GeminiLiveInterrupted());
       _emitState(GeminiLiveState.listening);
     }
@@ -518,8 +598,15 @@ class GeminiLiveService {
         _pendingInterviewer.clear();
         _emit(GeminiLiveCaption(CaptionRole.interviewer, interviewer, true));
       }
-      // Flush the accumulated interviewer audio for this turn.
-      unawaited(_flushOutputAudio());
+      // Queue whatever is left of this turn; the queue draining now marks the
+      // handover to the candidate.
+      _turnAudioComplete = true;
+      _enqueueAudio(force: true);
+      // Nothing was generated (e.g. a text-only turn) — hand over immediately
+      // instead of waiting for a completion event that will never fire.
+      if (!_playing && _clipQueue.isEmpty && !_finished) {
+        _emitState(GeminiLiveState.listening);
+      }
     }
   }
 
@@ -599,6 +686,10 @@ class GeminiLiveService {
         await _recorder.stop();
         return;
       }
+      if (kDebugMode) {
+        debugPrint('debug[live]: mic stream started '
+            '(pcm16 ${_inputSampleRate}Hz mono)');
+      }
       _micSub = stream.listen(
         sendAudioChunk,
         onError: (Object e, StackTrace _) {
@@ -623,30 +714,113 @@ class GeminiLiveService {
   // Interviewer audio playback (PCM24k -> WAV -> BytesSource)
   // =========================================================================
 
-  Future<void> _flushOutputAudio() async {
-    if (_disposed) return;
-    if (_outBuffer.isEmpty) return;
-    final pcm = _outBuffer.takeBytes(); // clears the builder
-    final wav = _pcmToWav(pcm, sampleRate: _outputSampleRate);
+  /// Configures the player for SIMULTANEOUS record + playback, once.
+  ///
+  /// This is a two-way call, but audioplayers defaults to a music-playback
+  /// session: on Android `audioFocus: AndroidAudioFocus.gain` requests
+  /// EXCLUSIVE focus, and on iOS the category defaults to `playback`, which
+  /// deactivates recording outright. Either one silences the microphone the
+  /// moment the interviewer's first utterance plays — which is exactly the
+  /// failure mode where the greeting is audible and nothing the candidate says
+  /// is ever heard afterwards.
+  ///
+  /// So: voice-communication usage, speaker output, and NO audio-focus grab, so
+  /// the recorder keeps the input path.
+  Future<void> _configureAudioSession() async {
+    if (_audioSessionReady) return;
+    _audioSessionReady = true;
+    try {
+      await _player.setAudioContext(
+        AudioContext(
+          android: const AudioContextAndroid(
+            isSpeakerphoneOn: true,
+            stayAwake: true,
+            contentType: AndroidContentType.speech,
+            usageType: AndroidUsageType.voiceCommunication,
+            // Critical: do NOT take exclusive focus away from the recorder.
+            audioFocus: AndroidAudioFocus.none,
+          ),
+          iOS: AudioContextIOS(
+            // playAndRecord is required; the default `playback` category tears
+            // down the mic.
+            category: AVAudioSessionCategory.playAndRecord,
+            options: const {
+              AVAudioSessionOptions.defaultToSpeaker,
+              AVAudioSessionOptions.allowBluetooth,
+              AVAudioSessionOptions.mixWithOthers,
+            },
+          ),
+        ),
+      );
+      if (kDebugMode) {
+        debugPrint('debug[live]: audio session set for record+playback');
+      }
+    } catch (e) {
+      // Never fatal: worst case we fall back to the default session and the
+      // caller still hears the interviewer.
+      if (kDebugMode) debugPrint('debug[live]: audio session setup failed: $e');
+    }
+  }
 
-    // The first interviewer utterance is the greeting; subsequent ones are
-    // regular speaking turns.
+  /// Cuts whatever audio has accumulated into a clip and queues it for
+  /// playback.
+  ///
+  /// Called BOTH as chunks stream in (once there is a lead-in buffer) and at
+  /// turnComplete for the remainder. Previously the whole turn was buffered and
+  /// only played on turnComplete, so the candidate heard nothing until the model
+  /// had finished generating the entire reply — dead air after every answer,
+  /// which is what made the conversation feel one-way. Now the interviewer
+  /// starts talking about half a second in.
+  void _enqueueAudio({required bool force}) {
+    if (_disposed) return;
+    final len = _outBuffer.length;
+    if (len == 0) return;
+    if (!force && len < _minFlushBytes) return;
+
+    final pcm = _outBuffer.takeBytes(); // clears the builder
+    _clipQueue.add(_pcmToWav(pcm, sampleRate: _outputSampleRate));
+
+    // The first interviewer utterance is the greeting; later ones are normal
+    // speaking turns.
     _emitState(_greeted ? GeminiLiveState.speaking : GeminiLiveState.greeting);
     _greeted = true;
 
     _playerCompleteSub ??= _player.onPlayerComplete.listen((_) {
-      // When the interviewer finishes speaking it's the candidate's turn.
-      if (!_disposed && !_finished) _emitState(GeminiLiveState.listening);
+      _playing = false;
+      // Chain straight into the next queued clip so consecutive segments of one
+      // reply run back to back.
+      if (_clipQueue.isNotEmpty) {
+        unawaited(_playNextClip());
+        return;
+      }
+      // Nothing left AND the model finished the turn -> candidate's turn.
+      if (!_disposed && !_finished && _turnAudioComplete) {
+        _emitState(GeminiLiveState.listening);
+      }
     });
 
+    if (!_playing) unawaited(_playNextClip());
+  }
+
+  Future<void> _playNextClip() async {
+    if (_disposed || _playing || _clipQueue.isEmpty) return;
+    _playing = true;
+    final wav = _clipQueue.removeAt(0);
     try {
-      // Replace any in-flight playback with this turn's audio.
-      await _player.stop();
       await _player.play(BytesSource(wav, mimeType: 'audio/wav'));
     } catch (e) {
+      _playing = false;
       if (kDebugMode) debugPrint('debug[live]: playback failed: $e');
     }
   }
+
+  /// Drops queued + in-flight interviewer audio (barge-in, or teardown).
+  Future<void> _clearAudioQueue() async {
+    _clipQueue.clear();
+    _playing = false;
+    await _stopPlayback();
+  }
+
 
   Future<void> _stopPlayback() async {
     try {
@@ -721,10 +895,12 @@ class GeminiLiveService {
   // =========================================================================
 
   void _armMaxDurationTimer() {
+    _connectedAt = DateTime.now();
     _maxDurationTimer?.cancel();
     _maxDurationTimer = Timer(maxDuration, () {
       if (_disposed || _finished) return;
       // Hard cap reached -> end like any normal graceful finish.
+      endedByTimeout = true;
       unawaited(_finishGracefully());
     });
   }

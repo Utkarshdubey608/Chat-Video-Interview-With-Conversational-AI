@@ -240,46 +240,52 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
             ),
             const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(100)),
+           Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(100),
                     ),
-                    onPressed: _retrieving ? null : _retrieveKeysFromCloud,
-                    icon: _retrieving
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cloud_download_outlined, size: 18),
-                    label: const Text('Retrieve from Cloud'),
                   ),
+                  onPressed: _retrieving ? null : _retrieveKeysFromCloud,
+                  icon: _retrieving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_download_outlined, size: 18),
+                  label: const Text('Retrieve from Cloud'),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(100)),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(100),
                     ),
-                    onPressed: _syncing ? null : _saveKeysToCloud,
-                    icon: _syncing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.cloud_upload_outlined, size: 18),
-                    label: const Text('Save to Cloud'),
                   ),
+                  onPressed: _syncing ? null : _saveKeysToCloud,
+                  icon: _syncing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.cloud_upload_outlined, size: 18),
+                  label: const Text('Save to Cloud'),
                 ),
-              ],
-            ),
+              ),
+            ],
+          )
           ],
         ),
       ),

@@ -120,7 +120,7 @@ class _RecruiterHomeState extends State<RecruiterHome> {
         await _refresh(allowBackfill: false);
         if (!silent && mounted) {
           messenger.showSnackBar(
-            SnackBar(content: Text('Rebuilt $n test(s).')),
+            SnackBar(content: Text('$n test(s) found.')),
           );
         }
       } else if (!silent) {

@@ -51,6 +51,10 @@ Future<void> launchVoiceInterview({
         systemInstruction: _buildVoiceSystemInstruction(interview),
         companyName: interview.recruiterName ?? 'TalbotIQ',
         voiceName: interview.voiceName,
+        // Recruiter-configured limit; null (none set) keeps the service default.
+        maxDuration: interview.durationMinutes > 0
+            ? Duration(minutes: interview.durationMinutes)
+            : null,
         // Fire-and-forget scoring on graceful completion; the candidate never
         // sees the score. Completion (a placeholder result, upgraded if/when
         // scoring succeeds) is written unconditionally in _scoreAndStore.
@@ -97,7 +101,14 @@ String _buildVoiceSystemInstruction(Interview interview) {
         'Greet the candidate warmly, briefly confirm they are ready, then ask ONLY the '
         'planned questions below, one at a time, in order, with short natural acknowledgments '
         'between answers. Never reveal upcoming questions, never say question numbers, and do '
-        'not add questions beyond the plan. After the final question, thank the candidate warmly and end.');
+        'not add questions beyond the plan. After the final question, thank the candidate warmly and end.')
+    ..writeln(
+        'PACING — this is a live spoken conversation, so keep it snappy: at most '
+        'one or two short sentences per turn. Acknowledge the answer in a few '
+        'words, then ask the next question straight away. Do not summarise or '
+        'repeat back what the candidate said, do not preface questions with '
+        'long framing, and never monologue — long replies leave the candidate '
+        'sitting in silence and make the conversation feel one-sided.');
   if (interview.prompt.trim().isNotEmpty) {
     b.writeln('\nInterviewer guidance: ${interview.prompt.trim()}');
   }
@@ -170,9 +181,39 @@ Future<void> _scoreAndStore({
     }
 
     final combined = scored.join(' ').trim();
-    // Not enough was said to score meaningfully — leave the placeholder above
-    // as the final result rather than attempting to score it.
-    if (combined.length < 30) return;
+    // Too little was said to score meaningfully. Do NOT just bail: returning
+    // here left the blank placeholder written at the top of this function, so
+    // the recruiter opened an empty evaluation form with no score, no answers
+    // and no explanation — which is why voice results appeared to "not show up"
+    // at all. Write the raw responses plus the reason instead, so the recruiter
+    // sees what happened and can evaluate manually or regenerate.
+    if (combined.length < 30) {
+      try {
+        await repo.completeWithResult(interview.id, {
+          'overallScore': 0,
+          'summary': '',
+          'recommendation': '',
+          'strengths': const <String>[],
+          'improvements': const <String>[],
+          'evaluatedBy': '',
+          'evaluationError':
+              'No usable spoken answers were captured (only '
+              '${combined.length} character(s) of speech). The microphone may '
+              'have been muted or blocked, or the candidate did not answer.',
+          'responsesApproximate': true,
+          'responses': [
+            for (var idx = 0; idx < interview.questions.length; idx++)
+              {
+                'question': interview.questions[idx],
+                'answer': idx < scored.length ? scored[idx] : '',
+              },
+          ],
+        });
+      } catch (_) {
+        // Offline: the placeholder already marks it completed.
+      }
+      return;
+    }
 
     geminiService.setKey(store.geminiKey);
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -229,9 +270,41 @@ Future<void> _scoreAndStore({
           },
       ],
     });
-  } catch (_) {
-    // Scoring failed (no/short answers, network, key) — the placeholder
-    // written above already marked the interview completed; the recruiter
-    // evaluates it manually instead.
+  } catch (e) {
+    // Scoring failed (network, bad key, safety block...). Mirror the video
+    // track's fallback (candidate_video_shell._maybeSubmitFallbackOnFailure):
+    // still hand the recruiter the RAW responses plus the error, so their
+    // "Regenerate Results" button — which is gated on `responses` being
+    // non-empty — is actually usable. Without this the recruiter got a blank
+    // placeholder with no way to see what was said or re-score it.
+    try {
+      final scored = List<String>.from(responses);
+      if (scored.isNotEmpty && _isReadinessReply(scored.first)) {
+        scored.removeAt(0);
+      }
+      await repo.completeWithResult(interview.id, {
+        'overallScore': 0,
+        'summary': '',
+        'recommendation': '',
+        'strengths': const <String>[],
+        'improvements': const <String>[],
+        'evaluatedBy': '',
+        'evaluationError': e.toString().replaceAll('Exception: ', ''),
+        'responsesApproximate': true,
+        'responses': [
+          for (var idx = 0; idx < scored.length; idx++)
+            {
+              'question': idx < interview.questions.length
+                  ? interview.questions[idx]
+                  : 'Additional response',
+              'answer': scored[idx],
+            },
+        ],
+      });
+    } catch (_) {
+      // Even the fallback write failed (offline). The placeholder from the top
+      // of this function already marks the interview completed, so the
+      // recruiter can still evaluate it manually.
+    }
   }
 }
