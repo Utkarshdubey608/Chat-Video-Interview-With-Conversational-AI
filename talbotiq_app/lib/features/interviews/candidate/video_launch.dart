@@ -84,4 +84,5 @@ void _resetHumeState(AppStore store) {
   store.clearSessionTranscript();
   store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
   store.resetIntegrity();
+  store.resetProcessingStage();
 }

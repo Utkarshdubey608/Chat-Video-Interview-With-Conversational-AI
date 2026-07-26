@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemChrome, SystemUiMode;
 import 'package:provider/provider.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
@@ -27,7 +28,11 @@ class InterviewPage extends StatefulWidget {
 
 class _InterviewPageState extends State<InterviewPage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  bool _isFullscreen = false;
+  // Tracks whether we've put the OS chrome (status/nav bars) into immersive
+  // mode, so we only call SystemChrome when this actually needs to change —
+  // _syncRecordingWithRoute can otherwise fire on every unrelated store
+  // notification while the call is active.
+  bool _immersive = false;
 
   bool _autoAdvance = true;
   final bool _avatarSpeaking = false;
@@ -96,14 +101,30 @@ class _InterviewPageState extends State<InterviewPage>
     _syncRecordingWithRoute();
   }
 
-  /// Starts microphone recording when the interview becomes active.
+  /// Starts microphone recording and enters immersive full-screen chrome when
+  /// the interview becomes active; restores normal chrome otherwise.
   void _syncRecordingWithRoute() {
     final store = _store;
     if (store == null) return;
     final shouldRun = store.currentRoute == '/interview' && store.interviewActive;
     if (shouldRun) {
       _startRecording();
+      _setImmersive(true);
+    } else {
+      _setImmersive(false);
     }
+  }
+
+  /// Hides/restores the OS status and navigation bars so the call fills the
+  /// entire screen like a native video-call app. Guarded by [_immersive] so
+  /// SystemChrome is only touched on an actual transition, not on every
+  /// unrelated store notification while the call is active.
+  void _setImmersive(bool value) {
+    if (_immersive == value) return;
+    _immersive = value;
+    SystemChrome.setEnabledSystemUIMode(
+      value ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+    );
   }
 
   /// Cleans up active timers, controllers, listeners, and the recorder.
@@ -114,6 +135,7 @@ class _InterviewPageState extends State<InterviewPage>
     _fallbackRevealTimer?.cancel();
     _autoAdvanceTimeoutTimer?.cancel();
     _recorder.dispose();
+    _setImmersive(false);
     super.dispose();
   }
 
@@ -169,7 +191,8 @@ class _InterviewPageState extends State<InterviewPage>
     }
   }
 
-  /// Ends the interview session, finalises the recording, and redirects to results.
+  /// Ends the interview session, finalises the recording, and redirects to
+  /// results.
   Future<void> _endInterview() async {
     // Re-entrancy guard: a second invocation (e.g. an auto-advance timer firing
     // while this is running) must not reach stopAndReadBytes() a second time
@@ -252,6 +275,15 @@ class _InterviewPageState extends State<InterviewPage>
       }
     }
 
+    // Marks this conversation as needing the analysis pipeline (transcript →
+    // Gemini → recruiter handoff) on EVERY platform — unlike recordingBytes
+    // (native-only), this is what actually gates ResultsPage running the
+    // pipeline vs. just restoring a cached result.
+    final convId = store.currentConversation?.conversationId ?? '';
+    if (convId.isNotEmpty) {
+      store.markPendingAnalysis(convId);
+    }
+
     if (mounted) {
       store.navigateTo('/results');
     }
@@ -316,41 +348,39 @@ class _InterviewPageState extends State<InterviewPage>
     }
 
     return Scaffold(
-      backgroundColor: theme.colorScheme.background,
-      body: Column(
+      backgroundColor: Colors.black,
+      // No SafeArea around the video itself — it runs edge to edge under the
+      // status bar/notch like a native video-call app. Only the bottom
+      // control overlay insets for the safe area (see QuestionBar's padding).
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          Expanded(
-            child: VideoPanel(
+          VideoPanel(store: store, validQs: validQs),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: QuestionBar(
               store: store,
               validQs: validQs,
-              isFullscreen: _isFullscreen,
-              onToggleFullscreen: () {
+              avatarSpeaking: _avatarSpeaking,
+              autoAdvance: _autoAdvance,
+              revealedIdx: _revealedIdx,
+              onToggleAutoAdvance: () {
                 setState(() {
-                  _isFullscreen = !_isFullscreen;
+                  _autoAdvance = !_autoAdvance;
+                  _resetQuestionTimers();
                 });
               },
+              onShowNow: () {
+                setState(() {
+                  _revealedIdx = store.currentQuestionIdx;
+                });
+              },
+              onPrevQuestion: _prevQuestion,
+              onNextQuestion: _nextQuestion,
+              onEndInterview: _endInterview,
             ),
-          ),
-          QuestionBar(
-            store: store,
-            validQs: validQs,
-            avatarSpeaking: _avatarSpeaking,
-            autoAdvance: _autoAdvance,
-            revealedIdx: _revealedIdx,
-            onToggleAutoAdvance: () {
-              setState(() {
-                _autoAdvance = !_autoAdvance;
-                _resetQuestionTimers();
-              });
-            },
-            onShowNow: () {
-              setState(() {
-                _revealedIdx = store.currentQuestionIdx;
-              });
-            },
-            onPrevQuestion: _prevQuestion,
-            onNextQuestion: _nextQuestion,
-            onEndInterview: _endInterview,
           ),
         ],
       ),

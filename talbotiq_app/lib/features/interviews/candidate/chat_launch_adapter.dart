@@ -91,6 +91,13 @@ Widget buildChatRunnerPage({
   // Upsert the ephemeral template so ReportPage (opened from the completion
   // screen) can resolve session.templateId. The runner also upserts the
   // finished session itself.
+  //
+  // IMPORTANT: this notifies RecruiterStore's listeners, so this function must
+  // NEVER be called from inside a build (e.g. straight from a
+  // MaterialPageRoute `builder:`) — that throws "setState() or
+  // markNeedsBuild() called during build" and the route fails to render.
+  // Call it first, then push the returned widget. See candidate_home's
+  // _launchChat.
   recruiterStore.upsertTemplate(template);
 
   final session = InterviewSession(

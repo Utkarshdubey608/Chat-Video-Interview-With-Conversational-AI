@@ -1,4 +1,5 @@
 // lib/views/settings/api_credentials_section.dart
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/core/services/deepgram_service.dart';
+import 'package:talbotiq/core/services/gemini_service.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
 import 'package:talbotiq/shared/widgets/apple_ui.dart';
@@ -41,6 +43,18 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
   String _dgTestState = 'idle';
   String _humeTestState = 'idle';
   String _geminiTestState = 'idle';
+
+  // Debounces local auto-save so every keystroke doesn't individually trigger
+  // a full AppStore persist. Deliberately local-only — this NEVER pushes to
+  // the cloud; that stays a separate, explicit action ("Save to Cloud" in
+  // SettingsPage), which flushes via commitToStore() itself regardless of
+  // whether this timer has fired yet.
+  Timer? _autoSaveTimer;
+
+  void _scheduleAutoSave() {
+    _autoSaveTimer?.cancel();
+    _autoSaveTimer = Timer(const Duration(milliseconds: 600), commitToStore);
+  }
 
   @override
   void initState() {
@@ -76,6 +90,7 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
 
   @override
   void dispose() {
+    _autoSaveTimer?.cancel();
     _tavusController.dispose();
     _deepgramController.dispose();
     _humeController.dispose();
@@ -99,16 +114,6 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
     store.setAnthropicKey(_anthropicController.text.trim());
     store.setGeminiKey(_geminiController.text.trim());
     store.setAwsProxyUrl(_awsProxyUrlController.text.trim());
-  }
-
-  void _save() {
-    commitToStore();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Credentials saved successfully'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
   }
 
   // Verifies the Tavus key by listing replicas.
@@ -250,6 +255,15 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
   // method can reject a perfectly valid generateContent-scoped key with a
   // confusing "ACCESS_TOKEN_TYPE_UNSUPPORTED" depending on the key's Cloud
   // Console restrictions, so testing it would give a false negative.
+  //
+  // Also deliberately mirrors GeminiService.analyze()'s generationConfig
+  // (responseMimeType: 'application/json' + safetySettings), not just a bare
+  // "ping" — a key/project can happily return 200 for a trivial text-only
+  // request while the real scoring call still fails, because JSON mode isn't
+  // enabled for that project/model tier, or the config combination itself is
+  // rejected. Keeping maxOutputTokens tiny (unlike the real call's 20000)
+  // keeps this test fast; it only needs to prove the CONFIG is accepted, not
+  // exercise a long generation.
   Future<void> _testGemini() async {
     if (_geminiController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -271,11 +285,15 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
           'contents': [
             {
               'parts': [
-                {'text': 'ping'}
+                {'text': 'Reply with exactly this JSON object: {"ok": true}'}
               ]
             }
           ],
-          'generationConfig': {'maxOutputTokens': 1},
+          'generationConfig': {
+            'maxOutputTokens': 50,
+            'responseMimeType': 'application/json',
+          },
+          'safetySettings': GeminiService.safetySettings,
         }),
       );
       debugPrint('[TestGemini] status=${res.statusCode} body=${res.body}');
@@ -403,6 +421,7 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
         TextField(
           controller: controller,
           obscureText: !show,
+          onChanged: (_) => _scheduleAutoSave(),
           style: TextStyle(
             fontSize: 14,
             color: theme.colorScheme.onSurface,
@@ -598,6 +617,7 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
                   label: 'AWS Rekognition Proxy URL',
                   placeholder: 'http://localhost:3002/analyze-face',
                   controller: _awsProxyUrlController,
+                  onChanged: (_) => _scheduleAutoSave(),
                   hint: 'Optional — Lambda function URL (production) or http://localhost:3002/analyze-face (local dev). Enables facial analysis. The AWS secret stays server-side in the proxy, never in the app.',
                 ),
             ],
@@ -606,8 +626,19 @@ class ApiCredentialsSectionState extends State<ApiCredentialsSection> {
         const SizedBox(height: 24),
         Row(
           children: [
-            CustomButton(text: 'Save Credentials', onPressed: _save),
-            const SizedBox(width: 12),
+            Icon(Icons.check_circle_outline,
+                size: 16, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Text(
+              'Changes save automatically on this device.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
             CustomButton(
               text: 'Reset to Defaults',
               variant: ButtonVariant.secondary,

@@ -12,8 +12,6 @@ import 'package:provider/provider.dart';
 import 'package:talbotiq/core/utils/validators.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
 
@@ -65,38 +63,20 @@ class _LoginPageState extends State<LoginPage> {
 
     final auth = context.read<AuthService>();
     try {
-      String uid;
-      AppRole role;
+      // AuthGate handles routing AND auto-pulling this account's cloud-synced
+      // API keys on the resulting auth-state change (it's the one place that
+      // sees every way a session becomes active, including an app relaunch
+      // that resumes an existing session — not just this form) — so this
+      // only needs to perform the sign-in/sign-up itself.
       if (_isSignUp) {
-        final user = await auth.signUp(
+        await auth.signUp(
           email: email,
           password: password,
           role: _role,
           name: _nameController.text,
         );
-        uid = user.uid;
-        role = _role;
       } else {
-        final user = await auth.signIn(email: email, password: password);
-        uid = user.uid;
-        role = await auth.roleFor(uid);
-      }
-      // AuthGate handles routing on the auth-state change; here we only need
-      // to pull the account's own cloud-synced API keys into local storage so
-      // they're available on this device for the rest of the session.
-      // Failures here must not block a successful sign-in.
-      if (mounted) {
-        try {
-          final store = context.read<AppStore>();
-          final appConfig = context.read<AppConfigService>();
-          if (role == AppRole.recruiter) {
-            await appConfig.pullForRecruiter(uid, store);
-          } else {
-            await appConfig.pullForCandidate(uid, store);
-          }
-        } catch (e) {
-          debugPrint('Could not pull API keys from Firestore: $e');
-        }
+        await auth.signIn(email: email, password: password);
       }
     } on FirebaseAuthException catch (e) {
       setState(() => _error = _friendlyError(e));

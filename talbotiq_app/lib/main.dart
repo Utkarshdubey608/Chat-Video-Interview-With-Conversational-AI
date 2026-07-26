@@ -1,5 +1,6 @@
 // lib/main.dart
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +22,27 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Safety net: log framework-caught errors (build/layout/paint) instead of
+  // relying only on the default console dump, and — more importantly — catch
+  // errors from OUTSIDE the Flutter framework's own error zone (e.g. an
+  // unawaited Future that nobody attached a catch/catchError to, such as a
+  // Firestore write racing a flaky connection). Without an onError handler
+  // here, that class of error is truly uncaught and can present to a user as
+  // an app crash even though the isolate itself is fine. Returning `true`
+  // from PlatformDispatcher.onError tells the engine "handled, don't
+  // terminate the app." This does NOT excuse leaving a Future unguarded —
+  // fire-and-forget calls should still catch their own errors (see
+  // candidate_video_shell.dart/candidate_home.dart) — it's a last-resort net
+  // for whatever this doesn't catch.
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exceptionAsString()}');
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    debugPrint('Uncaught async error: $error\n$stack');
+    return true;
+  };
 
   // Firebase powers auth + the recruiter→candidate interview assignments.
   // Requires `flutterfire configure` to generate firebase_options.dart; the
@@ -96,6 +118,24 @@ class _MyAppState extends State<MyApp> {
   /// after sign-in (see PendingDeepLink consumption hook in candidate_home).
   void _handleTarget(DeepLinkTarget target) {
     PendingDeepLink.instance.set(target.interviewId);
+
+    // Never yank the candidate out of a LIVE interview. This stream can fire
+    // more than once for the same launch intent — e.g. Android/iOS can
+    // re-deliver it when a native permission-style UI surfaces mid-call (this
+    // is exactly what was popping candidates straight back to the home
+    // screen the instant they tapped "Join" on Tavus's prejoin screen: the
+    // video interview runs as a PUSHED route on this same root navigator, so
+    // an unconditional popUntil(isFirst) tore it down with no dialog, no
+    // error, no trace). The id is already parked above, so if this really is
+    // a fresh link for a different interview, it's picked up normally once
+    // the candidate finishes and returns to their home list — nothing is
+    // lost by deferring it.
+    final store = navigatorKey.currentContext?.read<AppStore>();
+    final busy = store != null &&
+        (store.interviewActive ||
+            store.currentRoute == '/interview' ||
+            store.currentRoute == '/results');
+    if (busy) return;
 
     // Pop back to the root of the app so the AuthGate-driven home is visible.
     // Guarded: the navigator may not be mounted yet on a cold start (the

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard;
 
-class CustomInputField extends StatelessWidget {
+class CustomInputField extends StatefulWidget {
   final String label;
   final String? hint;
   final String placeholder;
@@ -28,13 +28,68 @@ class CustomInputField extends StatelessWidget {
   });
 
   @override
+  State<CustomInputField> createState() => _CustomInputFieldState();
+}
+
+class _CustomInputFieldState extends State<CustomInputField> {
+  // Only meaningful when widget.isPassword — starts obscured, toggled via the
+  // eye icon below.
+  late bool _obscured = widget.isPassword;
+
+  Future<void> _pasteFromClipboard() async {
+    final controller = widget.controller;
+    if (controller == null) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim();
+    if (text == null || text.isEmpty) return;
+    controller.text = text;
+    controller.selection =
+        TextSelection.fromPosition(TextPosition(offset: text.length));
+    widget.onChanged?.call(text);
+  }
+
+  Widget? _buildSuffixIcon(ThemeData theme) {
+    if (widget.suffix != null) return widget.suffix;
+
+    final pasteButton = widget.controller != null
+        ? IconButton(
+            icon: Icon(
+              Icons.content_paste,
+              color: theme.colorScheme.onSurfaceVariant,
+              size: 20,
+            ),
+            tooltip: 'Paste',
+            onPressed: _pasteFromClipboard,
+          )
+        : null;
+
+    if (!widget.isPassword) return pasteButton;
+
+    final visibilityButton = IconButton(
+      icon: Icon(
+        _obscured ? Icons.visibility_off : Icons.visibility,
+        color: theme.colorScheme.onSurfaceVariant,
+        size: 20,
+      ),
+      tooltip: _obscured ? 'Show password' : 'Hide password',
+      onPressed: () => setState(() => _obscured = !_obscured),
+    );
+
+    if (pasteButton == null) return visibilityButton;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [pasteButton, visibilityButton],
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          widget.label,
           style: theme.textTheme.titleSmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
             fontWeight: FontWeight.w500,
@@ -42,47 +97,26 @@ class CustomInputField extends StatelessWidget {
         ),
         const SizedBox(height: 8), // M3 consistent 8dp spacing
         TextField(
-          controller: controller,
-          onChanged: onChanged,
-          obscureText: isPassword,
-          keyboardType: keyboardType,
-          maxLines: maxLines,
-          autofocus: autofocus,
+          controller: widget.controller,
+          onChanged: widget.onChanged,
+          obscureText: widget.isPassword && _obscured,
+          keyboardType: widget.keyboardType,
+          maxLines: widget.maxLines,
+          autofocus: widget.autofocus,
           style: TextStyle(
             fontSize: 14,
             color: theme.colorScheme.onSurface,
             fontFamily: 'Inter',
           ),
           decoration: InputDecoration(
-            hintText: placeholder,
-            suffixIcon: suffix ??
-                (controller != null
-                    ? IconButton(
-                        icon: Icon(
-                          Icons.content_paste,
-                          color: theme.colorScheme.onSurfaceVariant,
-                          size: 20,
-                        ),
-                        tooltip: 'Paste',
-                        onPressed: () async {
-                          final data =
-                              await Clipboard.getData(Clipboard.kTextPlain);
-                          final text = data?.text?.trim();
-                          if (text == null || text.isEmpty) return;
-                          controller!.text = text;
-                          controller!.selection = TextSelection.fromPosition(
-                            TextPosition(offset: text.length),
-                          );
-                          onChanged?.call(text);
-                        },
-                      )
-                    : null),
+            hintText: widget.placeholder,
+            suffixIcon: _buildSuffixIcon(theme),
           ),
         ),
-        if (hint != null) ...[
+        if (widget.hint != null) ...[
           const SizedBox(height: 8),
           Text(
-            hint!,
+            widget.hint!,
             style: theme.textTheme.bodyMedium?.copyWith(
               fontSize: 12,
               color: theme.colorScheme.onSurfaceVariant.withOpacity(0.8),

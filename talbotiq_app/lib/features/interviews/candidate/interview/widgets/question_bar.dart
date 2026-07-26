@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 
-/// A widget that displays the current question, status (e.g. speaking),
-/// and controls (next, prev, end, auto/manual advance mode) at the bottom.
+/// Bottom overlay for the interview call: a translucent scrim over the video
+/// showing the current question as a caption, plus prev/end/next controls —
+/// styled like a native video-call app's control bar (WhatsApp/FaceTime),
+/// floating over the video rather than occupying a separate panel beneath it.
 class QuestionBar extends StatelessWidget {
   final AppStore store;
   final List<String> validQs;
@@ -30,42 +31,28 @@ class QuestionBar extends StatelessWidget {
     required this.onEndInterview,
   });
 
-  /// Builds a rounded action/navigation button for controls (prev, next, stop).
-  Widget _buildRoundControlBtn(
-    BuildContext context,
-    IconData icon,
-    VoidCallback? onPressed, {
-    bool isDanger = false,
+  /// A circular translucent control button (prev/next/end), matching the
+  /// frosted-glass look of native call-app control bars.
+  Widget _circleButton({
+    required IconData icon,
+    required VoidCallback? onPressed,
+    double size = 44,
+    Color background = const Color(0x33FFFFFF),
+    Color iconColor = Colors.white,
   }) {
-    final theme = Theme.of(context);
     final disabled = onPressed == null;
     return Container(
-      width: 44,
-      height: 44,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
-        color: isDanger
-            ? theme.colorScheme.error.withOpacity(0.08)
-            : (disabled
-                ? theme.colorScheme.onSurface.withOpacity(0.02)
-                : theme.colorScheme.onSurface.withOpacity(0.06)),
-        border: Border.all(
-          color: isDanger
-              ? theme.colorScheme.error.withOpacity(0.24)
-              : (disabled
-                  ? theme.colorScheme.outline.withOpacity(0.05)
-                  : theme.colorScheme.outline.withOpacity(0.24)),
-        ),
+        color: disabled ? const Color(0x14FFFFFF) : background,
         shape: BoxShape.circle,
       ),
       child: IconButton(
         icon: Icon(
           icon,
-          size: 18,
-          color: isDanger
-              ? theme.colorScheme.error
-              : (disabled
-                  ? theme.colorScheme.onSurfaceVariant.withOpacity(0.4)
-                  : theme.colorScheme.onSurface),
+          size: size * 0.42,
+          color: disabled ? Colors.white38 : iconColor,
         ),
         onPressed: onPressed,
         padding: EdgeInsets.zero,
@@ -75,164 +62,156 @@ class QuestionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final isRevealed = revealedIdx == store.currentQuestionIdx;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final bool isNarrow = constraints.maxWidth < 650;
-
-        final questionTextCol = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Text(
-                  'QUESTION ${store.currentQuestionIdx + 1} OF ${validQs.length}',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.primary,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        32,
+        20,
+        16 + MediaQuery.of(context).padding.bottom,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Color(0xCC000000)],
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'QUESTION ${store.currentQuestionIdx + 1} OF ${validQs.length}',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              if (avatarSpeaking) ...[
+                const SizedBox(width: 10),
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: Colors.greenAccent,
+                    shape: BoxShape.circle,
                   ),
                 ),
-                if (avatarSpeaking) ...[
-                  const SizedBox(width: 12),
-                  Row(
+                const SizedBox(width: 4),
+                const Text(
+                  'Speaking',
+                  style: TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              GestureDetector(
+                onTap: onToggleAutoAdvance,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0x26FFFFFF),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
                         width: 6,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.primary,
+                          color: autoAdvance ? Colors.greenAccent : Colors.white54,
                           shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 6),
                       Text(
-                        'Avatar Speaking',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                        autoAdvance ? 'Auto' : 'Manual',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 4),
-            isRevealed
-                ? Text(
-                    validQs.isNotEmpty
-                        ? validQs[store.currentQuestionIdx]
-                        : 'Done',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  )
-                : Row(
-                    children: [
-                      Text(
-                        'Waiting for avatar to ask…',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      CustomButton(
-                        text: 'Show Now',
-                        variant: ButtonVariant.outline,
-                        height: 28,
-                        onPressed: onShowNow,
-                      ),
-                    ],
-                  ),
-          ],
-        );
-
-        final controlsRow = Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CustomButton(
-              text: autoAdvance ? 'Auto' : 'Manual',
-              variant: ButtonVariant.outline,
-              height: 36,
-              icon: Container(
-                width: 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: autoAdvance
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.onSurfaceVariant,
-                  shape: BoxShape.circle,
                 ),
               ),
-              onPressed: onToggleAutoAdvance,
-            ),
-            const SizedBox(width: 8),
-            Container(
-              width: 1,
-              height: 20,
-              color: theme.colorScheme.outline.withOpacity(0.2),
-            ),
-            const SizedBox(width: 8),
-            _buildRoundControlBtn(
-              context,
-              Icons.skip_previous,
-              store.currentQuestionIdx > 0 ? onPrevQuestion : null,
-            ),
-            const SizedBox(width: 8),
-            _buildRoundControlBtn(
-              context,
-              Icons.stop,
-              onEndInterview,
-              isDanger: true,
-            ),
-            const SizedBox(width: 8),
-            _buildRoundControlBtn(
-              context,
-              Icons.skip_next,
-              onNextQuestion,
-            ),
-          ],
-        );
-
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            border: Border(
-              top: BorderSide(
-                color: theme.colorScheme.outline.withOpacity(0.12),
-              ),
-            ),
+            ],
           ),
-          child: isNarrow
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    questionTextCol,
-                    const SizedBox(height: 12),
-                    Align(alignment: Alignment.centerRight, child: controlsRow),
-                  ],
+          const SizedBox(height: 6),
+          isRevealed
+              ? Text(
+                  validQs.isNotEmpty
+                      ? validQs[store.currentQuestionIdx]
+                      : 'Done',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 )
               : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(child: questionTextCol),
-                    const SizedBox(width: 16),
-                    controlsRow,
+                    const Text(
+                      'Waiting for avatar to ask…',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontStyle: FontStyle.italic,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    GestureDetector(
+                      onTap: onShowNow,
+                      child: const Text(
+                        'Show now',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-        );
-      },
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _circleButton(
+                icon: Icons.skip_previous,
+                onPressed: store.currentQuestionIdx > 0 ? onPrevQuestion : null,
+              ),
+              const SizedBox(width: 28),
+              _circleButton(
+                icon: Icons.call_end,
+                onPressed: onEndInterview,
+                size: 60,
+                background: const Color(0xFFE53935),
+              ),
+              const SizedBox(width: 28),
+              _circleButton(
+                icon: Icons.skip_next,
+                onPressed: onNextQuestion,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

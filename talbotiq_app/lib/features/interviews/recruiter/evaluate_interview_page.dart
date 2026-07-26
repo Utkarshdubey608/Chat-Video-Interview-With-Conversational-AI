@@ -32,6 +32,13 @@ class EvaluateInterviewPage extends StatefulWidget {
 }
 
 class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
+  // Canonical recommendation vocabulary used app-wide (analytics dashboard,
+  // the candidate-facing result page, Recommendation.* in recruiter_models.dart,
+  // and regenerateFromResponses()'s prompt). `analyze()`'s ATSScorecard uses a
+  // DIFFERENT vocabulary internally ('Advance'/'Hold'/'Decline'/'Insufficient
+  // Data', see `hiringRecommendation`) — candidate_video_shell.dart's
+  // _maybeStoreResult translates it to this one before writing to Firestore,
+  // so this map only ever needs to know about the canonical values.
   static const _recommendations = {
     '': 'Not set',
     'strong_yes': 'Strong yes',
@@ -48,18 +55,69 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
   late bool _published;
   bool _saving = false;
   bool _regenerating = false;
+  bool _refreshing = false;
   int _currentIndex = 0;
   List<Map<String, dynamic>> _responses = const [];
   bool _responsesApproximate = false;
+  String _evaluationError = '';
+
+  // Set only after a manual "Refresh" (see _refresh()) re-fetches this
+  // interview from Firestore — overrides the constructor-passed snapshot,
+  // which is otherwise frozen for the lifetime of this page (see file-level
+  // bug note on `_current`).
+  Interview? _refreshedInterview;
+
+  /// The interview currently being reviewed. `widget.interview` /
+  /// `widget.groupInterviews` are one-time snapshots passed in at navigation
+  /// time — if the AI evaluation pipeline (transcript → Hume → Gemini, which
+  /// can take up to a minute) finishes AFTER the recruiter has already opened
+  /// this page, nothing here would ever see that later Firestore write; the
+  /// score/recommendation/strengths would stay stuck at whatever placeholder
+  /// values were present when the page was opened. `_refresh()` below lets
+  /// the recruiter pull the latest data without leaving the page.
+  Interview get _current =>
+      _refreshedInterview ??
+      (widget.groupInterviews != null
+          ? widget.groupInterviews![_currentIndex]
+          : widget.interview);
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex ?? 0;
-    final i = widget.groupInterviews != null
-        ? widget.groupInterviews![_currentIndex]
-        : widget.interview;
-    _loadInterview(i);
+    _loadInterview(_current);
+  }
+
+  /// Re-fetches this interview from Firestore and reloads the form — the
+  /// AI pipeline can still be running when the recruiter first opens this
+  /// page (see `_current` doc comment), so this is how they pick up a
+  /// since-landed AI-scored result without backing out and re-opening.
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final fresh = await repo.getById(_current.id);
+      if (!mounted) return;
+      if (fresh == null) {
+        messenger.showSnackBar(
+            const SnackBar(content: Text('This interview no longer exists.')));
+        return;
+      }
+      setState(() {
+        _refreshedInterview = fresh;
+        _loadInterview(fresh);
+      });
+      messenger.showSnackBar(
+          const SnackBar(content: Text('Reloaded the latest evaluation.')));
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   void _loadInterview(Interview i) {
@@ -78,6 +136,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
             .toList() ??
         const [];
     _responsesApproximate = r['responsesApproximate'] == true;
+    _evaluationError = (r['evaluationError'] as String?) ?? '';
   }
 
   String _joinList(dynamic v) =>
@@ -117,9 +176,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
-    final i = widget.groupInterviews != null
-        ? widget.groupInterviews![_currentIndex]
-        : widget.interview;
+    final i = _current;
     try {
       await repo.saveResult(i.id, _buildResult(i));
       if (publish) {
@@ -143,9 +200,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     setState(() => _saving = true);
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
-    final i = widget.groupInterviews != null
-        ? widget.groupInterviews![_currentIndex]
-        : widget.interview;
+    final i = _current;
     try {
       await repo.setPublished(i.id, false);
       if (!mounted) return;
@@ -182,9 +237,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
     }
     final messenger = ScaffoldMessenger.of(context);
     final store = context.read<AppStore>();
-    final i = widget.groupInterviews != null
-        ? widget.groupInterviews![_currentIndex]
-        : widget.interview;
+    final i = _current;
     final pinnedKey = i.keyOverrides['geminiKey']?.trim() ?? '';
     final apiKey = pinnedKey.isNotEmpty ? pinnedKey : store.geminiKey.trim();
     debugPrint('[Regenerate] interview=${i.id} usingPinnedKey=${pinnedKey.isNotEmpty} '
@@ -231,7 +284,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
 
   Future<void> _saveDraftSilence() async {
     final repo = context.read<InterviewRepository>();
-    final currentInterview = widget.groupInterviews![_currentIndex];
+    final currentInterview = _current;
     try {
       await repo.saveResult(currentInterview.id, _buildResult(currentInterview));
     } catch (_) {
@@ -247,8 +300,10 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
         setState(() {
           _currentIndex = newIndex;
           _saving = false;
-          final next = widget.groupInterviews![_currentIndex];
-          _loadInterview(next);
+          // A manual refresh on the PREVIOUS candidate shouldn't leak into
+          // the next one — _current falls back to the fresh list entry.
+          _refreshedInterview = null;
+          _loadInterview(_current);
         });
       }
     });
@@ -257,9 +312,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final i = widget.groupInterviews != null
-        ? widget.groupInterviews![_currentIndex]
-        : widget.interview;
+    final i = _current;
     final evaluatedBy = (i.result?['evaluatedBy'] as String?) ?? '';
     final leftAppCount =
         ((i.result?['integrity'] as Map?)?['leftAppCount'] as num?)?.toInt() ??
@@ -268,6 +321,17 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
       appBar: AppBar(
         title: const Text('Evaluate'),
         actions: [
+          IconButton(
+            icon: _refreshing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh),
+            tooltip: 'Reload latest evaluation from server',
+            onPressed: _refreshing ? null : _refresh,
+          ),
           if (widget.groupInterviews != null && widget.groupInterviews!.length > 1) ...[
             IconButton(
               icon: const Icon(Icons.arrow_back_ios_rounded, size: 16),
@@ -344,6 +408,25 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
                             child: Text(
                               'Integrity: left the app $leftAppCount '
                               'time${leftAppCount == 1 ? '' : 's'} during the interview',
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_evaluationError.isNotEmpty && evaluatedBy.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.error_outline,
+                              size: 16, color: theme.colorScheme.error),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'AI evaluation failed: $_evaluationError. Use '
+                              '"Regenerate Results" below to try again.',
                               style: TextStyle(color: theme.colorScheme.error),
                             ),
                           ),

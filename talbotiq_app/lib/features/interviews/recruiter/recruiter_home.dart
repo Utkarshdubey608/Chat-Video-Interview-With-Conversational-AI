@@ -390,7 +390,12 @@ class _InterviewCard extends StatelessWidget {
                       'Result Status',
                       i.status != InterviewStatus.completed
                           ? 'Not taken yet'
-                          : i.result == null
+                          : (i.result == null ||
+                                  (i.result!['evaluatedBy'] as String? ?? '')
+                                      .isEmpty)
+                              // No score yet — either AI scoring hasn't landed
+                              // (see candidate_video_shell.dart's placeholder
+                              // result) or nobody has evaluated it manually.
                               ? 'Awaiting evaluation'
                               : i.resultPublished
                                   ? 'Published'
