@@ -62,6 +62,10 @@ enum GeminiLiveState {
 /// Who a caption line belongs to.
 enum CaptionRole { interviewer, candidate }
 
+/// Ping-pong playback state for the "idle" (non-active) player — see
+/// [GeminiLiveService._advance].
+enum _IdleClipState { none, preparing, ready }
+
 /// Events emitted on [GeminiLiveService.events]. Sealed so the UI can switch
 /// exhaustively.
 sealed class GeminiLiveEvent {
@@ -146,8 +150,17 @@ class GeminiLiveService {
   final AudioRecorder _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _micSub;
 
-  final AudioPlayer _player = AudioPlayer();
-  StreamSubscription<void>? _playerCompleteSub;
+  // Two AudioPlayer instances used in a ping-pong pattern for gapless-ish
+  // playback: while one plays the current interviewer-audio segment, the
+  // other's source for the NEXT segment is prepared in the background (see
+  // _advance/_onPlayerComplete below). This overlaps the setSource latency —
+  // on iOS/macOS/Linux, audioplayers' setSourceBytes writes the bytes to a
+  // temp file and awaits native prepare before the source is playable — with
+  // the PREVIOUS segment's playback instead of paying it serially between
+  // segments, which is what caused the audible gap/stutter between every
+  // ~0.5s chunk of interviewer speech.
+  final List<AudioPlayer> _players = [AudioPlayer(), AudioPlayer()];
+  final List<StreamSubscription<void>?> _playerCompleteSubs = [null, null];
 
   final StreamController<GeminiLiveEvent> _events =
       StreamController<GeminiLiveEvent>.broadcast();
@@ -179,6 +192,16 @@ class GeminiLiveService {
   static const int _minFlushBytes = 24000;
   final List<Uint8List> _clipQueue = [];
   bool _playing = false;
+
+  // Ping-pong playback state (see _advance/_onPlayerComplete): which of
+  // _players is currently active, and whether the OTHER ("idle") player
+  // already has the next clip prepared (or is in the middle of preparing it).
+  int _activePlayer = 0;
+  _IdleClipState _idleState = _IdleClipState.none;
+  // Bumped on every _clearAudioQueue (barge-in/teardown) so a setSourceBytes
+  // future that resolves AFTER a clear is discarded instead of resurrecting a
+  // clip that should have been dropped.
+  int _playbackGeneration = 0;
 
   /// True once the model has signalled turnComplete, so the queue draining is
   /// the end of the reply (and not just a lull between chunks).
@@ -218,13 +241,12 @@ class GeminiLiveService {
   final StringBuffer _pendingInterviewer = StringBuffer();
   final StringBuffer _pendingCandidate = StringBuffer();
 
-  // Per-turn PCM24k output accumulator. We buffer one interviewer utterance and
-  // play it as a single WAV on turnComplete.
-  // TODO(audio-latency): buffering the whole turn adds ~utterance-length latency
-  //   before the candidate hears anything. For true low-latency playback, feed
-  //   the PCM chunks into a gapless streaming sink (e.g. a native ring-buffer
-  //   player, or just_audio with a custom StreamAudioSource) and schedule them
-  //   as they arrive instead of accumulating. Kept simple here for correctness.
+  // Per-turn PCM24k output accumulator. Chunks are cut into ~0.5s WAV segments
+  // as they arrive (see _enqueueAudio) rather than buffered for the whole
+  // turn, so the interviewer starts speaking well before the full reply has
+  // finished generating. Segments are played back via a two-player ping-pong
+  // (see _advance) so the next segment's decode/prepare overlaps the current
+  // segment's playback instead of creating an audible gap between segments.
   final BytesBuilder _outBuffer = BytesBuilder(copy: false);
 
   // =========================================================================
@@ -393,11 +415,16 @@ class GeminiLiveService {
       await _recorder.dispose();
     } catch (_) {}
     await _stopPlayback();
-    await _playerCompleteSub?.cancel();
-    _playerCompleteSub = null;
-    try {
-      await _player.dispose();
-    } catch (_) {}
+    for (final sub in _playerCompleteSubs) {
+      await sub?.cancel();
+    }
+    _playerCompleteSubs[0] = null;
+    _playerCompleteSubs[1] = null;
+    for (final p in _players) {
+      try {
+        await p.dispose();
+      } catch (_) {}
+    }
     await _teardownSocket();
     if (!_events.isClosed) await _events.close();
   }
@@ -604,7 +631,7 @@ class GeminiLiveService {
       _enqueueAudio(force: true);
       // Nothing was generated (e.g. a text-only turn) — hand over immediately
       // instead of waiting for a completion event that will never fire.
-      if (!_playing && _clipQueue.isEmpty && !_finished) {
+      if (!_hasPendingAudio && !_finished) {
         _emitState(GeminiLiveState.listening);
       }
     }
@@ -730,28 +757,28 @@ class GeminiLiveService {
     if (_audioSessionReady) return;
     _audioSessionReady = true;
     try {
-      await _player.setAudioContext(
-        AudioContext(
-          android: const AudioContextAndroid(
-            isSpeakerphoneOn: true,
-            stayAwake: true,
-            contentType: AndroidContentType.speech,
-            usageType: AndroidUsageType.voiceCommunication,
-            // Critical: do NOT take exclusive focus away from the recorder.
-            audioFocus: AndroidAudioFocus.none,
-          ),
-          iOS: AudioContextIOS(
-            // playAndRecord is required; the default `playback` category tears
-            // down the mic.
-            category: AVAudioSessionCategory.playAndRecord,
-            options: const {
-              AVAudioSessionOptions.defaultToSpeaker,
-              AVAudioSessionOptions.allowBluetooth,
-              AVAudioSessionOptions.mixWithOthers,
-            },
-          ),
+      final ctx = AudioContext(
+        android: const AudioContextAndroid(
+          isSpeakerphoneOn: true,
+          stayAwake: true,
+          contentType: AndroidContentType.speech,
+          usageType: AndroidUsageType.voiceCommunication,
+          // Critical: do NOT take exclusive focus away from the recorder.
+          audioFocus: AndroidAudioFocus.none,
+        ),
+        iOS: AudioContextIOS(
+          // playAndRecord is required; the default `playback` category tears
+          // down the mic.
+          category: AVAudioSessionCategory.playAndRecord,
+          options: const {
+            AVAudioSessionOptions.defaultToSpeaker,
+            AVAudioSessionOptions.allowBluetooth,
+            AVAudioSessionOptions.mixWithOthers,
+          },
         ),
       );
+      // Both ping-pong players share the session (see _players above).
+      await Future.wait(_players.map((p) => p.setAudioContext(ctx)));
       if (kDebugMode) {
         debugPrint('debug[live]: audio session set for record+playback');
       }
@@ -785,47 +812,135 @@ class GeminiLiveService {
     _emitState(_greeted ? GeminiLiveState.speaking : GeminiLiveState.greeting);
     _greeted = true;
 
-    _playerCompleteSub ??= _player.onPlayerComplete.listen((_) {
-      _playing = false;
-      // Chain straight into the next queued clip so consecutive segments of one
-      // reply run back to back.
-      if (_clipQueue.isNotEmpty) {
-        unawaited(_playNextClip());
-        return;
-      }
-      // Nothing left AND the model finished the turn -> candidate's turn.
-      if (!_disposed && !_finished && _turnAudioComplete) {
-        _emitState(GeminiLiveState.listening);
-      }
-    });
-
-    if (!_playing) unawaited(_playNextClip());
+    _ensurePlayerListeners();
+    _advance();
   }
 
-  Future<void> _playNextClip() async {
-    if (_disposed || _playing || _clipQueue.isEmpty) return;
-    _playing = true;
+  void _ensurePlayerListeners() {
+    for (var i = 0; i < _players.length; i++) {
+      _playerCompleteSubs[i] ??=
+          _players[i].onPlayerComplete.listen((_) => _onPlayerComplete(i));
+    }
+  }
+
+  /// True while any interviewer-audio segment is still playing, being
+  /// prepared on the idle player, or waiting in the raw queue. Using
+  /// `_playing`/`_clipQueue` alone would miss a segment that is mid-flight on
+  /// the idle player (see [_advance]) and could hand the turn back to the
+  /// candidate one segment early.
+  bool get _hasPendingAudio =>
+      _playing || _idleState != _IdleClipState.none || _clipQueue.isNotEmpty;
+
+  /// Drives playback forward. Two responsibilities, kept in one place so every
+  /// caller (a new clip arriving, a player finishing, an idle-player prepare
+  /// finishing) sees the same state machine:
+  ///  1. If nothing is playing, start the next queued clip (or promote an
+  ///     already-prepared idle clip — see the race note below).
+  ///  2. If something IS playing, prepare the next queued clip on the OTHER
+  ///     player ahead of time, so the handover on completion is a fast
+  ///     resume() instead of a fresh play() (setSource + resume).
+  void _advance() {
+    if (_disposed) return;
+
+    if (!_playing) {
+      if (_idleState == _IdleClipState.ready) {
+        // Race: the active player finished WHILE a clip was still being
+        // prepared on the idle player; _onPlayerComplete saw "preparing" and
+        // waited (see there) instead of handing over early, so promote it now
+        // that it's actually ready.
+        _idleState = _IdleClipState.none;
+        _activePlayer = 1 - _activePlayer;
+        _playing = true;
+        unawaited(_players[_activePlayer].resume().catchError((e) {
+          if (kDebugMode) debugPrint('debug[live]: resume failed: $e');
+          _playing = false;
+          _advance();
+        }));
+        _advance(); // opportunistically start preparing the new idle slot
+        return;
+      }
+      if (_idleState == _IdleClipState.none && _clipQueue.isNotEmpty) {
+        // Cold start (first clip of a turn, or the queue was fully drained
+        // and refilled) — unavoidable setSource+resume latency, same as the
+        // very first segment always had.
+        _playing = true;
+        final wav = _clipQueue.removeAt(0);
+        unawaited(_startActive(wav));
+      }
+      // Else: idleState == preparing (wait for its callback) or nothing
+      // queued at all — nothing to do.
+      return;
+    }
+
+    // Already playing: opportunistically prepare the NEXT clip on the idle
+    // player, once.
+    if (_idleState != _IdleClipState.none || _clipQueue.isEmpty) return;
+    _idleState = _IdleClipState.preparing;
     final wav = _clipQueue.removeAt(0);
+    final gen = _playbackGeneration;
+    final idle = _players[1 - _activePlayer];
+    idle.setSourceBytes(wav, mimeType: 'audio/wav').then((_) {
+      if (_disposed || gen != _playbackGeneration) return;
+      _idleState = _IdleClipState.ready;
+      // The active player may have already finished while this was
+      // preparing — advance() now promotes it if so.
+      _advance();
+    }).catchError((e) {
+      if (kDebugMode) debugPrint('debug[live]: idle prepare failed: $e');
+      if (_disposed || gen != _playbackGeneration) return;
+      _idleState = _IdleClipState.none;
+      // Don't drop the audio — put it back and let the (slower) cold-start
+      // path pick it up once the active player finishes.
+      _clipQueue.insert(0, wav);
+      _advance();
+    });
+  }
+
+  Future<void> _startActive(Uint8List wav) async {
+    final player = _players[_activePlayer];
     try {
-      await _player.play(BytesSource(wav, mimeType: 'audio/wav'));
+      await player.play(BytesSource(wav, mimeType: 'audio/wav'));
     } catch (e) {
       _playing = false;
       if (kDebugMode) debugPrint('debug[live]: playback failed: $e');
     }
   }
 
+  void _onPlayerComplete(int idx) {
+    if (_disposed || idx != _activePlayer) return;
+    _playing = false;
+    if (_idleState == _IdleClipState.preparing) {
+      // The next clip is still being decoded/prepared — do NOT hand the turn
+      // back to the candidate here; the prepare's own _advance() call will
+      // promote it to active the instant it's ready (see _hasPendingAudio).
+      return;
+    }
+    if (_idleState == _IdleClipState.ready || _clipQueue.isNotEmpty) {
+      _advance();
+      return;
+    }
+    // Nothing queued, nothing in flight, AND the model finished the turn ->
+    // candidate's turn.
+    if (!_finished && _turnAudioComplete) {
+      _emitState(GeminiLiveState.listening);
+    }
+  }
+
   /// Drops queued + in-flight interviewer audio (barge-in, or teardown).
   Future<void> _clearAudioQueue() async {
+    _playbackGeneration++; // invalidate any in-flight idle-player prepare
     _clipQueue.clear();
     _playing = false;
+    _idleState = _IdleClipState.none;
     await _stopPlayback();
   }
 
-
   Future<void> _stopPlayback() async {
-    try {
-      await _player.stop();
-    } catch (_) {}
+    for (final p in _players) {
+      try {
+        await p.stop();
+      } catch (_) {}
+    }
   }
 
   /// Wraps raw little-endian PCM16 mono samples in a 44-byte WAV header so

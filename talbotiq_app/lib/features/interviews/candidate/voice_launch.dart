@@ -217,23 +217,30 @@ Future<void> _scoreAndStore({
 
     geminiService.setKey(store.geminiKey);
     final now = DateTime.now().millisecondsSinceEpoch;
-    // NOTE: per-question voice attribution is APPROXIMATE on-device. The website
-    // aligns each answer to a specific planned question server-side (voiceFlow:
-    // VAD turn boundaries + token-overlap matching against the question plan).
-    // On-device we have no reliable per-caption→question map — VAD can split one
-    // spoken answer across several captions and blur across question boundaries —
-    // so we deliberately do NOT fabricate a false ordinal map (the old
-    // questionIdx=i mapping mis-attributed every answer once the readiness reply
-    // was counted). Instead we assign a stable, non-misleading index (0) and let
-    // the analyzer score the HOLISTIC transcript, which is sound for the overall
-    // fit score even without honest per-question attribution.
+    // NOTE: per-question voice attribution is APPROXIMATE on-device — the
+    // website aligns each answer to a specific planned question server-side
+    // (voiceFlow: VAD turn boundaries + token-overlap matching against the
+    // question plan); on-device we have no equivalent alignment step, and VAD
+    // can occasionally split one spoken answer across two captions, which
+    // would shift every following index by one. A previous revision mapped
+    // questionIdx=i and hit exactly that shift — but the actual cause was the
+    // candidate's leading "yes, I'm ready" caption being counted as answer #1
+    // (pushing every real answer down by one), which is now stripped ABOVE via
+    // _isReadinessReply before this list is built. With that fixed,
+    // position-based attribution is correct in the common case (one turn per
+    // question) and only degrades for the rare mid-answer VAD split — same as
+    // before. Hardcoding questionIdx=0 for every entry (as this used to do)
+    // was strictly worse: it fed the analyzer a transcript where every answer
+    // belongs to question 1 and every other question shows "no spoken answer
+    // captured", corrupting the per-question evidence behind the overall
+    // score/recommendation, not just an unused breakdown.
     final transcript = <TranscriptEntry>[
       for (var i = 0; i < scored.length; i++)
         TranscriptEntry(
           text: scored[i],
           role: 'candidate',
           timestamp: now + i,
-          questionIdx: 0,
+          questionIdx: i,
         ),
     ];
 
@@ -261,12 +268,19 @@ Future<void> _scoreAndStore({
       // NOTE above on why voice has no reliable per-question mapping).
       'responsesApproximate': true,
       'responses': [
-        for (var idx = 0; idx < scored.length; idx++)
+        // Iterate to the LONGER of the two lengths so every planned question
+        // still appears (blank answer if unanswered — matching the video/chat
+        // reference's completeness) instead of silently dropping trailing
+        // unanswered questions, while any answer beyond the plan is still
+        // preserved as an "Additional response".
+        for (var idx = 0;
+            idx < interview.questions.length || idx < scored.length;
+            idx++)
           {
             'question': idx < interview.questions.length
                 ? interview.questions[idx]
                 : 'Additional response',
-            'answer': scored[idx],
+            'answer': idx < scored.length ? scored[idx] : '',
           },
       ],
     });
@@ -292,12 +306,14 @@ Future<void> _scoreAndStore({
         'evaluationError': e.toString().replaceAll('Exception: ', ''),
         'responsesApproximate': true,
         'responses': [
-          for (var idx = 0; idx < scored.length; idx++)
+          for (var idx = 0;
+              idx < interview.questions.length || idx < scored.length;
+              idx++)
             {
               'question': idx < interview.questions.length
                   ? interview.questions[idx]
                   : 'Additional response',
-              'answer': scored[idx],
+              'answer': idx < scored.length ? scored[idx] : '',
             },
         ],
       });
