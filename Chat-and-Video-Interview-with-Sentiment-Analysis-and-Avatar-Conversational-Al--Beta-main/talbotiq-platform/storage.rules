@@ -1,0 +1,27 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Video Interview answer clips. Writes AND the getDownloadURL() metadata read
+    // are scoped to the invited candidate for this session (the interviews/{id}
+    // Firestore doc, same id, carries candidateEmailLower — mirrors the server's
+    // assignment check. The recruiter never calls getDownloadURL(); the report
+    // plays the stored tokenised download URL, whose token bypasses these rules.
+    //
+    // Two-way Interview: the RECRUITER (not the candidate) uploads the call
+    // recording on End, so the same path is also writable/readable by the
+    // interview's recruiter (interviews/{id}.recruiterId == auth.uid).
+    //
+    // Note: recruiter-created direct sessions (no interviews/{id} doc) are not
+    // covered — the Video Interview flow is invite-driven.
+    match /interviews/{sessionId}/{fileName} {
+      allow read: if request.auth != null
+                  && (firestore.get(/databases/(default)/documents/interviews/$(sessionId)).data.candidateEmailLower == request.auth.token.email.lower()
+                      || firestore.get(/databases/(default)/documents/interviews/$(sessionId)).data.recruiterId == request.auth.uid);
+      allow write: if request.auth != null
+                   && (firestore.get(/databases/(default)/documents/interviews/$(sessionId)).data.candidateEmailLower == request.auth.token.email.lower()
+                       || firestore.get(/databases/(default)/documents/interviews/$(sessionId)).data.recruiterId == request.auth.uid)
+                   && request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType.matches('video/.*');
+    }
+  }
+}

@@ -9,6 +9,7 @@
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:talbotiq/core/net/api_client.dart';
 import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
@@ -85,11 +86,50 @@ class RecruiterGeminiService {
   ];
 
   String _apiKey = '';
-  final String _model = 'gemini-2.5-flash';
+  String _model = 'gemini-2.5-flash';
+
+  /// The Gemini models the recruiter may choose between. Additive: only the
+  /// model-id string sent to the REST endpoint changes — no prompt, request
+  /// shape, scoring, or retry logic is affected.
+  static const List<String> availableModels = [
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+  ];
+
+  /// SharedPreferences key for the persisted model choice.
+  static const String _modelPrefsKey = 'recruiter_gemini_model';
 
   void setKey(String key) => _apiKey = key;
   String getKey() => _apiKey;
   bool get enabled => _apiKey.isNotEmpty;
+
+  /// Currently selected Gemini model id (e.g. 'gemini-2.5-flash').
+  String get model => _model;
+
+  /// Selects the Gemini model and persists the choice. Unknown ids are ignored
+  /// (falls back to the current model) so a bad value can never break calls.
+  Future<void> setModel(String m) async {
+    if (!availableModels.contains(m) || m == _model) return;
+    _model = m;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_modelPrefsKey, m);
+    } catch (_) {
+      // Persistence is best-effort; the in-memory selection still applies.
+    }
+  }
+
+  /// Restores the persisted model choice at startup. Safe to call once from
+  /// main(); no-ops if nothing was saved or the saved value is unknown.
+  Future<void> loadModelPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_modelPrefsKey);
+      if (saved != null && availableModels.contains(saved)) _model = saved;
+    } catch (_) {
+      // Ignore — keep the default model.
+    }
+  }
 
   /// Generate interview questions from a résumé PDF (sent inline as base64,
   /// mirroring the web backend — no local PDF parsing). Enforces the exact

@@ -30,6 +30,7 @@ import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/recruiter/create_interview_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/test_candidates_page.dart';
+import 'package:talbotiq/features/recruiter/views/management/recruiter_library_page.dart';
 
 class RecruiterHome extends StatefulWidget {
   const RecruiterHome({super.key});
@@ -195,6 +196,14 @@ class _RecruiterHomeState extends State<RecruiterHome> {
       appBar: AppBar(
         title: const _Wordmark(subtitle: 'Recruiter'),
         actions: [
+          IconButton(
+            tooltip: 'Manage templates & library',
+            icon: const Icon(Icons.folder_special_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                  builder: (_) => const RecruiterLibraryPage()),
+            ),
+          ),
           IconButton(
             tooltip: 'Rebuild test list',
             icon: _backfilling

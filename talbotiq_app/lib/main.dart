@@ -63,6 +63,8 @@ void main() async {
   // scoring; keep it in sync when the user edits it in Settings.
   recruiterGeminiService.setKey(store.geminiKey);
   store.addListener(() => recruiterGeminiService.setKey(store.geminiKey));
+  // Restore the recruiter's persisted Gemini model choice (flash/pro).
+  await recruiterGeminiService.loadModelPreference();
 
   runApp(
     MultiProvider(
