@@ -48,6 +48,12 @@ class AppStore extends ChangeNotifier {
   String _awsProxyUrl = '';
   String _webhookUrl = '';
 
+  // Mailer backend (backend/) — sends templated interview invites to
+  // candidates. Empty URL = the feature is simply hidden. A build can ship a
+  // default with --dart-define=MAILER_BASE_URL=https://…; Settings overrides it.
+  String _mailerBaseUrl = const String.fromEnvironment('MAILER_BASE_URL');
+  String _mailerApiKey = const String.fromEnvironment('MAILER_API_KEY');
+
   // Defaults
   String _defaultReplicaId = '';
   String _defaultPersonaId = '';
@@ -155,6 +161,8 @@ class AppStore extends ChangeNotifier {
   String get geminiKey => _geminiKey;
   String get awsProxyUrl => _awsProxyUrl;
   String get webhookUrl => _webhookUrl;
+  String get mailerBaseUrl => _mailerBaseUrl;
+  String get mailerApiKey => _mailerApiKey;
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
@@ -259,6 +267,20 @@ class AppStore extends ChangeNotifier {
 
   void setWebhookUrl(String url) {
     _webhookUrl = url;
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  /// Mailer backend root (Settings → Email). Empty hides the notify-candidates
+  /// options rather than failing when a recruiter tries to send.
+  void setMailerBaseUrl(String url) {
+    _mailerBaseUrl = url.trim();
+    _saveToPrefs();
+    notifyListeners();
+  }
+
+  void setMailerApiKey(String key) {
+    _mailerApiKey = key.trim();
     _saveToPrefs();
     notifyListeners();
   }
@@ -714,6 +736,9 @@ class AppStore extends ChangeNotifier {
       _geminiKey = data['geminiKey'] ?? '';
       _awsProxyUrl = data['awsProxyUrl'] ?? '';
       _webhookUrl = data['webhookUrl'] ?? '';
+      // Keep the --dart-define default when nothing has been saved yet.
+      _mailerBaseUrl = data['mailerBaseUrl'] ?? _mailerBaseUrl;
+      _mailerApiKey = data['mailerApiKey'] ?? _mailerApiKey;
       _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
 
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
@@ -792,6 +817,8 @@ class AppStore extends ChangeNotifier {
         'geminiKey': _geminiKey,
         'awsProxyUrl': _awsProxyUrl,
         'webhookUrl': _webhookUrl,
+        'mailerBaseUrl': _mailerBaseUrl,
+        'mailerApiKey': _mailerApiKey,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
         'sessionConfig': _sessionConfig.toJson(),

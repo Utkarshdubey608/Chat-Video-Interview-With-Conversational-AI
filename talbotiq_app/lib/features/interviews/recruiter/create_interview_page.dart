@@ -30,6 +30,10 @@ import 'package:talbotiq/features/recruiter/voice/voice_picker.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/core/deep_link/deep_link_service.dart';
+import 'package:talbotiq/features/mailer/models/email_template.dart';
+import 'package:talbotiq/features/mailer/services/mailer_service.dart';
+import 'package:talbotiq/features/mailer/widgets/notify_candidates_card.dart';
 
 class CreateInterviewPage extends StatefulWidget {
   /// When provided, the page edits this interview instead of creating a new one.
@@ -100,6 +104,13 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   final _humeKeyController = TextEditingController();
   final _deepgramKeyController = TextEditingController();
 
+  // Candidate invite emails (mailer backend). Off unless the recruiter opts in;
+  // a null template means the backend's default is used.
+  bool _notifyByEmail = false;
+  EmailTemplate? _emailTemplate;
+  late final MailerService _mailer;
+  String _recruiterEmail = '';
+
   List<TavusReplica> _replicas = const [];
   bool _loadingReplicas = false;
   bool _saving = false;
@@ -137,6 +148,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     // Resolve the recruiter's display name for the candidate screen.
     final user = FirebaseAuth.instance.currentUser;
     _recruiterName ??= user?.displayName;
+    // Their email owns any template they save and scopes the ones they see.
+    _recruiterEmail = user?.email ?? '';
+    _mailer = MailerService.fromStore(context.read<AppStore>());
     if (_recruiterName == null && user != null) {
       context.read<AuthService>().nameFor(user.uid).then((n) {
         if (n != null && mounted) setState(() => _recruiterName = n);
@@ -213,6 +227,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     for (final c in _questionControllers) {
       c.dispose();
     }
+    _mailer.dispose();
     super.dispose();
   }
 
@@ -588,6 +603,10 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             maxAttempts: _maxAttempts,
           );
 
+      // Candidate email → the interview id assigned to them, so each invite
+      // email can carry that candidate's own link.
+      final invites = <String, String>{};
+
       if (_isEdit) {
         final existing = widget.existing!;
         final entries = unique.entries.toList();
@@ -602,8 +621,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           recruiterEmail: existing.recruiterEmail,
           status: existing.status,
         ));
+        invites[first.value] = existing.id;
         for (final e in entries.skip(1)) {
-          await repo.create(build(
+          final id = await repo.create(build(
             id: '',
             email: e.value,
             emailLower: e.key,
@@ -611,6 +631,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             recruiterEmail: existing.recruiterEmail,
             status: InterviewStatus.assigned,
           ));
+          invites[e.value] = id;
         }
         // Keep the test's metadata doc in step with the edited title/type so
         // the dashboard's test list stays accurate.
@@ -623,19 +644,21 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           type: _type,
           createdAt: existing.createdAt,
         ));
+        final mailNote = await _emailInvites(invites);
         if (!mounted) return;
         Navigator.of(context).pop();
         final added = entries.length - 1;
+        final saved = added > 0
+            ? 'Interview updated; $added more candidate${added == 1 ? '' : 's'} assigned.'
+            : 'Interview updated.';
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(added > 0
-              ? 'Interview updated; $added more candidate${added == 1 ? '' : 's'} assigned.'
-              : 'Interview updated.'),
+          content: Text(mailNote == null ? saved : '$saved $mailNote'),
         ));
         return;
       }
 
       for (final entry in unique.entries) {
-        await repo.create(build(
+        final id = await repo.create(build(
           id: '',
           email: entry.value,
           emailLower: entry.key,
@@ -643,6 +666,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           recruiterEmail: user.email ?? '',
           status: InterviewStatus.assigned,
         ));
+        invites[entry.value] = id;
       }
       // One metadata doc for the whole batch, so the dashboard can list this
       // test without reading its candidates. createdAt is left to the server.
@@ -655,12 +679,13 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         type: _type,
         createdAt: null,
       ));
+      final mailNote = await _emailInvites(invites);
       if (!mounted) return;
       Navigator.of(context).pop();
       final n = unique.length;
+      final saved = 'Interview assigned to $n candidate${n == 1 ? '' : 's'}.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Interview assigned to $n candidate${n == 1 ? '' : 's'}.')),
+        SnackBar(content: Text(mailNote == null ? saved : '$saved $mailNote')),
       );
     } catch (e) {
       if (mounted) {
@@ -669,6 +694,55 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           _saving = false;
         });
       }
+    }
+  }
+
+  /// Emails every candidate their own interview link, using the template the
+  /// recruiter chose (or the backend default when they chose none).
+  ///
+  /// Runs AFTER the interviews are written, so the assignment stands even if
+  /// mail fails — the failure is reported in the confirmation instead of
+  /// rolling anything back. Returns the sentence to append to that
+  /// confirmation, or null when no email was requested.
+  Future<String?> _emailInvites(Map<String, String> interviewIdsByEmail) async {
+    if (!_notifyByEmail || !_canEmailCandidates || interviewIdsByEmail.isEmpty) {
+      return null;
+    }
+
+    try {
+      final report = await _mailer.send(
+        ownerEmail: _recruiterEmail,
+        templateId: _emailTemplate?.id,
+        sharedContext: {
+          'interview_title': _titleController.text.trim(),
+          'recruiter_name': _recruiterName ?? '',
+          'company': 'TalbotIQ',
+          if (_expiresAt != null) 'deadline': formatDateTime(_expiresAt!),
+        },
+        recipients: [
+          for (final entry in interviewIdsByEmail.entries)
+            MailRecipient(
+              email: entry.key,
+              context: {
+                'interview_link': DeepLinkService.interviewLink(entry.value),
+              },
+            ),
+        ],
+      );
+
+      if (report.isDryRun) {
+        return 'Emails were logged only — the mail server is in test mode.';
+      }
+      if (report.failed == 0) {
+        return '${report.sent} invite email${report.sent == 1 ? '' : 's'} sent.';
+      }
+      final first = report.failures.first;
+      return '${report.sent} sent, ${report.failed} failed '
+          '(${first.email}: ${first.error ?? 'unknown error'}).';
+    } on MailerException catch (e) {
+      // The interviews are already assigned; say so plainly rather than making
+      // the save look like it failed.
+      return 'Candidates were NOT emailed: ${e.message}';
     }
   }
 
@@ -1050,10 +1124,39 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           ),
           const SizedBox(height: 16),
           _buildCandidates(theme),
+          if (_canEmailCandidates) ...[
+            const SizedBox(height: 8),
+            const Divider(height: 24),
+            NotifyCandidatesCard(
+              service: _mailer,
+              ownerEmail: _recruiterEmail,
+              recruiterId: FirebaseAuth.instance.currentUser?.uid,
+              enabled: _notifyByEmail,
+              onEnabledChanged: (v) => setState(() => _notifyByEmail = v),
+              template: _emailTemplate,
+              onTemplateChanged: (t) => setState(() => _emailTemplate = t),
+              candidateCount: _candidateEmails.length,
+              previewContext: _emailPreviewContext,
+            ),
+          ],
         ],
       ),
     );
   }
+
+  /// The email options only appear once a mail server is configured (Settings →
+  /// Candidate Emails) and we know who the sender is — templates are bound to
+  /// that address.
+  bool get _canEmailCandidates =>
+      _mailer.isConfigured && _recruiterEmail.isNotEmpty;
+
+  /// Values the template preview fills its placeholders with, using what the
+  /// recruiter has typed so far.
+  Map<String, String> get _emailPreviewContext => sampleContext(
+        interviewTitle: _titleController.text.trim(),
+        recruiterName: _recruiterName,
+        company: 'TalbotIQ',
+      );
 
   Widget _buildCandidates(ThemeData theme) {
     return Column(

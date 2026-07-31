@@ -11,6 +11,7 @@ import 'package:talbotiq/features/settings/sections/api_credentials_section.dart
 import 'package:talbotiq/features/settings/sections/session_setup_section.dart';
 import 'package:talbotiq/features/settings/sections/recording_storage_section.dart';
 import 'package:talbotiq/features/settings/sections/webhook_section.dart';
+import 'package:talbotiq/features/settings/sections/mailer_section.dart';
 import 'package:talbotiq/features/settings/sections/appearance_section.dart';
 
 /// Settings shell. Keeps this file small: an Apple-style large title, a category
@@ -44,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _CategoryMeta('Session Setup', Icons.tune, Color(0xFF6366F1)),
     _CategoryMeta('Recording & Storage', Icons.videocam_outlined, Color(0xFFEF4444)),
     _CategoryMeta('Webhook', Icons.webhook_outlined, Color(0xFFA855F7)),
+    _CategoryMeta('Candidate Emails', Icons.mail_outline, Color(0xFF10B981)),
     _CategoryMeta('Appearance', Icons.palette_outlined, Color(0xFFF59E0B)),
   ];
 
@@ -53,6 +55,7 @@ class _SettingsPageState extends State<SettingsPage> {
     const SessionSetupSection(),
     const RecordingStorageSection(),
     const WebhookSection(),
+    const MailerSection(),
     const AppearanceSection(),
   ];
 
