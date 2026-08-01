@@ -28,35 +28,39 @@ class Settings(BaseSettings):
     # auth is DISABLED (handy for local dev; set it in any real deploy).
     api_key: str = ""
 
-    # --- Database (queue + saved templates) ---
-    # SQLite by default. Swap for Postgres via
-    # DATABASE_URL=postgresql+psycopg://user:pass@host/db (also lets several
-    # worker processes share one queue safely).
-    database_url: str = "sqlite:///./mailer.db"
+    # --- Delivery ---
+    # When true, emails are NOT actually sent — they're logged instead, and the
+    # endpoint still returns per-recipient results. No credentials needed.
+    dry_run: bool = True
 
-    # --- Gmail API (OAuth refresh token) ---
-    # Create an OAuth client (Desktop) in Google Cloud, grant the
-    # https://www.googleapis.com/auth/gmail.send scope, and obtain a refresh
-    # token once. See README for the one-time setup.
-    email_user: str = ""            # the Gmail address that sends ("From")
+    # Display name used on the "From" header.
+    from_name: str = "TalbotIQ"
+    # The Gmail address mail is sent from. Needed by both modes below.
+    email_user: str = ""
+
+    # Mode A (simplest): Gmail SMTP with a 16-character App Password.
+    email_app_password: str = ""
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+
+    # Mode B: Gmail API with an OAuth refresh token — used when all three are
+    # set. Handy where outbound SMTP is blocked (some PaaS hosts).
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""
 
-    # When true, emails are NOT actually sent — they're logged instead. Lets the
-    # whole queue flow be exercised without Gmail credentials.
-    dry_run: bool = True
+    # How many recipients of one /send call are delivered in parallel.
+    send_concurrency: int = 5
 
-    # --- Queue / workers ---
-    # Number of async workers draining the queue. 0 disables the in-app pool
-    # (e.g. when running workers as a separate process, or in tests).
-    worker_concurrency: int = 4
-    # Per-job delivery attempts before it is marked failed.
-    job_max_attempts: int = 3
-    # Base seconds for exponential retry backoff (attempt n waits base * 2^(n-1)).
-    retry_backoff_seconds: int = 10
-    # How often an idle worker re-checks the queue (also the retry granularity).
-    poll_interval_seconds: float = 2.0
+    # --- Firebase (saved templates only — same project as the mobile app) ---
+    firebase_project_id: str = "talbotiq-9cc4e"
+    # Path to a service-account JSON file...
+    firebase_credentials_file: str = ""
+    # ...or that JSON inline (convenient as a single PaaS env var). If both are
+    # empty, Application Default Credentials are used.
+    firebase_credentials_json: str = ""
+    # Firestore collection holding recruiter-saved templates.
+    templates_collection: str = "email_templates"
 
     @property
     def cors_origin_list(self) -> list[str]:

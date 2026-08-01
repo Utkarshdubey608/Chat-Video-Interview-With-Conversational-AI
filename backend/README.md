@@ -1,38 +1,111 @@
 # TalbotIQ Mailer Backend
 
-A standalone **FastAPI** service that sends interview-invite emails to selected
-candidates and stores recruiter-customised email templates. Called by the
-Flutter app when a recruiter creates an exam with *"Notify candidates"* enabled.
+A small **FastAPI** service that emails a list of candidates using a template.
+No SQL database, no queue — custom templates are stored in the **same Firebase
+project as the mobile app** (`talbotiq-9cc4e`, Firestore collection
+`email_templates`).
 
-## Queue-based architecture
+## Endpoints
 
-Email delivery is **asynchronous and durable** so the API stays responsive and
-many recruiters can send at once:
+Interactive docs at `/docs`.
 
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/templates?owner_email=…` | Templates this recruiter can pick: built-ins + their own. |
+| `POST` | `/api/templates` | Save a custom template; returns its `id`. |
+| `POST` | `/api/emails/send` | Send to a list of candidates using a template id. |
+| `GET` | `/health` | Status + whether sending is actually configured. |
+
+Custom templates are **owned by the email that created them** (`owner_email`,
+stored lowercased). A recruiter only ever sees the built-ins plus their own, and
+cannot send with someone else's template id (404).
+
+### `GET /api/templates?owner_email=…`
+
+Omit `owner_email` and you get the built-ins only.
+
+```jsonc
+{
+  "templates": [
+    { "id": "builtin:interview_invite", "name": "Interview invite",
+      "subject": "…", "body": "…", "is_html": true,
+      "source": "builtin", "is_default": true },
+    { "id": "0dU51aGWqkkhse1r4zGi", "name": "Round 2 invite",
+      "source": "custom", "owner_email": "vaishnavi@talbotiq.com", … }
+  ],
+  "default_template_id": "builtin:interview_invite",
+  "variables": { "candidate_name": "…", "interview_link": "…", … },
+  "warning": null   // set if Firestore is unreachable — built-ins still returned
+}
 ```
-POST /api/emails/send
-      │  render one email per candidate, persist as jobs (status=queued)
-      │  return 202 { batch_id, queued } immediately  ◀── never blocks on SMTP/Gmail
-      ▼
-  email_jobs (queue table, durable)
-      │  workers atomically claim the oldest due job (queued → processing)
-      ▼
-  worker pool (N async workers, started in the app lifespan)
-      │  send via Gmail API off the event loop (asyncio.to_thread)
-      ├── success → status=sent
-      └── failure → retry with exponential backoff, then status=failed
+
+Built-ins ship in code (`app/templating.py`): `interview_invite`,
+`interview_reminder`, `result_published`, `plain_invite`.
+
+### `POST /api/templates`
+
+```jsonc
+{
+  "name": "Round 2 invite",
+  "description": "Our wording for the second round",   // optional
+  "subject": "{{ company }} — round 2 for {{ candidate_name }}",
+  "body": "<h2>Hi {{ candidate_name }}</h2>…",
+  "is_html": true,                                      // optional, default true
+  "owner_email": "vaishnavi@talbotiq.com",              // required — who owns it
+  "recruiter_id": "firebase-uid"                        // optional, for traceability
+}
 ```
 
-- **Responsive:** the request only writes rows and nudges the workers; delivery
-  happens in the background.
-- **Concurrent & fair:** `WORKER_CONCURRENCY` workers process the global queue in
-  FIFO order, so multiple recruiters' batches interleave.
-- **Reliable:** jobs are persisted, retried with backoff (`JOB_MAX_ATTEMPTS`),
-  and any job left `processing` by a crash is recovered to `queued` on startup
-  (at-least-once delivery).
-- **No external broker:** the queue is a DB table (SQLite by default). Point
-  `DATABASE_URL` at Postgres to share one queue across multiple app/worker
-  processes — the guarded atomic claim is safe there too.
+→ `201` with the saved template, including the `id` to pass to `/send`.
+
+### `POST /api/emails/send`
+
+```jsonc
+{
+  "template_id": "0dU51aGWqkkhse1r4zGi",   // omit → default_template_id is used
+  "owner_email": "vaishnavi@talbotiq.com", // who is sending (ownership check)
+  "shared_context": {                       // variables shared by everyone
+    "interview_title": "Senior Flutter Engineer",
+    "recruiter_name": "Vaishnavi",
+    "company": "TalbotIQ"
+  },
+  "recipients": [
+    { "email": "ada@example.com", "name": "Ada",
+      "context": { "interview_link": "https://talbotiq.app/i/abc" } },
+    { "email": "grace@example.com",
+      "context": { "interview_link": "https://talbotiq.app/i/def" } }
+  ]
+}
+```
+
+`subject` / `body` / `is_html` may also be sent inline to override the template
+for this one call. Response:
+
+```jsonc
+{
+  "total": 2, "sent": 2, "failed": 0,
+  "template_id": "0dU51aGWqkkhse1r4zGi",
+  "provider": "smtp",
+  "subject_preview": "TalbotIQ — round 2 for Ada",
+  "results": [ { "email": "ada@example.com", "status": "sent", "error": null }, … ]
+}
+```
+
+One bad address fails only its own row; the rest still go out.
+`SEND_CONCURRENCY` recipients are delivered in parallel.
+
+## Template variables
+
+`{{ variable }}` placeholders (plain substitution — no code execution, so
+recruiter-authored templates can't run anything server-side). Unknown
+placeholders render empty.
+
+`candidate_name`, `candidate_email`, `interview_title`, `interview_link`,
+`recruiter_name`, `company`, `deadline` — plus anything else you put in
+`shared_context` / a recipient's `context`.
+
+Precedence per recipient: `shared_context` < recipient `context` <
+`candidate_name` / `candidate_email` (always the candidate's own).
 
 ## Quick start
 
@@ -44,76 +117,73 @@ cp .env.example .env          # DRY_RUN=true — emails are logged, not sent
 uvicorn app.main:app --reload # http://localhost:8000  (docs at /docs)
 ```
 
-## Gmail API setup (one time)
+`GET /health` tells you what mode you're in:
 
-DRY_RUN mode needs no credentials. To send for real:
+```json
+{"status":"ok","provider":"dry_run","sending_ready":true,"hint":null,
+ "firebase_project":"talbotiq-9cc4e"}
+```
 
-1. In Google Cloud Console, enable the **Gmail API**.
-2. Create an **OAuth client ID** (type: Desktop app). Note the client id/secret.
-3. Authorise the `https://www.googleapis.com/auth/gmail.send` scope once for the
-   sending account and capture a **refresh token** (e.g. via the OAuth
-   Playground with your own client, or a short local script).
-4. Put `EMAIL_USER`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`,
-   `GMAIL_REFRESH_TOKEN` in `.env` and set `DRY_RUN=false`.
+## Sending for real
 
-This mirrors the OAuth refresh-token flow and works on hosts like Render where
-outbound SMTP is often blocked.
+Set `DRY_RUN=false` and pick one mode:
+
+**A — Gmail App Password (simplest).** With 2-Step Verification on, create one at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords):
+
+```env
+DRY_RUN=false
+EMAIL_USER=hr@yourdomain.com
+EMAIL_APP_PASSWORD=abcd efgh ijkl mnop
+```
+
+**B — Gmail API (OAuth refresh token).** Use where outbound SMTP is blocked
+(e.g. some PaaS hosts). Enable the Gmail API, create an OAuth **Desktop** client,
+authorise the `gmail.send` scope once, and capture a refresh token:
+
+```env
+DRY_RUN=false
+EMAIL_USER=hr@yourdomain.com
+GMAIL_CLIENT_ID=…
+GMAIL_CLIENT_SECRET=…
+GMAIL_REFRESH_TOKEN=…
+```
+
+Mode B wins when all three `GMAIL_*` values are set. If neither is configured,
+`/send` returns **503** with a hint instead of silently failing.
+
+## Firebase (custom templates)
+
+Built-ins and sending work with no Firebase setup. To save custom templates,
+give the service a **service account** for the mobile app's project:
+
+1. Firebase console → ⚙ **Project settings → Service accounts → Generate new
+   private key** — this downloads a JSON file.
+2. Point the service at it:
+
+```env
+FIREBASE_PROJECT_ID=talbotiq-9cc4e
+FIREBASE_CREDENTIALS_FILE=./serviceAccount.json
+# or, as a single env var on Render/Cloud Run:
+# FIREBASE_CREDENTIALS_JSON={"type":"service_account", …}
+```
+
+Keep that JSON out of git (`.gitignore` already covers `.env`). The Admin SDK
+bypasses Firestore security rules, so templates need no rule changes — the app
+talks to this API, not to the collection directly.
+
+Local testing without a service account:
+
+```bash
+firebase emulators:start --only firestore --project talbotiq-9cc4e
+FIRESTORE_EMULATOR_HOST=localhost:8080 uvicorn app.main:app --reload
+```
 
 ## Auth
 
 If `API_KEY` is set, every `/api/*` call must send it as `X-API-Key`. Empty
-disables the check (dev). `app/security.py` is where Firebase ID-token
-verification would slot in for production.
-
-## Endpoints
-
-Interactive docs at `/docs`.
-
-### Emails
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/emails/send` | Enqueue an invite per recipient; returns `202 {batch_id, queued}`. |
-| `GET` | `/api/emails/batches/{id}` | Batch progress: queued/processing/sent/failed + per-job status. |
-
-`POST /api/emails/send` body:
-
-```jsonc
-{
-  "recruiter_id": "firebase-uid",
-  "template_id": 3,               // optional: use a saved template…
-  "subject": "…", "body": "…",    // …or supply inline (inline wins)
-  "is_html": true,
-  "shared_context": { "interview_title": "Senior Flutter Engineer",
-                      "recruiter_name": "Vaishnavi", "company": "TalbotIQ" },
-  "recipients": [
-    { "email": "a@x.com", "name": "Ada",
-      "context": { "interview_link": "talbotiq://interview/abc123" } }
-  ]
-}
-```
-
-### Templates
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/templates/defaults` | Built-in starter subject/body + supported variables. |
-| `GET` | `/api/templates?recruiter_id=…` | List a recruiter's saved templates. |
-| `POST` | `/api/templates` | Save a new template. |
-| `PUT` | `/api/templates/{id}` | Update a template. |
-| `DELETE` | `/api/templates/{id}` | Delete a template. |
-
-## Template variables
-
-`{{ variable }}` placeholders (plain substitution — no code execution):
-`candidate_name`, `candidate_email`, `interview_title`, `interview_link`,
-`recruiter_name`, `company`. Unknown placeholders render empty.
-
-## Running workers separately (optional scale-out)
-
-By default workers run inside the API process. To scale delivery independently,
-set `WORKER_CONCURRENCY=0` on the API instances and run one or more dedicated
-worker processes against the same `DATABASE_URL` (a small runner that calls
-`QueueManager.start()`), or migrate the queue to Celery/RQ + Redis — the job
-model and repository are the natural seam for that.
+disables the check (dev only). `app/security.py` is where Firebase ID-token
+verification would slot in.
 
 ## Tests
 
@@ -122,4 +192,19 @@ pip install pytest
 pytest
 ```
 
-Runs entirely in `DRY_RUN` with an in-memory DB — no network, no Gmail creds.
+Runs in `DRY_RUN` with Firestore stubbed — no network, no credentials.
+
+## Layout
+
+```
+app/
+  main.py             FastAPI app + /health
+  config.py           env-driven settings
+  security.py         X-API-Key check
+  mailer.py           delivery: smtp | gmail_api | dry_run
+  firebase.py         lazy Firestore client (optional)
+  templating.py       {{ }} renderer + the built-in templates
+  templates_store.py  built-ins + Firestore CRUD
+  routers/templates.py  GET/POST /api/templates
+  routers/emails.py     POST /api/emails/send
+```
