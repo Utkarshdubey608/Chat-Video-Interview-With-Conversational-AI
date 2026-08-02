@@ -52,6 +52,41 @@ class Settings(BaseSettings):
     # How many recipients of one /send call are delivered in parallel.
     send_concurrency: int = 5
 
+    # --- Third-party AI providers ---
+    # These are the ONLY place these credentials exist. The app never sees them:
+    # it either calls a proxy route here, or receives a short-lived Gemini Live
+    # token minted from gemini_api_key. Blank = that feature reports 503 rather
+    # than failing with a confusing vendor 401.
+    gemini_api_key: str = ""
+    tavus_api_key: str = ""
+    deepgram_api_key: str = ""
+
+    # Model used for scoring / question generation (REST generateContent).
+    gemini_model: str = "gemini-2.5-flash"
+    # Native-audio model used for the live voice interview.
+    gemini_live_model: str = "models/gemini-2.5-flash-native-audio-preview-09-2025"
+
+    # --- Gemini Live ephemeral tokens ---
+    # Minted per interview launch; the client connects straight to Google with one.
+    # Grace added to the interview's own duration before the session is cut off.
+    gemini_token_expiry_buffer_minutes: int = 10
+    # Window the client has to OPEN the session after minting. Google's own
+    # default is 60s; the client mints on launch-tap so this is ample.
+    gemini_token_connect_window_seconds: int = 120
+
+    # --- Rate limiting (per user, per worker) ---
+    # Auth proves a caller is a real user; these bound how much one user can
+    # spend. In-process counters — see app/ratelimit.py for the caveats.
+    rate_limit_enabled: bool = True
+    rate_limit_window_seconds: int = 60
+    # Minting a Live token hands out a credential. One interview launch needs
+    # exactly one, so a low ceiling still leaves room for retries.
+    rate_limit_live_token: int = 10
+    # Scoring an interview makes a handful of calls; regeneration adds more.
+    rate_limit_generate: int = 30
+    # Audio uploads: transcription, and starting an avatar conversation.
+    rate_limit_media: int = 20
+
     # --- Firebase (saved templates only — same project as the mobile app) ---
     firebase_project_id: str = "talbotiq-9cc4e"
     # Path to a service-account JSON file...
@@ -68,6 +103,12 @@ class Settings(BaseSettings):
         if raw == "*" or not raw:
             return ["*"]
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @property
+    def live_model_name(self) -> str:
+        """The Live model, always in Google's `models/…` resource form."""
+        m = self.gemini_live_model.strip()
+        return m if m.startswith("models/") else f"models/{m}"
 
 
 @lru_cache

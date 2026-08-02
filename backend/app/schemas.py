@@ -84,3 +84,28 @@ class SendResponse(BaseModel):
     provider: str  # "smtp" | "gmail_api" | "dry_run"
     subject_preview: str
     results: list[SendResult]
+
+
+# --- Realtime (Gemini Live ephemeral tokens) ---
+class LiveTokenRequest(BaseModel):
+    """Ask for a token to open one Gemini Live session.
+
+    No model, voice, or system instruction here on purpose: those are resolved
+    server-side from the interview document and locked into the token, so a
+    tampered client cannot influence them.
+    """
+
+    interview_id: str = Field(min_length=1, max_length=200)
+
+
+class LiveTokenResponse(BaseModel):
+    token: str
+    # Handed back rather than hardcoded in the app: the token-authenticated
+    # socket lives on a different API version from the minting endpoint, and
+    # that mapping should be changeable without shipping a new build.
+    ws_url: str = Field(serialization_alias="wsUrl")
+    model: str
+    expires_at: str = Field(serialization_alias="expiresAt")
+    connect_by: str = Field(serialization_alias="connectBy")
+
+    model_config = {"populate_by_name": True}

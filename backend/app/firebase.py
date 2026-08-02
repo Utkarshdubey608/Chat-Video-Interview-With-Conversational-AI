@@ -50,36 +50,52 @@ def _credentials(settings: Settings):
     return credentials.ApplicationDefault()
 
 
+def ensure_app(settings: Settings):
+    """Initialise the Admin SDK once and return the app.
+
+    Split out from `get_db` because ID-token verification (`app.security`) needs
+    the SDK initialised but has no use for a Firestore client.
+    """
+    try:
+        import firebase_admin
+    except ImportError as exc:  # pragma: no cover - dependency is in requirements
+        raise FirestoreUnavailable(
+            "firebase-admin is not installed. Run: pip install -r requirements.txt"
+        ) from exc
+
+    with _lock:
+        if firebase_admin._apps:
+            return firebase_admin.get_app()
+        try:
+            return firebase_admin.initialize_app(
+                _credentials(settings),
+                {"projectId": settings.firebase_project_id},
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the caller as 503
+            raise FirestoreUnavailable(
+                "Firebase is not configured: "
+                f"{exc}. Set FIREBASE_CREDENTIALS_FILE (service-account JSON) or "
+                "FIREBASE_CREDENTIALS_JSON. Built-in templates and sending work without it."
+            ) from exc
+
+
 def get_db(settings: Settings):
     """Return a Firestore client, or raise FirestoreUnavailable with a hint."""
     global _client
     if _client is not None:
         return _client
 
+    ensure_app(settings)
+
     with _lock:
         if _client is not None:
             return _client
-        try:
-            import firebase_admin
-            from firebase_admin import firestore
-        except ImportError as exc:  # pragma: no cover - dependency is in requirements
-            raise FirestoreUnavailable(
-                "firebase-admin is not installed. Run: pip install -r requirements.txt"
-            ) from exc
+        from firebase_admin import firestore
 
         try:
-            if not firebase_admin._apps:
-                firebase_admin.initialize_app(
-                    _credentials(settings),
-                    {"projectId": settings.firebase_project_id},
-                )
             _client = firestore.client()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as 503
-            raise FirestoreUnavailable(
-                "Firestore is not configured: "
-                f"{exc}. Set FIREBASE_CREDENTIALS_FILE (service-account JSON) or "
-                "FIREBASE_CREDENTIALS_JSON. Built-in templates and sending work without it."
-            ) from exc
+            raise FirestoreUnavailable(f"Firestore is not available: {exc}") from exc
 
     return _client
 
