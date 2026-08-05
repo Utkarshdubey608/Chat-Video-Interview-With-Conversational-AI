@@ -1,7 +1,7 @@
 // lib/core/net/api_client.dart
 //
 // A thin, shared HTTP client used by every outbound service (Gemini, Tavus,
-// Deepgram, Hume, the scoring proxy). It exists to enforce three things that
+// Deepgram, the TalbotIQ backend). It exists to enforce three things that
 // the raw `http` calls previously got wrong:
 //
 //   1. A mandatory request timeout. Bare `http.get/post` never time out, so a
@@ -81,7 +81,7 @@ class ApiClient {
       _send(() => _client.delete(url, headers: headers), idempotent: true);
 
   /// Sends a [http.StreamedRequest]/[http.MultipartRequest] with the same
-  /// timeout + transient-retry policy. Used for file uploads (Deepgram/Hume).
+  /// timeout + transient-retry policy. Used for file uploads.
   Future<http.Response> sendMultipart(
     http.BaseRequest Function() build, {
     bool idempotent = false,

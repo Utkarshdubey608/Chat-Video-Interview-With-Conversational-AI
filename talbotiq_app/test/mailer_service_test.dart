@@ -19,7 +19,6 @@ import 'package:talbotiq/features/mailer/services/mailer_service.dart';
 ({MailerService service, List<http.Request> requests}) _service(
   Future<http.Response> Function(http.Request) handler, {
   String baseUrl = 'https://mail.example.com',
-  String apiKey = '',
 }) {
   final requests = <http.Request>[];
   final client = MockClient((req) {
@@ -29,7 +28,6 @@ import 'package:talbotiq/features/mailer/services/mailer_service.dart';
   return (
     service: MailerService(
       baseUrl: baseUrl,
-      apiKey: apiKey,
       client: ApiClient(client: client, maxRetries: 0),
     ),
     requests: requests,
@@ -98,14 +96,12 @@ void main() {
       expect(catalog.variables, containsPair('candidate_name', 'The candidate.'));
     });
 
-    test('sends the API key only when one is configured', () async {
-      final withKey = _service((_) async => _json(_templateListBody), apiKey: 'secret');
-      await withKey.service.listTemplates(ownerEmail: 'a@b.com');
-      expect(withKey.requests.single.headers['X-API-Key'], 'secret');
-
-      final without = _service((_) async => _json(_templateListBody));
-      await without.service.listTemplates(ownerEmail: 'a@b.com');
-      expect(without.requests.single.headers.containsKey('X-API-Key'), isFalse);
+    test('never sends an X-API-Key header', () async {
+      // The mailer used to carry a user-entered shared secret. There is no key
+      // in the app any more, so a request must not claim to have one.
+      final h = _service((_) async => _json(_templateListBody));
+      await h.service.listTemplates(ownerEmail: 'a@b.com');
+      expect(h.requests.single.headers.containsKey('X-API-Key'), isFalse);
     });
 
     test('joins paths correctly when the base URL has a trailing slash', () async {

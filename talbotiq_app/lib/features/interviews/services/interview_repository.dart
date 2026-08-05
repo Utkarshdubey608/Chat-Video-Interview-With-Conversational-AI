@@ -234,15 +234,6 @@ class InterviewRepository {
     });
   }
 
-  /// Updates just this test's pinned API key overrides — a narrower write than
-  /// [CreateInterviewPage]'s full edit form, used by the "Test Key" quick-edit
-  /// dialog on the interview card.
-  Future<void> updateKeyOverrides(String id, Map<String, String> keyOverrides) {
-    return _col.doc(id).update({
-      'keyOverrides': keyOverrides,
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-  }
 
   // ── Tests (batch metadata) ────────────────────────────────────────────────
 

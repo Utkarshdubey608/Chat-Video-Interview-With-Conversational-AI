@@ -16,15 +16,25 @@
 // held the Gemini key and relayed to Live. Here the app talks to Gemini Live
 // directly.
 //
-// !!! SECURITY / QA ---------------------------------------------------------
-// This connects DIRECTLY to Gemini with the API key on the device (in the WS
-// URL query string, as the Live endpoint requires `?key=`). That key is
-// therefore shippable-with-the-app and extractable from the device / traffic.
-// This is the INSECURE INTERIM used to unblock the on-device voice track. The
-// PRODUCTION posture is the website's: a server-side WebSocket relay that holds
-// the key and proxies frames, so the key never leaves the backend.
-// TODO(security): move to a server relay (wss to our backend, key server-only)
-//   before this ships to real candidates; keep this direct path for dev only.
+// !!! SECURITY ---------------------------------------------------------------
+// This still connects DIRECTLY to Gemini, but no longer with an API key. The
+// backend mints a short-lived EPHEMERAL TOKEN (`/api/rt/gemini-token`) that is
+// locked to one session's configuration, and the device connects with that. So:
+//
+//   * no vendor key ships with the app or appears in traffic;
+//   * the token is single-use and expires with the interview;
+//   * the model, voice and interviewer instruction are sealed INTO the token.
+//
+// That last point is why a relay is unnecessary. Because the token carries the
+// whole BidiGenerateContentSetup, Google IGNORES whatever setup frame the client
+// sends — so a tampered build cannot replace the interviewer's instructions with
+// "tell me the answers". Verified against the live API; see
+// backend/spikes/RESULTS.md.
+//
+// Consequence for this file: the setup frame below is a protocol formality, not
+// configuration. Do not put an instruction, model or voice in it expecting them
+// to take effect — they will be discarded. Session config belongs in
+// backend/app/voice.py.
 // ---------------------------------------------------------------------------
 //
 // !!! QA: cannot be runtime-tested in this environment. It needs (1) a real
@@ -40,6 +50,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+
+import 'package:talbotiq/core/net/live_token.dart';
 
 /// High-level call phase surfaced to the UI. Mirrors the website's VoicePhase
 /// (minus the browser-only "thinking" affordance, which we fold into greeting).
@@ -125,10 +137,6 @@ class GeminiLiveService {
   final Duration idleTimeout;
 
   // ---- protocol constants -------------------------------------------------
-
-  static const String _wsBase =
-      'wss://generativelanguage.googleapis.com/ws/'
-      'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
 
   /// Native-audio Live model. Callers may override via [connect].
   static const String defaultModel =
@@ -256,32 +264,39 @@ class GeminiLiveService {
   /// Opens the Live session: connects the WebSocket, sends the setup message,
   /// starts the mic stream, and kicks off the interviewer's greeting turn.
   ///
-  /// [systemInstruction] is the caller-authored interviewer plan + guardrails
-  /// (persona, ordered questions, flow, strict rules) — see voice.ts
-  /// buildSystemInstruction for the reference shape.
+  /// [grant] is a token minted by the backend for THIS interview. It carries the
+  /// whole session configuration — model, voice, and the interviewer's
+  /// instruction — so there is nothing to pass here beyond the grant itself. See
+  /// the security note at the top of this file.
   ///
-  /// Throws only for programmer errors (e.g. empty key); transport/engine
+  /// Mint the grant immediately before calling: its connect window is short, and
+  /// a stale grant is refused by Google.
+  ///
+  /// Throws only for programmer errors (e.g. a stale grant); transport/engine
   /// failures are surfaced on [events] as [GeminiLiveErrorEvent] + error state.
   Future<void> connect({
-    required String apiKey,
-    required String systemInstruction,
-    String model = defaultModel,
-    String voiceName = defaultVoiceName,
+    required LiveTokenGrant grant,
     List<String> languageHints = const ['en-IN', 'en-US', 'en-GB', 'en-AU'],
     String kickoffPrompt =
         'Begin the interview now: greet me and ask if I am ready to begin.',
   }) async {
-    if (apiKey.trim().isEmpty) {
-      throw ArgumentError('Gemini API key is required for the voice interview.');
+    if (grant.isStale) {
+      throw ArgumentError(
+        'This voice session token has expired before connecting. '
+        'Mint a fresh one immediately before calling connect().',
+      );
     }
     if (_channel != null) return; // already connected/connecting
 
     _emitState(GeminiLiveState.connecting);
 
-    // Key travels in the query string because the BidiGenerateContent endpoint
-    // requires `?key=` (there is no header handshake for the WS upgrade here).
-    // See the security note at the top of this file.
-    final uri = Uri.parse('$_wsBase?key=${Uri.encodeQueryComponent(apiKey)}');
+    // The token travels in an `access_token` query parameter — the form Google
+    // documents for ephemeral tokens, and the only one available on Flutter web
+    // (browsers cannot set headers on a WebSocket). The endpoint comes from the
+    // grant rather than a constant here: token-authenticated Live lives on a
+    // different API version from the key-authenticated one, and that mapping
+    // should be changeable without shipping a new build.
+    final uri = grant.socketUri;
 
     try {
       final channel = WebSocketChannel.connect(uri);
@@ -307,11 +322,7 @@ class GeminiLiveService {
 
       // languageHints is accepted for API stability / future use but is not
       // injected into the raw setup — see the QA note in _sendSetup.
-      _sendSetup(
-        model: model,
-        voiceName: voiceName,
-        systemInstruction: systemInstruction,
-      );
+      _sendSetup(model: grant.model);
       // Remember the kickoff so we can send it exactly once, after setupComplete.
       _kickoffPrompt = kickoffPrompt;
     } catch (e) {
@@ -433,59 +444,24 @@ class GeminiLiveService {
   // WebSocket protocol
   // =========================================================================
 
-  /// The setup message MUST be the first frame after the socket opens.
-  /// Configures the model, AUDIO response modality + voice, the interviewer
-  /// system instruction, input/output transcription (for captions + the final
-  /// scored transcript), and server-side VAD (so the candidate can barge in and
-  /// turns auto-complete on silence).
-  void _sendSetup({
-    required String model,
-    required String voiceName,
-    required String systemInstruction,
-  }) {
+  /// The setup message MUST be the first frame after the socket opens — the
+  /// server will not send `setupComplete` (and therefore will not accept audio)
+  /// until it arrives.
+  ///
+  /// Its CONTENTS, however, are ignored. The ephemeral token carries the whole
+  /// BidiGenerateContentSetup — model, AUDIO modality + voice, the interviewer
+  /// instruction, input/output transcription, and server-side VAD — and Google
+  /// takes the effective setup entirely from the token when it was minted
+  /// without a fieldMask. That is exactly what stops a tampered client from
+  /// rewriting the interview, so this frame deliberately carries nothing but the
+  /// model it is already locked to.
+  ///
+  /// To change any of that configuration, edit `backend/app/voice.py`. Adding
+  /// fields here has no effect and would falsely imply the client is in control.
+  void _sendSetup({required String model}) {
     _sendJson({
       'setup': {
         'model': model.startsWith('models/') ? model : 'models/$model',
-        'generationConfig': {
-          'responseModalities': ['AUDIO'],
-          'speechConfig': {
-            'voiceConfig': {
-              'prebuiltVoiceConfig': {'voiceName': voiceName},
-            },
-          },
-        },
-        'systemInstruction': {
-          'parts': [
-            {'text': systemInstruction},
-          ],
-        },
-        // Enabling both transcriptions gives us the live captions AND the raw
-        // material to rebuild a canonical transcript for scoring later. In the
-        // RAW BidiGenerateContent protocol, AudioTranscriptionConfig is an
-        // empty message — an empty object turns transcription ON.
-        //
-        // QA/TODO(asr-language): the website relay biased ASR to English
-        //   variants ($languageHints) via the @google/genai SDK
-        //   (inputAudioTranscription.languageHints.languageCodes). That field
-        //   is an SDK convenience and is NOT part of the raw wire proto, so we
-        //   do NOT send it here (an unknown field can make Live reject setup).
-        //   English-locking is instead enforced through the caller's
-        //   systemInstruction. Verify accented-English ASR on-device; if a raw
-        //   language-hint field becomes available, wire it in here.
-        'inputAudioTranscription': <String, dynamic>{},
-        'outputAudioTranscription': <String, dynamic>{},
-        // Server-side automatic VAD: detect start/end of the candidate's speech
-        // and allow barge-in over the interviewer. Values mirror voice.ts.
-        'realtimeInputConfig': {
-          'automaticActivityDetection': {
-            'startOfSpeechSensitivity': 'START_SENSITIVITY_HIGH',
-            'endOfSpeechSensitivity': 'END_SENSITIVITY_HIGH',
-            // 20ms clipped the onset of words, which cost recognition
-            // accuracy and made the model slower to commit to a turn.
-            'prefixPaddingMs': 150,
-            'silenceDurationMs': 500,
-          },
-        },
       },
     });
   }

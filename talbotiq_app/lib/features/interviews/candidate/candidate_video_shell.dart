@@ -70,9 +70,6 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
   @override
   void dispose() {
     _store?.removeListener(_onStoreChanged);
-    // Restore the candidate's own API keys (undo the org's ephemeral keys)
-    // when leaving an assigned interview.
-    if (widget.interview != null) _store?.reloadApiKeysFromPrefs();
     super.dispose();
   }
 

@@ -109,3 +109,11 @@ class LiveTokenResponse(BaseModel):
     connect_by: str = Field(serialization_alias="connectBy")
 
     model_config = {"populate_by_name": True}
+
+
+class PreviewTokenRequest(BaseModel):
+    """Ask for a token to play one voice sample (the recruiter's voice picker)."""
+
+    voice_name: str = Field(default="", max_length=60)
+    # Capped again server-side in app.voice — never trust the client's limit.
+    sample_text: str = Field(default="", max_length=400)

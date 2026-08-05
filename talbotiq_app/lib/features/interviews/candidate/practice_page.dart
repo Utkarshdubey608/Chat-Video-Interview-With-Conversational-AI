@@ -8,11 +8,9 @@
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/core/constants/colors.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
@@ -29,7 +27,6 @@ class PracticePage extends StatefulWidget {
 }
 
 class _PracticePageState extends State<PracticePage> {
-  final _keyController = TextEditingController();
   final _promptController = TextEditingController();
   final _replicaIdController = TextEditingController();
   final _personaIdController = TextEditingController();
@@ -47,15 +44,10 @@ class _PracticePageState extends State<PracticePage> {
   void initState() {
     super.initState();
     _promptController.text = DraftForm.defaults().conversationalContext;
-    // Prefill with any key already on the device (e.g. pulled org key); the
-    // candidate can replace it with their own.
-    final existing = context.read<AppStore>().tavusKey;
-    if (existing.isNotEmpty) _keyController.text = existing;
   }
 
   @override
   void dispose() {
-    _keyController.dispose();
     _promptController.dispose();
     _replicaIdController.dispose();
     _personaIdController.dispose();
@@ -66,12 +58,6 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _loadReplicas() async {
-    final key = _keyController.text.trim();
-    if (key.isEmpty) {
-      setState(() => _error = 'Enter your Tavus API key first.');
-      return;
-    }
-    tavusService.setKey(key);
     setState(() {
       _loadingReplicas = true;
       _error = null;
@@ -122,11 +108,6 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _launch() async {
-    final key = _keyController.text.trim();
-    if (key.isEmpty) {
-      setState(() => _error = 'Enter your Tavus API key.');
-      return;
-    }
     if (_replicaIdController.text.trim().isEmpty) {
       setState(() => _error = 'Pick or enter an avatar (replica).');
       return;
@@ -136,7 +117,6 @@ class _PracticePageState extends State<PracticePage> {
       _launching = true;
       _error = null;
     });
-    tavusService.setKey(key);
 
     final config = DraftForm.defaults().copyWith(
       conversationalContext: _promptController.text.trim(),
@@ -325,7 +305,7 @@ class _PracticePageState extends State<PracticePage> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Practice mode uses your personal Tavus account and settings. Nothing here is assigned by a recruiter, stored, or scored.',
+                    'Practice runs on the organisation\'s avatar account. Nothing here is assigned by a recruiter, stored, or scored.',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       fontSize: 12,
@@ -334,13 +314,6 @@ class _PracticePageState extends State<PracticePage> {
                 ),
               ],
             ),
-          ),
-          const SizedBox(height: 16),
-          CustomInputField(
-            label: 'Your Tavus API Key',
-            placeholder: 'Enter tavus_api_key...',
-            controller: _keyController,
-            isPassword: true,
           ),
         ],
       ),

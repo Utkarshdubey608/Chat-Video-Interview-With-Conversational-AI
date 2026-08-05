@@ -14,7 +14,6 @@ import 'package:provider/provider.dart';
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
@@ -151,7 +150,6 @@ class _CandidateHomeState extends State<CandidateHome> {
     if (!_guardAccess(interview)) return;
     final messenger = ScaffoldMessenger.of(context);
     final store = context.read<AppStore>();
-    final appConfig = context.read<AppConfigService>();
     final repo = context.read<InterviewRepository>();
 
     if (interview.avatar.replicaId.isEmpty) {
@@ -216,37 +214,8 @@ class _CandidateHomeState extends State<CandidateHome> {
     // and then Tavus over HTTP — on a flaky/offline device several distinct
     // failures all LOOK identical to the candidate: spinner, then back to
     // the dashboard).
-    var stage = 'fetching recruiter keys (Firestore)';
+    var stage = 'creating the video session';
     try {
-      _setStage('Step 1/3 — fetching recruiter keys…');
-      // Apply THIS interview's recruiter (org) keys to the in-memory services
-      // only — never persisted, never shown in the candidate's Settings. Each
-      // launch re-establishes the right org's keys, so one org's interview
-      // never uses another org's credentials.
-      final hasKey = await appConfig.applyForRecruiter(
-          interview.recruiterId, store,
-          overrides: interview.keyOverrides);
-      if (!mounted) return;
-      debugPrint('[launchVideo] 2/4 recruiter keys ok — hasTavusKey=$hasKey');
-      if (!hasKey) {
-        // Dialog, not a SnackBar: this aborts the launch and drops the
-        // candidate back to the list, which is indistinguishable from a
-        // crash if the only feedback is a toast that scrolls by. Note this
-        // is specifically the TAVUS key — chat/voice interviews only need a
-        // Gemini key, so they keep working while video silently fails here.
-        if (mounted) setState(() => _launching = false);
-        await _showLaunchError(
-          'checking the recruiter’s API keys',
-          'No Tavus API key is configured for this recruiter, so the video '
-              'avatar cannot be started.\n\n'
-              'Chat and voice interviews only need a Gemini key, which is why '
-              'those still work.\n\n'
-              'Fix: the recruiter should open Settings → API Credentials, add '
-              'their Tavus key, then tap "Save to Cloud".',
-        );
-        return;
-      }
-
       final config = store.sessionConfig.copyWith(
         conversationalContext: interview.prompt,
         replicaId: interview.avatar.replicaId,
@@ -261,7 +230,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       store.setActiveInterviewLanguage(interview.language);
 
       stage = 'creating the Tavus conversation (network)';
-      _setStage('Step 2/3 — creating the video session…');
+      _setStage('Step 1/2 — creating the video session…');
       await launchVideoConversation(
         context: context,
         config: config,
@@ -271,7 +240,7 @@ class _CandidateHomeState extends State<CandidateHome> {
         resumeText: resumeText,
         facialSummary: facial,
       );
-      _setStage('Step 3/3 — opening the interview…');
+      _setStage('Step 2/2 — opening the interview…');
       // The attempt has started — count it. Best-effort: not awaited (so a
       // slow/failed write never delays entering the interview), so it must
       // catch its own errors — an unawaited Future's rejection would
@@ -295,14 +264,8 @@ class _CandidateHomeState extends State<CandidateHome> {
     final messenger = ScaffoldMessenger.of(context);
     final repo = context.read<InterviewRepository>();
     final recruiterStore = context.read<RecruiterStore>();
-    final store = context.read<AppStore>();
     setState(() => _launching = true);
     try {
-      // Apply the org's Gemini key (for scoring) in-memory before running.
-      await context.read<AppConfigService>().applyForRecruiter(
-          interview.recruiterId, store,
-          overrides: interview.keyOverrides);
-      if (!mounted) return;
       // Best-effort — see the video path's comment on why this must catch its
       // own errors despite being unawaited.
       repo
@@ -324,8 +287,6 @@ class _CandidateHomeState extends State<CandidateHome> {
       await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => chatPage),
       );
-      // Restore the candidate's own keys once the org session ends.
-      await store.reloadApiKeysFromPrefs();
     } catch (e) {
       messenger.showSnackBar(SnackBar(
           content: Text(

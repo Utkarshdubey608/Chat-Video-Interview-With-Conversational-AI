@@ -5,7 +5,6 @@ import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 /// Card displaying the AI-Synthesized scorecard from Gemini,
 /// including fit recommendation, fit score, strengths, and concerns.
 class AtsAssessmentCard extends StatelessWidget {
-  final String geminiKey;
   final String? geminiError;
   final bool geminiLoading;
   final ATSScorecard? atsScorecard;
@@ -14,7 +13,6 @@ class AtsAssessmentCard extends StatelessWidget {
 
   const AtsAssessmentCard({
     super.key,
-    required this.geminiKey,
     required this.geminiError,
     required this.geminiLoading,
     required this.atsScorecard,
@@ -68,41 +66,6 @@ class AtsAssessmentCard extends StatelessWidget {
       );
     }
 
-    // If Gemini API Key is missing, ask the user to add it in Settings
-    if (geminiKey.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              Icon(
-                Icons.lock_outline,
-                color: theme.colorScheme.onSurfaceVariant,
-                size: 36,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Add Google Gemini API Key to enable ATS scorecards.',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: onNavigateToSettings,
-                child: Text(
-                  'Go to Settings →',
-                  style: TextStyle(
-                    color: theme.colorScheme.primary,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
 
     // Loading indicator when Gemini is running synthesis
     if (geminiLoading) {

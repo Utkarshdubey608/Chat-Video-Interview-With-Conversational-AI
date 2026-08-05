@@ -19,26 +19,23 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:talbotiq/core/net/live_token.dart';
 import 'package:talbotiq/core/services/gemini_live_service.dart';
 
 class VoiceStage extends StatefulWidget {
-  /// Gemini API key. INTERIM: lives on-device (see the security note in
-  /// gemini_live_service.dart). Production should use a server relay.
-  final String apiKey;
-
-  /// The interviewer plan + guardrails (persona, ordered questions, flow,
-  /// strict rules), authored by the caller — see voice.ts buildSystemInstruction.
-  final String systemInstruction;
+  /// A backend-minted token for this one session.
+  ///
+  /// It carries the whole session configuration — model, voice, and the
+  /// interviewer's instruction — all resolved server-side from the interview, so
+  /// none of those are parameters here. Mint it immediately before pushing this
+  /// screen; the connect window is short.
+  final LiveTokenGrant grant;
 
   /// Display name for the interviewer persona.
   final String personaName;
 
   /// Company name for the header.
   final String companyName;
-
-  /// Optional model / voice overrides.
-  final String? model;
-  final String? voiceName;
 
   /// Recruiter-configured whole-interview time limit. Overrides
   /// GeminiLiveService's default cap so the call honours what the recruiter
@@ -54,12 +51,9 @@ class VoiceStage extends StatefulWidget {
 
   const VoiceStage({
     super.key,
-    required this.apiKey,
-    required this.systemInstruction,
+    required this.grant,
     this.personaName = 'AI Interviewer',
     this.companyName = 'TalbotIQ',
-    this.model,
-    this.voiceName,
     this.maxDuration,
     this.onFinished,
   });
@@ -146,12 +140,7 @@ class _VoiceStageState extends State<VoiceStage>
       _callState = GeminiLiveState.connecting;
     });
     try {
-      await service.connect(
-        apiKey: widget.apiKey,
-        systemInstruction: widget.systemInstruction,
-        model: widget.model ?? GeminiLiveService.defaultModel,
-        voiceName: widget.voiceName ?? GeminiLiveService.defaultVoiceName,
-      );
+      await service.connect(grant: widget.grant);
     } catch (e) {
       if (!mounted) return;
       setState(() {

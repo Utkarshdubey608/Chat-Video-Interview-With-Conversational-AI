@@ -5,7 +5,7 @@
 //
 // Source of truth is AppStore.interviewResults, filtered to isPractice — the
 // practice track runs through launchVideoConversation -> ResultsPage, which
-// persists a finished InterviewResult (score, transcript, ATS scorecard, Hume
+// persists a finished InterviewResult (score, transcript, ATS scorecard
 // result) to SharedPreferences. Recruiter-ASSIGNED interviews land in the same
 // list, so they are excluded here: their result belongs to the recruiter until
 // published. Nothing is re-analysed on this page — the stored scorecard is

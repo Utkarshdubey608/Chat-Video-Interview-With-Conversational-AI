@@ -46,7 +46,8 @@ class TavusClient(ProviderClient):
 
         merged: list[dict] = []
         seen: set[str] = set()
-        for result in (custom, stock):
+        # Custom first, so a replica present in both keeps its custom entry.
+        for result, is_stock in ((custom, False), (stock, True)):
             if isinstance(result, Exception):
                 continue
             for replica in _items(result):
@@ -55,7 +56,10 @@ class TavusClient(ProviderClient):
                     continue
                 if replica_id:
                     seen.add(replica_id)
-                merged.append(replica)
+                # The stock endpoint does not label its own results, but the app
+                # groups the picker by `replica_type`, so stamp it here — the
+                # client can no longer tell which call a replica came from.
+                merged.append({**replica, "replica_type": "stock"} if is_stock else replica)
         return merged
 
     async def list_personas(self) -> list[dict]:

@@ -100,6 +100,22 @@ def test_no_route_is_reachable_without_a_verified_user(client, method, path):
 
 
 # --- Tavus -----------------------------------------------------------------
+def test_stock_replicas_are_labelled_so_the_picker_can_group_them(client):
+    """The stock endpoint does not label its results, and the client can no
+    longer tell which upstream call a replica came from."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "replica_type=stock" in str(request.url):
+            return httpx.Response(200, json={"data": [{"replica_id": "s1"}]})
+        return httpx.Response(200, json={"data": [{"replica_id": "c1"}]})
+
+    base._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    data = client.get("/api/tavus/replicas").json()["data"]
+    by_id = {r["replica_id"]: r for r in data}
+    assert by_id["s1"]["replica_type"] == "stock"
+    assert "replica_type" not in by_id["c1"]
+
+
 def test_replicas_merge_custom_and_stock_without_duplicates(client):
     def handler(request: httpx.Request) -> httpx.Response:
         client.state["calls"].append({"url": str(request.url), "headers": {}, "content": b""})
@@ -242,3 +258,24 @@ def test_a_missing_key_is_503_naming_the_env_var(client, method, path, env_var):
     assert response.status_code == 503
     assert env_var in response.json()["detail"]
     assert not client.state["calls"]
+
+
+def test_an_allowed_model_may_be_requested(client):
+    """Recruiters legitimately choose between flash and pro."""
+    client.post("/api/gemini/generate", params={"model": "gemini-2.5-pro"}, json=_contents())
+    assert "gemini-2.5-pro:generateContent" in last(client)["url"]
+
+
+def test_a_disallowed_model_falls_back_instead_of_erroring(client):
+    # A stale client should still get a scored interview, just on the default.
+    client.post(
+        "/api/gemini/generate", params={"model": "gemini-9-ultra"}, json=_contents()
+    )
+    assert "gemini-2.5-flash:generateContent" in last(client)["url"]
+
+
+def test_the_models_prefix_is_tolerated(client):
+    client.post(
+        "/api/gemini/generate", params={"model": "models/gemini-2.5-pro"}, json=_contents()
+    )
+    assert "gemini-2.5-pro:generateContent" in last(client)["url"]

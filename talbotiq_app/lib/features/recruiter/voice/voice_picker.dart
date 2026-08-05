@@ -11,17 +11,19 @@
 // Theme-aware (reads ColorScheme), responsive (scrolls, wraps, adapts to width),
 // and disposes everything it creates.
 //
-// LIVE VOICE PREVIEW: when a non-empty [previewApiKey] is provided, the per-voice
-// play button samples the voice on-device via [VoicePreviewService] (the
-// on-device analogue of the website's POST /api/voices/:id/sample). Without a
-// key the button is a disabled affordance ("Add a Gemini key to preview").
+// LIVE VOICE PREVIEW: the per-voice play button samples the voice on-device via
+// [VoicePreviewService]. The backend mints a short-lived token locked to that
+// voice, so the preview needs no key here and the button is always available —
+// if Gemini is not configured server-side, the error surfaces on preview.state.
 //
 // !!! QA: the preview PLAYBACK path cannot be runtime-tested here — it needs a
-// real Gemini key + a physical device speaker. See VoicePreviewService's QA
+// physical device speaker. See VoicePreviewService's QA
 // notes. The UI states (disabled / loading / playing / error + retry) below are
 // what to verify on-device.
 
 import 'package:flutter/material.dart';
+
+import 'package:talbotiq/core/net/backend_client.dart';
 
 import 'package:talbotiq/core/services/voice_preview_service.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
@@ -50,13 +52,10 @@ class VoicePicker extends StatefulWidget {
 
   /// Optional extra notification when the recruiter taps a voice's preview
   /// button (fired alongside the on-device sample). The audio itself is played
-  /// by the internal [VoicePreviewService] when [previewApiKey] is set; this
-  /// hook is purely a "user previewed voice X" signal for the host.
+  /// by the internal [VoicePreviewService]; this hook is purely a
+  /// "user previewed voice X" signal for the host.
   final ValueChanged<VoiceOption>? onPreviewVoice;
 
-  /// Gemini API key used to sample voices on-device. When null/empty the
-  /// preview button is a disabled affordance ("Add a Gemini key to preview").
-  final String? previewApiKey;
 
   const VoicePicker({
     super.key,
@@ -66,7 +65,6 @@ class VoicePicker extends StatefulWidget {
     this.personas = VoiceCatalog.personas,
     this.showBargeIn = true,
     this.onPreviewVoice,
-    this.previewApiKey,
   });
 
   /// Present the picker in a modal bottom sheet.
@@ -80,7 +78,6 @@ class VoicePicker extends StatefulWidget {
     List<InterviewPersona> personas = VoiceCatalog.personas,
     bool showBargeIn = true,
     ValueChanged<VoiceOption>? onPreviewVoice,
-    String? previewApiKey,
   }) {
     return showModalBottomSheet<VoiceConfig>(
       context: context,
@@ -94,7 +91,6 @@ class VoicePicker extends StatefulWidget {
         personas: personas,
         showBargeIn: showBargeIn,
         onPreviewVoice: onPreviewVoice,
-        previewApiKey: previewApiKey,
       ),
     );
   }
@@ -151,7 +147,6 @@ class _VoicePickerState extends State<VoicePicker> {
       personas: widget.personas,
       showBargeIn: widget.showBargeIn,
       onPreviewVoice: widget.onPreviewVoice,
-      previewApiKey: widget.previewApiKey,
       preview: _preview,
       onSelectPersona: _selectPersona,
       onSelectVoice: _selectVoice,
@@ -168,7 +163,6 @@ class _VoicePickerSheet extends StatefulWidget {
   final List<InterviewPersona> personas;
   final bool showBargeIn;
   final ValueChanged<VoiceOption>? onPreviewVoice;
-  final String? previewApiKey;
 
   const _VoicePickerSheet({
     required this.initial,
@@ -176,7 +170,6 @@ class _VoicePickerSheet extends StatefulWidget {
     required this.personas,
     required this.showBargeIn,
     required this.onPreviewVoice,
-    required this.previewApiKey,
   });
 
   @override
@@ -240,7 +233,6 @@ class _VoicePickerSheetState extends State<_VoicePickerSheet> {
                 personas: widget.personas,
                 showBargeIn: widget.showBargeIn,
                 onPreviewVoice: widget.onPreviewVoice,
-                previewApiKey: widget.previewApiKey,
                 preview: _preview,
                 onSelectPersona: (p) => _update(_config.copyWith(
                   personaId: p.id,
@@ -300,7 +292,6 @@ class _VoicePickerBody extends StatelessWidget {
   final List<InterviewPersona> personas;
   final bool showBargeIn;
   final ValueChanged<VoiceOption>? onPreviewVoice;
-  final String? previewApiKey;
   final VoicePreviewService preview;
   final ValueChanged<InterviewPersona> onSelectPersona;
   final ValueChanged<VoiceOption> onSelectVoice;
@@ -312,7 +303,6 @@ class _VoicePickerBody extends StatelessWidget {
     required this.personas,
     required this.showBargeIn,
     required this.onPreviewVoice,
-    required this.previewApiKey,
     required this.preview,
     required this.onSelectPersona,
     required this.onSelectVoice,
@@ -361,7 +351,6 @@ class _VoicePickerBody extends StatelessWidget {
             voice: selectedVoice,
             isPersonaDefault: selectedPersona?.defaultVoiceId == selectedVoice.id,
             onPreview: onPreviewVoice,
-            previewApiKey: previewApiKey,
             preview: preview,
           ),
         ],
@@ -578,7 +567,6 @@ class _VoiceSummary extends StatelessWidget {
   final ValueChanged<VoiceOption>? onPreview;
 
   /// Gemini key that enables on-device sampling; null/empty disables the button.
-  final String? previewApiKey;
 
   /// The shared, host-owned sample player.
   final VoicePreviewService preview;
@@ -587,19 +575,20 @@ class _VoiceSummary extends StatelessWidget {
     required this.voice,
     required this.isPersonaDefault,
     required this.onPreview,
-    required this.previewApiKey,
     required this.preview,
   });
 
-  bool get _hasKey => (previewApiKey?.trim().isNotEmpty ?? false);
-
-  void _startPreview() {
-    final key = previewApiKey;
-    if (key == null || key.trim().isEmpty) return;
+  Future<void> _startPreview() async {
     onPreview?.call(voice); // notify host (analytics / "previewed X")
-    // Fire-and-forget: state (loading/playing/error) flows back via
-    // preview.state; play() only throws for an empty key, which we've gated.
-    preview.play(apiKey: key, voiceName: voice.id);
+    // The backend mints a token locked to this voice and line; play() only
+    // throws for a stale grant, and we connect immediately. Failures surface on
+    // preview.state, so nothing is swallowed by the fire-and-forget call site.
+    try {
+      final grant = await backendClient.mintPreviewToken(voiceName: voice.id);
+      await preview.play(grant: grant, voiceName: voice.id);
+    } on BackendException catch (e) {
+      preview.reportError(e.message);
+    }
   }
 
   @override
@@ -704,7 +693,7 @@ class _VoiceSummary extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     TextButton(
-                      onPressed: _hasKey ? _startPreview : null,
+                      onPressed: _startPreview,
                       style: TextButton.styleFrom(
                         visualDensity: VisualDensity.compact,
                         padding:
@@ -728,19 +717,8 @@ class _VoiceSummary extends StatelessWidget {
     ColorScheme scheme,
     VoicePreviewState state,
   ) {
-    // No key -> disabled affordance with a nudge to add one.
-    if (!_hasKey) {
-      return Tooltip(
-        message: 'Add a Gemini key to preview',
-        child: IconButton(
-          onPressed: null,
-          icon: const Icon(Icons.play_circle_outline),
-          color: scheme.primary,
-          visualDensity: VisualDensity.compact,
-        ),
-      );
-    }
-
+    // Always enabled: there is no client-side key to gate on. If Gemini is not
+    // configured on the server, the mint fails and the error surfaces below.
     final isThisVoice = state.isFor(voice.id);
 
     // Loading THIS voice -> spinner (tap to cancel).

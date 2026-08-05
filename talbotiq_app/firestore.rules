@@ -5,9 +5,6 @@ rules_version = '2';
 // Model:
 //   users/{uid}          — one doc per account, holds { email, role, name }
 //   interviews/{id}      — a recruiter-created interview assigned to a candidate
-//   app_config/global    — shared org API keys (recruiter-managed)
-//   recruiter_keys/{id}  — a recruiter's own API keys (also used by their candidates at launch)
-//   candidate_keys/{uid} — a candidate's own API keys (owner-only)
 //
 // Deploy with: firebase deploy --only firestore:rules
 
@@ -90,30 +87,6 @@ service cloud.firestore {
 
       allow delete: if isRecruiter()
                      && resource.data.recruiterId == request.auth.uid;
-    }
-
-    // recruiter_keys/{recruiterId}: each recruiter's API keys. Only that
-    // recruiter may write.
-    //
-    // TRANSITIONAL: reads are currently allowed for any signed-in user because
-    // the candidate device reads them at launch to create the conversation /
-    // score client-side. This is app-side hiding, NOT secrecy.
-    //
-    // TARGET STATE (after deploying functions/ and setting USE_SECURE_BACKEND):
-    // the proxy performs those calls server-side, so change the read rule to
-    // owner-only:
-    //     allow read: if isSignedIn() && request.auth.uid == recruiterId;
-    // See core/security/recruiter_credentials_repository.dart and functions/.
-    match /recruiter_keys/{recruiterId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == recruiterId;
-    }
-
-    // candidate_keys/{uid}: a candidate's own personal API key backup (used for
-    // self-serve practice, not read by anyone else's interview launch), so it's
-    // owner-only for both read and write — unlike recruiter_keys above.
-    match /candidate_keys/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
   }
 }

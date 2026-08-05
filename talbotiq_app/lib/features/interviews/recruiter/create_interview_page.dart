@@ -23,7 +23,6 @@ import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_picker.dart';
@@ -98,11 +97,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
 
   // Per-test key overrides. When off, candidates run this test on the
   // recruiter's Settings keys; when on, any field filled here is used instead.
-  bool _useCustomKeys = false;
-  final _tavusKeyController = TextEditingController();
-  final _geminiKeyController = TextEditingController();
-  final _humeKeyController = TextEditingController();
-  final _deepgramKeyController = TextEditingController();
 
   // Candidate invite emails (mailer backend). Off unless the recruiter opts in;
   // a null template means the backend's default is used.
@@ -115,7 +109,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   bool _loadingReplicas = false;
   bool _saving = false;
   bool _timingAccessExpanded = false;
-  bool _keyOverridesExpanded = false;
   String? _error;
   String? _recruiterName;
 
@@ -150,7 +143,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     _recruiterName ??= user?.displayName;
     // Their email owns any template they save and scopes the ones they see.
     _recruiterEmail = user?.email ?? '';
-    _mailer = MailerService.fromStore(context.read<AppStore>());
+    _mailer = MailerService();
     if (_recruiterName == null && user != null) {
       context.read<AuthService>().nameFor(user.uid).then((n) {
         if (n != null && mounted) setState(() => _recruiterName = n);
@@ -202,12 +195,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     _availableFrom = i.availableFrom;
     _expiresAt = i.expiresAt;
     _maxAttempts = i.maxAttempts;
-    final ov = i.keyOverrides;
-    _useCustomKeys = ov.isNotEmpty;
-    _tavusKeyController.text = ov['tavusKey'] ?? '';
-    _geminiKeyController.text = ov['geminiKey'] ?? '';
-    _humeKeyController.text = ov['humeKey'] ?? '';
-    _deepgramKeyController.text = ov['deepgramKey'] ?? '';
   }
 
   @override
@@ -217,10 +204,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     _promptController.dispose();
     _replicaIdController.dispose();
     _personaIdController.dispose();
-    _tavusKeyController.dispose();
-    _geminiKeyController.dispose();
-    _humeKeyController.dispose();
-    _deepgramKeyController.dispose();
     for (final c in _candidateEmailControllers) {
       c.dispose();
     }
@@ -346,7 +329,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       .toList();
 
   Future<void> _loadReplicas() async {
-    if (tavusService.getKey().isEmpty) return;
     setState(() => _loadingReplicas = true);
     try {
       final replicas = await tavusService.listReplicas();
@@ -395,31 +377,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         _titleController.text = title.trim();
       }
     });
-  }
-
-  /// Per-test key snapshot, pinned at save time so this test keeps working on
-  /// the same keys even if the recruiter's own default keys change later. When
-  /// "Use Custom Keys" is on, the typed override values are used instead;
-  /// otherwise this snapshots the recruiter's CURRENT Settings keys. Blank
-  /// entries are omitted (they'd fall back to the recruiter's live default at
-  /// launch, which only happens for a key nobody has ever set).
-  Map<String, String> get _keyOverrides {
-    final store = context.read<AppStore>();
-    final entries = _useCustomKeys
-        ? {
-            'tavusKey': _tavusKeyController.text.trim(),
-            'geminiKey': _geminiKeyController.text.trim(),
-            'humeKey': _humeKeyController.text.trim(),
-            'deepgramKey': _deepgramKeyController.text.trim(),
-          }
-        : {
-            'tavusKey': store.tavusKey.trim(),
-            'geminiKey': store.geminiKey.trim(),
-            'humeKey': store.humeKey.trim(),
-            'deepgramKey': store.deepgramKey.trim(),
-          };
-    entries.removeWhere((_, v) => v.isEmpty);
-    return entries;
   }
 
   Future<void> _save() async {
@@ -476,15 +433,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         _expiresAt != null &&
         !_expiresAt!.isAfter(_availableFrom!)) {
       fail('Expiry must be after the available-from time.');
-      return;
-    }
-
-    // Make the recruiter aware, before anything is written, that candidates run
-    // this test on the recruiter's keys (or the per-test overrides, if set).
-    final confirmed = await _confirmKeyUsage();
-    if (!mounted) return;
-    if (confirmed != true) {
-      setState(() => _saving = false);
       return;
     }
 
@@ -597,7 +545,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             avatar: avatar,
             durationMinutes: _durationMinutes,
             status: status,
-            keyOverrides: _keyOverrides,
             availableFrom: _availableFrom,
             expiresAt: _expiresAt,
             maxAttempts: _maxAttempts,
@@ -746,69 +693,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     }
   }
 
-  /// Confirms, before writing anything, whose API keys this test will consume
-  /// when candidates take it. Returns true to proceed.
-  Future<bool?> _confirmKeyUsage() {
-    final overrides = _keyOverrides;
-    final custom = overrides.keys
-        .map((k) => const {
-              'tavusKey': 'Tavus',
-              'geminiKey': 'Gemini',
-              'humeKey': 'Hume',
-              'deepgramKey': 'Deepgram',
-            }[k])
-        .whereType<String>()
-        .toList();
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return AlertDialog(
-          title: const Text('Whose keys will this test use?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'When a candidate takes or shares this test, it runs on your '
-                'API keys — usage is billed to your accounts.',
-                style: theme.textTheme.bodyMedium,
-              ),
-              if (custom.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Text(
-                  'For this test, the custom key(s) you entered will be used '
-                  'instead of your Settings keys: ${custom.join(', ')}.',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
-                ),
-              ] else ...[
-                const SizedBox(height: 12),
-                Text(
-                  'The keys from your Settings will be used. To use different '
-                  'keys for just this test, turn on "Use custom keys for this '
-                  'test" before saving.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant),
-                ),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text(_isEdit ? 'Save changes' : 'Save & assign'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _pickDateTime({required bool isExpiry}) async {
     final now = DateTime.now();
     final initial = (isExpiry ? _expiresAt : _availableFrom) ?? now;
@@ -862,7 +746,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                   _buildInterviewDesignCard(theme),
                   if (_type == InterviewType.chat) _buildIntegrityBrandingCard(theme),
                   _buildTimingAccessCard(theme),
-                  _buildKeyOverridesCard(theme),
                   if (_error != null) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -1482,9 +1365,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               ),
             ),
             child: Text(
-              tavusService.getKey().isEmpty
-                  ? 'Add a Tavus API key in Settings to browse avatars, or enter a replica ID manually below.'
-                  : 'No avatars loaded. Enter a replica ID manually below.',
+              'No avatars loaded. Enter a replica ID manually below.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 fontSize: 12,
@@ -1520,11 +1401,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       allowBargeIn: base.allowBargeIn,
       language: base.language,
     );
-    final previewKey =
-        (_useCustomKeys && _geminiKeyController.text.trim().isNotEmpty)
-            ? _geminiKeyController.text.trim()
-            : context.read<AppStore>().geminiKey.trim();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1551,7 +1427,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               _voicePersonaId = c.personaId;
               _voiceName = c.voiceId;
             }),
-            previewApiKey: previewKey.isEmpty ? null : previewKey,
           ),
         ),
       ],
@@ -1887,79 +1762,4 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     );
   }
 
-  Widget _buildKeyOverridesCard(ThemeData theme) {
-    final summary = _useCustomKeys ? 'Custom keys enabled' : 'Using global settings keys';
-    return _buildCollapsibleSection(
-      context: context,
-      title: 'API Keys Override',
-      subtitle: summary,
-      icon: Icons.key_outlined,
-      isExpanded: _keyOverridesExpanded,
-      onToggle: () => setState(() => _keyOverridesExpanded = !_keyOverridesExpanded),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: theme.colorScheme.outline.withOpacity(0.12),
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.info_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'This test is pinned to your current Settings keys when saved, so it keeps working even if you change your default keys later. Turn on custom keys to use different ones for this test only.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          CustomToggle(
-            label: 'Use Custom Keys',
-            description: 'Provide unique API keys for this interview only.',
-            checked: _useCustomKeys,
-            onChanged: (v) => setState(() => _useCustomKeys = v),
-          ),
-          if (_useCustomKeys) ...[
-            const SizedBox(height: 12),
-            CustomInputField(
-              label: 'Tavus API Key',
-              placeholder: 'Enter Tavus key override',
-              controller: _tavusKeyController,
-            ),
-            const SizedBox(height: 12),
-            CustomInputField(
-              label: 'Gemini API Key',
-              placeholder: 'Enter Gemini key override',
-              controller: _geminiKeyController,
-            ),
-            const SizedBox(height: 12),
-            CustomInputField(
-              label: 'Hume API Key',
-              placeholder: 'Enter Hume key override',
-              controller: _humeKeyController,
-            ),
-            const SizedBox(height: 12),
-            CustomInputField(
-              label: 'Deepgram API Key',
-              placeholder: 'Enter Deepgram key override',
-              controller: _deepgramKeyController,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
 }

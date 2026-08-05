@@ -1,21 +1,25 @@
 // lib/features/interviews/candidate/voice_launch.dart
 //
 // Launches a real-time VOICE interview (Gemini Live) for an assigned Interview.
-// Applies the recruiter's org Gemini key in-memory, builds the interviewer
-// system instruction from the interview's questions/prompt/language, runs the
-// VoiceStage, and — on completion — scores the captured transcript with the same
-// Gemini analysis pipeline the video track uses, writing an UNPUBLISHED result
-// to Firestore (the recruiter reviews + publishes).
+//
+// Mints a short-lived session token from the backend, runs the VoiceStage, and —
+// on completion — scores the captured transcript with the same Gemini analysis
+// pipeline the video track uses, writing an UNPUBLISHED result to Firestore (the
+// recruiter reviews + publishes).
+//
+// The interviewer's system instruction is NOT built here any more. It is
+// assembled server-side (backend/app/voice.py) and sealed into the token, so a
+// tampered client cannot rewrite the interview it is taking.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/services/gemini_live_service.dart';
+import 'package:talbotiq/core/net/backend_client.dart';
+import 'package:talbotiq/core/net/live_token.dart';
 import 'package:talbotiq/core/services/gemini_service.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
-import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/candidate/voice_stage.dart';
@@ -26,31 +30,26 @@ Future<void> launchVoiceInterview({
 }) async {
   final store = context.read<AppStore>();
   final repo = context.read<InterviewRepository>();
-  final appConfig = context.read<AppConfigService>();
 
-  // Apply the org keys in-memory (Gemini key drives both the Live call and the
-  // post-interview scoring). Never persisted to the candidate's Settings.
-  await appConfig.applyForRecruiter(interview.recruiterId, store,
-      overrides: interview.keyOverrides);
-  if (!context.mounted) return;
-
-  final geminiKey = store.geminiKey.trim();
-  if (geminiKey.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text(
-          'Voice interview isn’t available yet — the recruiter has not configured a Gemini key.'),
-    ));
-    await store.reloadApiKeysFromPrefs();
+  // Minted immediately before connecting: the grant's connect window is short,
+  // and the whole session config (model, voice, interviewer instruction) is
+  // sealed inside it server-side.
+  final LiveTokenGrant grant;
+  try {
+    grant = await backendClient.mintLiveToken(interviewId: interview.id);
+  } on BackendException catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(e.message)));
     return;
   }
+  if (!context.mounted) return;
 
   await Navigator.of(context).push(
     MaterialPageRoute(
       builder: (_) => VoiceStage(
-        apiKey: geminiKey,
-        systemInstruction: _buildVoiceSystemInstruction(interview),
+        grant: grant,
         companyName: interview.recruiterName ?? 'TalbotIQ',
-        voiceName: interview.voiceName,
         // Recruiter-configured limit; null (none set) keeps the service default.
         maxDuration: interview.durationMinutes > 0
             ? Duration(minutes: interview.durationMinutes)
@@ -80,45 +79,6 @@ Future<void> launchVoiceInterview({
   repo
       .incrementAttempt(interview.id)
       .catchError((e) => debugPrint('incrementAttempt failed: $e'));
-  await store.reloadApiKeysFromPrefs();
-}
-
-String _buildVoiceSystemInstruction(Interview interview) {
-  final questions = interview.questions;
-  final b = StringBuffer();
-  // Adopt the recruiter-chosen interviewer persona style, if any.
-  final persona = interview.voicePersonaId == null
-      ? null
-      : VoiceCatalog.personaById(interview.voicePersonaId!);
-  if (persona != null) {
-    b.writeln(persona.stylePrompt);
-  }
-  b
-    ..writeln(
-        'You are a professional AI voice interviewer for the role: "${interview.title}".')
-    ..writeln('Conduct the interview entirely in ${interview.language}.')
-    ..writeln(
-        'Greet the candidate warmly, briefly confirm they are ready, then ask ONLY the '
-        'planned questions below, one at a time, in order, with short natural acknowledgments '
-        'between answers. Never reveal upcoming questions, never say question numbers, and do '
-        'not add questions beyond the plan. After the final question, thank the candidate warmly and end.')
-    ..writeln(
-        'PACING — this is a live spoken conversation, so keep it snappy: at most '
-        'one or two short sentences per turn. Acknowledge the answer in a few '
-        'words, then ask the next question straight away. Do not summarise or '
-        'repeat back what the candidate said, do not preface questions with '
-        'long framing, and never monologue — long replies leave the candidate '
-        'sitting in silence and make the conversation feel one-sided.');
-  if (interview.prompt.trim().isNotEmpty) {
-    b.writeln('\nInterviewer guidance: ${interview.prompt.trim()}');
-  }
-  if (questions.isNotEmpty) {
-    b.writeln('\nPlanned questions (ask in this order):');
-    for (var i = 0; i < questions.length; i++) {
-      b.writeln('${i + 1}. ${questions[i]}');
-    }
-  }
-  return b.toString();
 }
 
 /// True if [text] looks like the candidate's opening readiness acknowledgment
@@ -215,7 +175,6 @@ Future<void> _scoreAndStore({
       return;
     }
 
-    geminiService.setKey(store.geminiKey);
     final now = DateTime.now().millisecondsSinceEpoch;
     // NOTE: per-question voice attribution is APPROXIMATE on-device — the
     // website aligns each answer to a specific planned question server-side
@@ -250,7 +209,6 @@ Future<void> _scoreAndStore({
       interviewDurationSeconds: interview.durationMinutes * 60,
       transcript: transcript,
       questions: interview.questions,
-      humeResult: null,
       wpm: 0,
       totalFillers: 0,
       facialSummary: null,

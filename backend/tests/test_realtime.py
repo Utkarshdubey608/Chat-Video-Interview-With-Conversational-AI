@@ -276,3 +276,65 @@ def test_the_api_key_is_sent_to_google_and_never_returned(client):
     body = mint(client).json()
     assert client.state["minted"][0]["headers"]["x-goog-api-key"] == "AIza-test"
     assert "AIza-test" not in json.dumps(body)
+
+
+# --- voice preview -------------------------------------------------------
+def preview(client, **body):
+    return client.post("/api/rt/gemini-preview-token", json=body)
+
+
+def test_preview_locks_the_requested_voice(client):
+    assert preview(client, voice_name="Charon").status_code == 200
+    setup = client.state["minted"][0]["json"]["bidiGenerateContentSetup"]
+    voice_cfg = setup["generationConfig"]["speechConfig"]["voiceConfig"]
+    assert voice_cfg["prebuiltVoiceConfig"]["voiceName"] == "Charon"
+
+
+def test_preview_falls_back_to_the_default_voice(client):
+    preview(client)
+    setup = client.state["minted"][0]["json"]["bidiGenerateContentSetup"]
+    assert (
+        setup["generationConfig"]["speechConfig"]["voiceConfig"][
+            "prebuiltVoiceConfig"
+        ]["voiceName"]
+        == voice.DEFAULT_VOICE
+    )
+
+
+def test_preview_caps_a_long_sample_line(client):
+    """Two caps, deliberately: the schema rejects the absurd, and app.voice
+    truncates the merely-long. A long line must not turn a "sample" into a paid
+    monologue."""
+    # 300 chars passes the schema's 400 limit...
+    assert preview(client, sample_text="la " * 100).status_code == 200
+    setup = client.state["minted"][0]["json"]["bidiGenerateContentSetup"]
+    spoken = setup["systemInstruction"]["parts"][0]["text"]
+    # ...and is then truncated to 200 by the server, never trusting the client.
+    assert spoken.count("la ") < 70
+
+
+def test_preview_rejects_an_absurd_sample_line(client):
+    response = preview(client, sample_text="la " * 500)
+    assert response.status_code == 422
+    assert not client.state["minted"]
+
+
+def test_preview_session_is_short(client):
+    body = preview(client).json()
+    expires = datetime.fromisoformat(body["expiresAt"].replace("Z", "+00:00"))
+    minutes = (expires - datetime.now(timezone.utc)) / timedelta(minutes=1)
+    # Minutes, not the interview's 30+ — a stolen preview token buys very little.
+    assert 1 < minutes < 4
+
+
+def test_preview_never_enables_transcription_or_vad(client):
+    """Nothing listens during a preview, so neither should be requested."""
+    preview(client)
+    setup = client.state["minted"][0]["json"]["bidiGenerateContentSetup"]
+    assert "inputAudioTranscription" not in setup
+    assert "realtimeInputConfig" not in setup
+
+
+def test_preview_is_still_a_full_lock(client):
+    preview(client)
+    assert "fieldMask" not in client.state["minted"][0]["json"]

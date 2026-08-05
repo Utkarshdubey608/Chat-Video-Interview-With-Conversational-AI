@@ -10,7 +10,6 @@ import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
 import 'package:talbotiq/core/theme/app_theme.dart';
@@ -59,10 +58,6 @@ void main() async {
   final recruiterStore = RecruiterStore();
   await recruiterStore.load();
 
-  // The recruiter module reuses the app's existing Gemini key (read-only) for
-  // scoring; keep it in sync when the user edits it in Settings.
-  recruiterGeminiService.setKey(store.geminiKey);
-  store.addListener(() => recruiterGeminiService.setKey(store.geminiKey));
   // Restore the recruiter's persisted Gemini model choice (flash/pro).
   await recruiterGeminiService.loadModelPreference();
 
@@ -73,7 +68,6 @@ void main() async {
         ChangeNotifierProvider.value(value: recruiterStore),
         Provider<AuthService>(create: (_) => AuthService()),
         Provider<InterviewRepository>(create: (_) => InterviewRepository()),
-        Provider<AppConfigService>(create: (_) => AppConfigService()),
       ],
       child: const MyApp(),
     ),

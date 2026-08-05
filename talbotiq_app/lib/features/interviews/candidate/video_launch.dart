@@ -46,7 +46,7 @@ Future<void> launchVideoConversation({
   );
   final conv = await tavusService.createConversation(payload);
 
-  _resetHumeState(store);
+  _resetSessionState(store);
   // Set the pre-call facefit result AFTER the reset so the results pipeline
   // can fuse it into the scorecard.
   store.setFacialSummary(facialSummary);
@@ -76,14 +76,9 @@ Future<void> launchVideoConversation({
 }
 
 /// Mirror of setup_page's pre-launch reset so a prior session doesn't leak.
-void _resetHumeState(AppStore store) {
-  store.setHumeJobId(null);
-  store.setHumeJobStatus(null);
-  store.setHumeResult(null);
+void _resetSessionState(AppStore store) {
   store.resetQuestionTimestamps();
   store.setRecordingStartTimestamp(null);
-  store.setLiveEmotions([]);
-  store.setHumeStreamActive(false);
   store.clearSessionTranscript();
   store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
   store.resetIntegrity();

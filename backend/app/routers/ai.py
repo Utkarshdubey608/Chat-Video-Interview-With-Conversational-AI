@@ -103,12 +103,20 @@ async def tavus_send_interaction(
     summary="One generateContent call",
     dependencies=[RateLimitGenerate],
 )
-async def gemini_generate(request: Request, body: dict = Body(...)) -> dict:
+async def gemini_generate(
+    request: Request,
+    body: dict = Body(...),
+    model: str | None = None,
+) -> dict:
     """Scoring, question generation, résumé extraction, adaptive turns, the guide.
 
     One route rather than one per purpose: every caller hits the same upstream
     endpoint and differs only in its prompt, so splitting them would add routes
-    without adding meaning. The model is chosen server-side.
+    without adding meaning.
+
+    `?model=` is an ALLOWLIST, not free choice — recruiters may pick between
+    flash and pro, but a client cannot redirect spend onto an arbitrary model.
+    Anything unrecognised silently falls back to the default.
     """
     if not isinstance(body.get("contents"), list) or not body["contents"]:
         raise HTTPException(
@@ -122,7 +130,7 @@ async def gemini_generate(request: Request, body: dict = Body(...)) -> dict:
             "Request body is too large.",
         )
 
-    return await GeminiClient(_settings(request)).generate_content(body)
+    return await GeminiClient(_settings(request)).generate_content(body, model=model)
 
 
 # ── Deepgram ──────────────────────────────────────────────────────────────────

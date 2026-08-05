@@ -23,6 +23,14 @@ from app.interviews import Interview
 # Gemini Live prebuilt voice used when the interview names none.
 DEFAULT_VOICE = "Aoede"
 
+# Matches the app's own preview copy so the sample reads identically.
+DEFAULT_SAMPLE_TEXT = (
+    "Hi, I'm your interviewer today. Whenever you're ready, we'll get started."
+)
+
+# Guard against a long custom line turning a "sample" into a paid monologue.
+_MAX_SAMPLE_CHARS = 200
+
 
 @dataclass(frozen=True)
 class Persona:
@@ -131,6 +139,47 @@ def resolve_voice(interview: Interview) -> str:
         return interview.voice_name.strip()
     persona = PERSONAS.get(interview.voice_persona_id or "")
     return persona.default_voice if persona else DEFAULT_VOICE
+
+
+def build_preview_setup(
+    *,
+    voice_name: str,
+    sample_text: str,
+    model: str,
+) -> dict:
+    """Setup for a one-line voice sample, used by the recruiter's voice picker.
+
+    Output-only and short. `sample_text` is recruiter-authored and capped, and
+    the instruction pins the model to reading it once — a preview must not turn
+    into an open-ended chat on the org's quota.
+
+    No transcription and no VAD: nothing listens, and there is no transcript to
+    keep.
+    """
+    line = sample_text.strip()[:_MAX_SAMPLE_CHARS] or DEFAULT_SAMPLE_TEXT
+    voice = voice_name.strip() or DEFAULT_VOICE
+
+    return {
+        "model": model,
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}
+            },
+        },
+        "systemInstruction": {
+            "parts": [
+                {
+                    "text": (
+                        "You are demonstrating a text-to-speech voice. Read the "
+                        "following line aloud EXACTLY once, naturally, and then "
+                        "stop. Say nothing else, and do not answer questions.\n\n"
+                        f"{line}"
+                    )
+                }
+            ]
+        },
+    }
 
 
 def build_live_setup(interview: Interview, *, model: str) -> dict:

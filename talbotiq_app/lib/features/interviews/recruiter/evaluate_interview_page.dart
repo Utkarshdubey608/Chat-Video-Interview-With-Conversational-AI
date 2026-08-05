@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/services/gemini_service.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
@@ -69,7 +68,7 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
 
   /// The interview currently being reviewed. `widget.interview` /
   /// `widget.groupInterviews` are one-time snapshots passed in at navigation
-  /// time — if the AI evaluation pipeline (transcript → Hume → Gemini, which
+  /// time — if the AI evaluation pipeline (transcript → Gemini, which
   /// can take up to a minute) finishes AFTER the recruiter has already opened
   /// this page, nothing here would ever see that later Firestore write; the
   /// score/recommendation/strengths would stay stuck at whatever placeholder
@@ -219,8 +218,6 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
   }
 
   /// Re-scores the stored raw responses with Gemini, using this test's pinned
-  /// key (`Interview.keyOverrides['geminiKey']`) so the result matches whatever
-  /// key was in effect when the test was created; falls back to this
   /// recruiter's own default key only for legacy tests with no pinned key.
   /// Populates the editable fields for review — does NOT auto-save/publish.
   Future<void> _regenerate() async {
@@ -236,24 +233,11 @@ class _EvaluateInterviewPageState extends State<EvaluateInterviewPage> {
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
-    final store = context.read<AppStore>();
     final i = _current;
-    final pinnedKey = i.keyOverrides['geminiKey']?.trim() ?? '';
-    final apiKey = pinnedKey.isNotEmpty ? pinnedKey : store.geminiKey.trim();
-    debugPrint('[Regenerate] interview=${i.id} usingPinnedKey=${pinnedKey.isNotEmpty} '
-        'apiKeyPresent=${apiKey.isNotEmpty}');
-    if (apiKey.isEmpty) {
-      debugPrint('[Regenerate] aborted: no Gemini key (pinned or default).');
-      messenger.showSnackBar(const SnackBar(
-        content: Text(
-            'No Gemini key available for this test. Add one in Settings or on this test\'s key override.'),
-      ));
-      return;
-    }
+    debugPrint('[Regenerate] interview=${i.id}');
     setState(() => _regenerating = true);
     try {
       final result = await geminiService.regenerateFromResponses(
-        apiKey: apiKey,
         jobRole: i.title,
         responses: _responses,
       );

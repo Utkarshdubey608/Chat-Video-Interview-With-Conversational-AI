@@ -8,11 +8,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 
 class ReplicasPage extends StatefulWidget {
@@ -34,19 +32,10 @@ class _ReplicasPageState extends State<ReplicasPage> {
   }
 
   Future<void> _load() async {
-    final hasKey = context.read<AppStore>().tavusKey.trim().isNotEmpty;
     setState(() {
       _loading = true;
       _error = null;
     });
-    if (!hasKey) {
-      setState(() {
-        _loading = false;
-        _error =
-            'No Tavus API key configured. Add one in Settings to view replicas.';
-      });
-      return;
-    }
     try {
       final list = await tavusService.listReplicas();
       if (!mounted) return;

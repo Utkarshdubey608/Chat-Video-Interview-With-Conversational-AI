@@ -63,6 +63,11 @@ class Settings(BaseSettings):
 
     # Model used for scoring / question generation (REST generateContent).
     gemini_model: str = "gemini-2.5-flash"
+    # Models a caller may request instead of the default. Comma-separated, and an
+    # ALLOWLIST rather than free choice: a client must not be able to redirect
+    # spend onto an arbitrarily expensive model, but recruiters do legitimately
+    # choose between flash and pro.
+    gemini_allowed_models: str = "gemini-2.5-flash,gemini-2.5-pro"
     # Native-audio model used for the live voice interview.
     gemini_live_model: str = "models/gemini-2.5-flash-native-audio-preview-09-2025"
 
@@ -73,6 +78,9 @@ class Settings(BaseSettings):
     # Window the client has to OPEN the session after minting. Google's own
     # default is 60s; the client mints on launch-tap so this is ample.
     gemini_token_connect_window_seconds: int = 120
+    # A voice preview is one short spoken line — it needs no interview-length
+    # session, and a tight cap limits what a misused preview token can cost.
+    gemini_preview_session_minutes: int = 2
 
     # --- Rate limiting (per user, per worker) ---
     # Auth proves a caller is a real user; these bound how much one user can
@@ -103,6 +111,17 @@ class Settings(BaseSettings):
         if raw == "*" or not raw:
             return ["*"]
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @property
+    def allowed_gemini_models(self) -> set[str]:
+        """The requestable models, always including the default."""
+        names = {
+            m.strip().removeprefix("models/")
+            for m in self.gemini_allowed_models.split(",")
+            if m.strip()
+        }
+        names.add(self.gemini_model.strip().removeprefix("models/"))
+        return names
 
     @property
     def live_model_name(self) -> str:

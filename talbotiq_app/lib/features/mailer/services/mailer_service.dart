@@ -15,9 +15,9 @@
 import 'dart:convert';
 
 import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/core/net/backend_config.dart';
 import 'package:talbotiq/features/mailer/models/email_template.dart';
 import 'package:talbotiq/features/mailer/models/send_report.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 
 /// A mailer call that failed, with a message already fit to show a recruiter.
 class MailerException implements Exception {
@@ -74,31 +74,22 @@ class TemplateCatalog {
 }
 
 class MailerService {
-  MailerService({required this.baseUrl, this.apiKey = '', ApiClient? client})
-      : _client = client ?? ApiClient(timeout: const Duration(seconds: 45));
+  MailerService({String? baseUrl, ApiClient? client})
+      : baseUrl = baseUrl ?? BackendConfig.baseUrl,
+        _client = client ?? ApiClient(timeout: const Duration(seconds: 45));
 
-  /// Root of the mailer backend, e.g. `https://mail.talbotiq.com`.
+  /// Root of the backend. Compiled in via `--dart-define=BACKEND_BASE_URL`, the
+  /// same URL the AI proxy uses — there is one backend, and it is not
+  /// user-editable (see BackendConfig for why).
   final String baseUrl;
 
-  /// Sent as `X-API-Key` when the backend has one configured.
-  final String apiKey;
-
   final ApiClient _client;
-
-  /// Builds a service from the values a recruiter saved in Settings.
-  factory MailerService.fromStore(AppStore store) => MailerService(
-        baseUrl: store.mailerBaseUrl,
-        apiKey: store.mailerApiKey,
-      );
 
   /// False when no backend URL is configured — callers hide the email options
   /// rather than failing at send time.
   bool get isConfigured => baseUrl.trim().isNotEmpty;
 
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        if (apiKey.trim().isNotEmpty) 'X-API-Key': apiKey.trim(),
-      };
+  Map<String, String> get _headers => const {'Content-Type': 'application/json'};
 
   Uri _uri(String path, [Map<String, String>? query]) {
     final root = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');

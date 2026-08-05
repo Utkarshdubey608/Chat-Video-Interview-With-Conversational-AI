@@ -3,11 +3,9 @@ import 'package:talbotiq/shared/models/app_models.dart';
 
 /// A loading view displaying a three-step progressive analysis pipeline:
 /// 1. Tavus Transcript Retrieval
-/// 2. Hume Vocal/Prosody Emotion Analysis
 /// 3. Gemini ATS Scorecard Synthesis
 class ResultsLoadingView extends StatelessWidget {
   final bool fetchingTranscript;
-  final bool humeProcessing;
   final bool geminiLoading;
   final List<TranscriptEntry> sessionTranscript;
   final ATSScorecard? atsScorecard;
@@ -16,7 +14,6 @@ class ResultsLoadingView extends StatelessWidget {
   const ResultsLoadingView({
     super.key,
     required this.fetchingTranscript,
-    required this.humeProcessing,
     required this.geminiLoading,
     required this.sessionTranscript,
     required this.atsScorecard,
@@ -79,35 +76,21 @@ class ResultsLoadingView extends StatelessWidget {
                     ),
                     const Divider(height: 24),
 
-                    // Step 2: Hume Emotional Analysis
+                    // Step 2: Gemini Scorecard Synthesis
                     ProgressStepWidget(
-                      stepTitle: 'Step 2: Processing prosody & facial emotions',
-                      isActive: !fetchingTranscript && humeProcessing,
-                      isDone: !fetchingTranscript && !humeProcessing,
-                      statusText: fetchingTranscript
-                          ? 'Pending Step 1'
-                          : (humeProcessing ? 'Analyzing recording…' : 'Completed'),
-                      isFailed: false,
-                    ),
-                    const Divider(height: 24),
-
-                    // Step 3: Gemini Scorecard Synthesis
-                    ProgressStepWidget(
-                      stepTitle: 'Step 3: Synthesizing ATS scorecard',
-                      isActive: !fetchingTranscript && !humeProcessing && geminiLoading,
+                      stepTitle: 'Step 2: Synthesizing ATS scorecard',
+                      isActive: !fetchingTranscript && geminiLoading,
                       isDone: !fetchingTranscript &&
-                          !humeProcessing &&
                           !geminiLoading &&
                           atsScorecard != null,
-                      statusText: (fetchingTranscript || humeProcessing)
-                          ? 'Pending Step 2'
+                      statusText: fetchingTranscript
+                          ? 'Pending Step 1'
                           : (geminiLoading
                               ? 'Generating scorecard with Gemini…'
                               : (atsScorecard == null && geminiError != null
                                   ? 'Failed'
                                   : 'Completed')),
                       isFailed: !fetchingTranscript &&
-                          !humeProcessing &&
                           !geminiLoading &&
                           atsScorecard == null &&
                           geminiError != null,

@@ -3,10 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
-import 'package:talbotiq/core/services/tavus_service.dart';
-import 'package:talbotiq/core/services/hume_service.dart';
-import 'package:talbotiq/core/services/deepgram_service.dart';
-import 'package:talbotiq/core/services/gemini_service.dart';
 
 /// Stages of the post-interview processing pipeline (transcript → AI scoring
 /// → handoff to the recruiter), surfaced to the candidate-facing "submitted"
@@ -26,11 +22,15 @@ enum InterviewProcessingStage {
   failed,
 }
 
-/// Central app-wide [ChangeNotifier]: owns runtime API keys (loaded once from
-/// prefs, applied to the AI services in-memory), the session/avatar config,
-/// theme mode, current route, and the per-interview metadata carried into
-/// scoring. Widgets should `select`/`Consumer` on the specific field they need
-/// rather than listening to the whole store.
+/// Central app-wide [ChangeNotifier]: owns the session/avatar config, theme
+/// mode, current route, and the per-interview metadata carried into scoring.
+/// Widgets should `select`/`Consumer` on the specific field they need rather
+/// than listening to the whole store.
+///
+/// It holds NO API credentials. Every vendor key lives in the backend
+/// environment; the app reaches third-party services through
+/// `BackendClient`/the AI proxy and never sees a key. There is deliberately no
+/// setter, no persisted field and no cloud sync for one.
 class AppStore extends ChangeNotifier {
   // SharedPreferences keys
   static const String _kStoreKey = 'talbotiq_store';
@@ -38,21 +38,8 @@ class AppStore extends ChangeNotifier {
   // Theme Mode
   ThemeMode _themeMode = ThemeMode.dark;
 
-  // API credentials
-  String _tavusKey = '';
-  String _deepgramKey = '';
-  String _humeKey = '';
-  String _awsKey = '';
-  String _anthropicKey = '';
-  String _geminiKey = '';
-  String _awsProxyUrl = '';
+  // Recruiter-configured webhook for interview events. A URL, not a credential.
   String _webhookUrl = '';
-
-  // Mailer backend (backend/) — sends templated interview invites to
-  // candidates. Empty URL = the feature is simply hidden. A build can ship a
-  // default with --dart-define=MAILER_BASE_URL=https://…; Settings overrides it.
-  String _mailerBaseUrl = const String.fromEnvironment('MAILER_BASE_URL');
-  String _mailerApiKey = const String.fromEnvironment('MAILER_API_KEY');
 
   // Defaults
   String _defaultReplicaId = '';
@@ -91,13 +78,7 @@ class AppStore extends ChangeNotifier {
   // Recording preferences
   bool _storeLocalRecordings = false;
 
-  // Hume Batch Job
-  String? _humeJobId;
-  String? _humeJobStatus;
-  HumeSessionResult? _humeResult;
   List<int> _questionTimestamps = [];
-  List<HumeEmotion> _liveEmotions = [];
-  bool _humeStreamActive = false;
 
   // Transcript logs
   List<TranscriptEntry> _sessionTranscript = [];
@@ -153,16 +134,7 @@ class AppStore extends ChangeNotifier {
 
   // Getters
   ThemeMode get themeMode => _themeMode;
-  String get tavusKey => _tavusKey;
-  String get deepgramKey => _deepgramKey;
-  String get humeKey => _humeKey;
-  String get awsKey => _awsKey;
-  String get anthropicKey => _anthropicKey;
-  String get geminiKey => _geminiKey;
-  String get awsProxyUrl => _awsProxyUrl;
   String get webhookUrl => _webhookUrl;
-  String get mailerBaseUrl => _mailerBaseUrl;
-  String get mailerApiKey => _mailerApiKey;
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
@@ -184,12 +156,7 @@ class AppStore extends ChangeNotifier {
   int get fillers => _fillers;
   int get engagement => _engagement;
 
-  String? get humeJobId => _humeJobId;
-  String? get humeJobStatus => _humeJobStatus;
-  HumeSessionResult? get humeResult => _humeResult;
   List<int> get questionTimestamps => List.unmodifiable(_questionTimestamps);
-  List<HumeEmotion> get liveEmotions => List.unmodifiable(_liveEmotions);
-  bool get humeStreamActive => _humeStreamActive;
 
   List<TranscriptEntry> get sessionTranscript =>
       List.unmodifiable(_sessionTranscript);
@@ -215,208 +182,9 @@ class AppStore extends ChangeNotifier {
   }
 
   // Setters
-  void setTavusKey(String key) {
-    if (_tavusKey != key) {
-      _tavusKey = key;
-      tavusService.setKey(key);
-      _cachedReplicas = [];
-      _cachedPersonas = [];
-      _saveToPrefs();
-      notifyListeners();
-    }
-  }
-
-  void setDeepgramKey(String key) {
-    _deepgramKey = key;
-    deepgramService.setKey(key);
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setHumeKey(String key) {
-    _humeKey = key;
-    humeService.setKey(key);
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setAwsKey(String key) {
-    _awsKey = key;
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setAnthropicKey(String key) {
-    _anthropicKey = key;
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setGeminiKey(String key) {
-    _geminiKey = key;
-    geminiService.setKey(key);
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setAwsProxyUrl(String url) {
-    _awsProxyUrl = url;
-    _saveToPrefs();
-    notifyListeners();
-  }
-
   void setWebhookUrl(String url) {
     _webhookUrl = url;
     _saveToPrefs();
-    notifyListeners();
-  }
-
-  /// Mailer backend root (Settings → Email). Empty hides the notify-candidates
-  /// options rather than failing when a recruiter tries to send.
-  void setMailerBaseUrl(String url) {
-    _mailerBaseUrl = url.trim();
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setMailerApiKey(String key) {
-    _mailerApiKey = key.trim();
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  /// Applies API keys to memory + service singletons WITHOUT persisting. Used to
-  /// run a recruiter's (org) interview with their keys on a candidate device
-  /// without storing them: they never hit prefs/Settings and are undone by
-  /// [reloadApiKeysFromPrefs] when the session ends (or on restart).
-  void applyEphemeralApiKeys({
-    String? tavus,
-    String? gemini,
-    String? hume,
-    String? deepgram,
-  }) {
-    if (tavus != null) {
-      _tavusKey = tavus;
-      tavusService.setKey(tavus);
-      _cachedReplicas = [];
-      _cachedPersonas = [];
-    }
-    if (gemini != null) {
-      _geminiKey = gemini;
-      geminiService.setKey(gemini);
-    }
-    if (hume != null) {
-      _humeKey = hume;
-      humeService.setKey(hume);
-    }
-    if (deepgram != null) {
-      _deepgramKey = deepgram;
-      deepgramService.setKey(deepgram);
-    }
-    notifyListeners();
-  }
-
-  /// Applies API keys fetched from Firestore (`recruiter_keys` or
-  /// `candidate_keys`) and PERSISTS them to prefs, so they're available on
-  /// this device without a network round-trip on every launch. Counterpart to
-  /// [applyEphemeralApiKeys] (candidate launch, in-memory-only). Called at
-  /// login and from Settings' "Retrieve from Cloud"; [clearApiKeys] undoes
-  /// this at logout.
-  ///
-  /// A blank/absent cloud value LEAVES the current local key untouched rather
-  /// than overwriting it with an empty string — otherwise pulling from a cloud
-  /// doc that was never (fully) pushed to would silently wipe out a key the
-  /// user had already entered locally.
-  void applyCloudApiKeys({
-    String tavus = '',
-    String gemini = '',
-    String hume = '',
-    String deepgram = '',
-    String aws = '',
-    String anthropic = '',
-    String awsProxyUrl = '',
-    String webhookUrl = '',
-  }) {
-    if (tavus.isNotEmpty) {
-      _tavusKey = tavus;
-      tavusService.setKey(tavus);
-      _cachedReplicas = [];
-      _cachedPersonas = [];
-    }
-    if (deepgram.isNotEmpty) {
-      _deepgramKey = deepgram;
-      deepgramService.setKey(deepgram);
-    }
-    if (hume.isNotEmpty) {
-      _humeKey = hume;
-      humeService.setKey(hume);
-    }
-    if (aws.isNotEmpty) _awsKey = aws;
-    if (anthropic.isNotEmpty) _anthropicKey = anthropic;
-    if (gemini.isNotEmpty) {
-      _geminiKey = gemini;
-      geminiService.setKey(gemini);
-    }
-    if (awsProxyUrl.isNotEmpty) _awsProxyUrl = awsProxyUrl;
-    if (webhookUrl.isNotEmpty) _webhookUrl = webhookUrl;
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  /// Removes the cloud-synced API keys from local storage (logout). Leaves
-  /// drafts/recordings/results untouched — only the credential fields reset.
-  Future<void> clearApiKeys() async {
-    _tavusKey = '';
-    _deepgramKey = '';
-    _humeKey = '';
-    _awsKey = '';
-    _anthropicKey = '';
-    _geminiKey = '';
-    _awsProxyUrl = '';
-    _webhookUrl = '';
-    tavusService.setKey('');
-    deepgramService.setKey('');
-    humeService.setKey('');
-    geminiService.setKey('');
-    _cachedReplicas = [];
-    _cachedPersonas = [];
-    await _saveToPrefs();
-    notifyListeners();
-  }
-
-  /// Restores the device's own persisted API keys (undoing ephemeral org keys).
-  Future<void> reloadApiKeysFromPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_kStoreKey);
-    final Map<String, dynamic> data =
-        raw == null ? const {} : jsonDecode(raw) as Map<String, dynamic>;
-    _tavusKey = data['tavusKey'] ?? '';
-    _deepgramKey = data['deepgramKey'] ?? '';
-    _humeKey = data['humeKey'] ?? '';
-    _geminiKey = data['geminiKey'] ?? '';
-    tavusService.setKey(_tavusKey);
-    deepgramService.setKey(_deepgramKey);
-    humeService.setKey(_humeKey);
-    geminiService.setKey(_geminiKey);
-
-    // Ephemeral keys cleared the avatar caches; restore them from the same
-    // persisted blob so the replica/persona pickers repopulate without a
-    // restart (they belong to the device's own Tavus key).
-    if (data['cachedReplicas'] != null) {
-      final List replicasList = data['cachedReplicas'];
-      _cachedReplicas =
-          replicasList.map((r) => TavusReplica.fromJson(r)).toList();
-    } else {
-      _cachedReplicas = [];
-    }
-    if (data['cachedPersonas'] != null) {
-      final List personasList = data['cachedPersonas'];
-      _cachedPersonas =
-          personasList.map((p) => TavusPersona.fromJson(p)).toList();
-    } else {
-      _cachedPersonas = [];
-    }
-
     notifyListeners();
   }
 
@@ -555,21 +323,6 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setHumeJobId(String? id) {
-    _humeJobId = id;
-    notifyListeners();
-  }
-
-  void setHumeJobStatus(String? status) {
-    _humeJobStatus = status;
-    notifyListeners();
-  }
-
-  void setHumeResult(HumeSessionResult? result) {
-    _humeResult = result;
-    notifyListeners();
-  }
-
   void pushQuestionTimestamp(int ts) {
     _questionTimestamps.add(ts);
     notifyListeners();
@@ -582,16 +335,6 @@ class AppStore extends ChangeNotifier {
 
   void setRecordingStartTimestamp(int? ts) {
     _recordingStartTimestamp = ts;
-    notifyListeners();
-  }
-
-  void setLiveEmotions(List<HumeEmotion> emos) {
-    _liveEmotions = emos;
-    notifyListeners();
-  }
-
-  void setHumeStreamActive(bool active) {
-    _humeStreamActive = active;
     notifyListeners();
   }
 
@@ -692,12 +435,7 @@ class AppStore extends ChangeNotifier {
     _wpm = 0;
     _fillers = 0;
     _engagement = 0;
-    _humeJobId = null;
-    _humeJobStatus = null;
-    _humeResult = null;
     _questionTimestamps = [];
-    _liveEmotions = [];
-    _humeStreamActive = false;
     _sessionTranscript = [];
     _deepgramConnected = false;
     _recordingBytes = null;
@@ -728,17 +466,7 @@ class AppStore extends ChangeNotifier {
         _themeMode = ThemeMode.dark;
       }
 
-      _tavusKey = data['tavusKey'] ?? '';
-      _deepgramKey = data['deepgramKey'] ?? '';
-      _humeKey = data['humeKey'] ?? '';
-      _awsKey = data['awsKey'] ?? '';
-      _anthropicKey = data['anthropicKey'] ?? '';
-      _geminiKey = data['geminiKey'] ?? '';
-      _awsProxyUrl = data['awsProxyUrl'] ?? '';
       _webhookUrl = data['webhookUrl'] ?? '';
-      // Keep the --dart-define default when nothing has been saved yet.
-      _mailerBaseUrl = data['mailerBaseUrl'] ?? _mailerBaseUrl;
-      _mailerApiKey = data['mailerApiKey'] ?? _mailerApiKey;
       _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
 
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
@@ -784,12 +512,6 @@ class AppStore extends ChangeNotifier {
             resultsList.map((r) => InterviewResult.fromJson(r)).toList();
       }
 
-      // Propagate keys to services
-      tavusService.setKey(_tavusKey);
-      humeService.setKey(_humeKey);
-      deepgramService.setKey(_deepgramKey);
-      geminiService.setKey(_geminiKey);
-
       notifyListeners();
     } catch (e) {
       debugPrint('Error loading store: $e');
@@ -809,16 +531,7 @@ class AppStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final Map<String, dynamic> data = {
         'themeMode': _themeMode.name,
-        'tavusKey': _tavusKey,
-        'deepgramKey': _deepgramKey,
-        'humeKey': _humeKey,
-        'awsKey': _awsKey,
-        'anthropicKey': _anthropicKey,
-        'geminiKey': _geminiKey,
-        'awsProxyUrl': _awsProxyUrl,
         'webhookUrl': _webhookUrl,
-        'mailerBaseUrl': _mailerBaseUrl,
-        'mailerApiKey': _mailerApiKey,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
         'sessionConfig': _sessionConfig.toJson(),
@@ -842,13 +555,6 @@ class AppStore extends ChangeNotifier {
     await prefs.remove(_kStoreKey);
     reset();
     _themeMode = ThemeMode.dark;
-    _tavusKey = '';
-    _deepgramKey = '';
-    _humeKey = '';
-    _awsKey = '';
-    _anthropicKey = '';
-    _geminiKey = '';
-    _awsProxyUrl = '';
     _webhookUrl = '';
     _defaultReplicaId = '';
     _defaultPersonaId = '';

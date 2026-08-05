@@ -8,10 +8,9 @@
 // the fixed/timed track; résumé question-generation is a later addition.
 
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:talbotiq/core/net/api_client.dart';
+import 'package:talbotiq/core/net/backend_client.dart';
 import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 import 'package:talbotiq/features/recruiter/engine/scoring_engine.dart';
 
@@ -68,10 +67,6 @@ class RawConversationScore {
 }
 
 class RecruiterGeminiService {
-  // Shared transport: request timeout + conservative 429/503 backoff-retry so a
-  // stalled Gemini host can no longer hang the recruiter flow indefinitely.
-  final ApiClient _api = ApiClient();
-
   // Delimiters that fence untrusted candidate content (résumé text, answers,
   // transcripts) so the model treats it strictly as DATA, never as instructions.
   static const String _dataBegin = '<<<UNTRUSTED_CANDIDATE_DATA>>>';
@@ -85,7 +80,12 @@ class RecruiterGeminiService {
     {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_ONLY_HIGH'},
   ];
 
-  String _apiKey = '';
+  RecruiterGeminiService({BackendClient? backend}) : _injectedBackend = backend;
+
+  /// Null in production so the shared client resolves lazily.
+  final BackendClient? _injectedBackend;
+  BackendClient get _backend => _injectedBackend ?? backendClient;
+
   String _model = 'gemini-2.5-flash';
 
   /// The Gemini models the recruiter may choose between. Additive: only the
@@ -99,9 +99,9 @@ class RecruiterGeminiService {
   /// SharedPreferences key for the persisted model choice.
   static const String _modelPrefsKey = 'recruiter_gemini_model';
 
-  void setKey(String key) => _apiKey = key;
-  String getKey() => _apiKey;
-  bool get enabled => _apiKey.isNotEmpty;
+  /// The feature is available whenever the backend has Gemini configured, which
+  /// the server reports via /health — there is no client-side key to check.
+  bool get enabled => true;
 
   /// Currently selected Gemini model id (e.g. 'gemini-2.5-flash').
   String get model => _model;
@@ -142,10 +142,6 @@ class RecruiterGeminiService {
     required String difficulty,
     String? role,
   }) async {
-    if (_apiKey.isEmpty) {
-      throw Exception(
-          'No Gemini API key configured. Add one in Settings to generate questions.');
-    }
     final total = resumeQuestionTotal(style, technicalCount, nonTechnicalCount);
 
     final styleLine = style == QuestionStyle.technical
@@ -221,25 +217,8 @@ Respond ONLY with valid JSON (no markdown) in this exact shape:
     return [...tech, ...nonTech];
   }
 
-  String _friendlyError(int? status, String? body) {
-    final msg = (body ?? '').toLowerCase();
-    if (status == 400 && (msg.contains('api key') || msg.contains('api_key'))) {
-      return 'Gemini rejected the API key. Make sure it is a valid Google AI Studio key (they start with "AIza").';
-    }
-    if (status == 429 || msg.contains('quota') || msg.contains('rate')) {
-      return 'Gemini rate limit / quota exceeded. Wait a moment and try again.';
-    }
-    if (msg.contains('safety') || msg.contains('blocked')) {
-      return 'Gemini blocked this request for safety reasons. Try a different résumé.';
-    }
-    return 'Gemini request failed (${status ?? 'no response'}). Please try again.';
-  }
-
   Future<RawScore> scoreWithGemini(
       InterviewSession session, InterviewTemplate template) async {
-    if (_apiKey.isEmpty) {
-      throw Exception('Gemini key not set');
-    }
     final enabledKpis = template.rubric.kpis.where((k) => k.enabled).toList();
 
     final qBlocks = session.questions.asMap().entries.map((e) {
@@ -333,10 +312,6 @@ Respond ONLY with valid JSON (no markdown, no prose) in this exact shape:
   /// Extract the plain text of a résumé PDF via Gemini (no local PDF parsing).
   /// Used to ground the adaptive conversational interviewer.
   Future<String> extractResumeText({required String pdfBase64}) async {
-    if (_apiKey.isEmpty) {
-      throw Exception(
-          'No Gemini API key configured. Add one in Settings to use résumé-grounded interviews.');
-    }
     final body = {
       'contents': [
         {
@@ -371,7 +346,6 @@ Respond ONLY with valid JSON (no markdown, no prose) in this exact shape:
     required int followBudgetLeft,
     required int primariesLeft,
   }) async {
-    if (_apiKey.isEmpty) throw Exception('Gemini key not set');
     final a = adaptive;
     final resume = resumeText.length > 14000
         ? resumeText.substring(0, 14000)
@@ -479,7 +453,6 @@ Respond ONLY with valid JSON (no markdown, no prose) in this exact shape:
   /// Score a conversational transcript (mirrors the web `scoreConversationWithGemini`).
   Future<RawConversationScore> scoreConversationWithGemini(
       InterviewSession session, InterviewTemplate template) async {
-    if (_apiKey.isEmpty) throw Exception('Gemini key not set');
     final kpis = template.rubric.kpis.where((k) => k.enabled).toList();
     final rubricText =
         kpis.map((k) => '- ${k.id} (${k.label}): ${k.description}').join('\n');
@@ -574,39 +547,22 @@ Respond ONLY with valid JSON (no markdown) in this exact shape:
       .replaceFirst(RegExp(r'```\s*$'), '')
       .trim();
 
+  /// One generateContent call through the backend.
+  ///
+  /// The recruiter's model choice is sent as a query parameter; the backend
+  /// validates it against an allowlist and falls back to the default if it is
+  /// not recognised, so a stale choice degrades rather than fails.
   Future<String> _callGemini(Map<String, dynamic> body) async {
-    // Every request gets safety thresholds even when the caller's body omits them.
+    // Safety thresholds are applied by the backend when absent, but sending the
+    // caller's own when present keeps behaviour explicit here.
     body.putIfAbsent('safetySettings', () => _safetySettings);
 
-    // Key travels in the x-goog-api-key header, never in the URL, so it can't
-    // leak into request logs / proxies / crash traces.
-    final url = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent');
+    final data = await _backend.postJson(
+      '/api/gemini/generate',
+      body: body,
+      query: {'model': _model},
+    );
 
-    // The shared ApiClient owns the timeout + 429/503 backoff-retry policy.
-    final http.Response response;
-    try {
-      response = await _api.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': _apiKey,
-        },
-        body: jsonEncode(body),
-      );
-    } on ApiException catch (e) {
-      throw Exception(_friendlyError(e.statusCode, e.message));
-    }
-    if (response.statusCode != 200) {
-      throw Exception(_friendlyError(response.statusCode, response.body));
-    }
-    final Map<String, dynamic> data;
-    try {
-      data = jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (_) {
-      throw Exception(
-          'Gemini returned an unparseable response (HTTP ${response.statusCode}).');
-    }
     final rawText =
         data['candidates']?[0]?['content']?['parts']?[0]?['text'] as String?;
     if (rawText == null || rawText.isEmpty) {

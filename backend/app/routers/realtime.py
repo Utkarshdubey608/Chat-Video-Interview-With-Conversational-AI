@@ -24,7 +24,7 @@ from app.interviews import (
 )
 from app.providers.gemini import GeminiClient, rfc3339
 from app.ratelimit import RateLimitLiveToken
-from app.schemas import LiveTokenRequest, LiveTokenResponse
+from app.schemas import LiveTokenRequest, LiveTokenResponse, PreviewTokenRequest
 from app.security import AuthedUser, require_firebase_user
 
 router = APIRouter(prefix="/api/rt", tags=["realtime"])
@@ -76,6 +76,47 @@ async def gemini_token(
 
     token = await GeminiClient(settings).mint_live_token(
         setup, session_minutes=session_minutes
+    )
+    return LiveTokenResponse(
+        token=token.token,
+        ws_url=token.ws_url,
+        model=token.model,
+        expires_at=rfc3339(token.expires_at),
+        connect_by=rfc3339(token.connect_by),
+    )
+
+
+@router.post(
+    "/gemini-preview-token",
+    response_model=LiveTokenResponse,
+    response_model_by_alias=True,
+    summary="Mint a token for a one-line voice sample",
+    dependencies=[RateLimitLiveToken],
+)
+async def gemini_preview_token(
+    payload: PreviewTokenRequest,
+    request: Request,
+    user: AuthedUser = Depends(require_firebase_user),
+) -> LiveTokenResponse:
+    """Powers the recruiter's voice picker.
+
+    Unlike the interview token there is no interview to bind to, so this is
+    available to any signed-in user. Three things keep that from being a cost
+    problem: the session is capped at a couple of minutes, the instruction pins
+    the model to reading one capped line and stopping, and it shares the
+    live-token rate limit.
+    """
+    del user  # authentication is the requirement; identity is not used here
+    settings = _settings(request)
+
+    setup = voice.build_preview_setup(
+        voice_name=payload.voice_name,
+        sample_text=payload.sample_text,
+        model=settings.live_model_name,
+    )
+
+    token = await GeminiClient(settings).mint_live_token(
+        setup, session_minutes=settings.gemini_preview_session_minutes
     )
     return LiveTokenResponse(
         token=token.token,

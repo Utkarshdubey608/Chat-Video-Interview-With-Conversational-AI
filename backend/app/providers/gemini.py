@@ -145,7 +145,19 @@ class GeminiClient(ProviderClient):
             connect_by=connect_by,
         )
 
-    async def generate_content(self, body: dict) -> dict:
+    def resolve_model(self, requested: str | None) -> str:
+        """The model to call: the caller's choice if allowed, else the default.
+
+        An unknown or disallowed name falls back rather than erroring — a stale
+        client should still get a scored interview, just on the default model.
+        """
+        default = self.settings.gemini_model.strip().removeprefix("models/")
+        if not requested:
+            return default
+        name = requested.strip().removeprefix("models/")
+        return name if name in self.settings.allowed_gemini_models else default
+
+    async def generate_content(self, body: dict, *, model: str | None = None) -> dict:
         """One `generateContent` call.
 
         The caller supplies `contents` and `generationConfig`; the model and the
@@ -164,12 +176,11 @@ class GeminiClient(ProviderClient):
         payload = dict(body)
         payload.setdefault("safetySettings", DEFAULT_SAFETY_SETTINGS)
 
-        model = self.settings.gemini_model.strip() or "gemini-2.5-flash"
-        model = model.removeprefix("models/")
+        resolved = self.resolve_model(model)
 
         return await self.request(
             "POST",
-            f"/models/{model}:generateContent",
+            f"/models/{resolved}:generateContent",
             json=payload,
             headers={"Content-Type": "application/json"},
         )

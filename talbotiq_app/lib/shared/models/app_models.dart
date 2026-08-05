@@ -512,7 +512,6 @@ class InterviewResult {
   final int fillers;
   final List<TranscriptEntry> transcript;
   final ATSScorecard? scorecard;
-  final HumeSessionResult? humeResult;
 
   /// True when this came from the candidate's own self-serve PRACTICE tab,
   /// false for a recruiter-assigned interview. Both land in the same history
@@ -531,7 +530,6 @@ class InterviewResult {
     required this.fillers,
     required this.transcript,
     required this.scorecard,
-    required this.humeResult,
     this.isPractice = false,
   });
 
@@ -551,9 +549,6 @@ class InterviewResult {
       scorecard: json['scorecard'] != null
           ? ATSScorecard.fromJson(json['scorecard'])
           : null,
-      humeResult: json['humeResult'] != null
-          ? HumeSessionResult.fromJson(json['humeResult'])
-          : null,
       // Defaults to false for results stored before this field existed: an
       // assigned interview wrongly shown to the candidate would leak an
       // unpublished result, whereas an old practice run merely not appearing
@@ -572,164 +567,13 @@ class InterviewResult {
     'fillers': fillers,
     'transcript': transcript.map((e) => e.toJson()).toList(),
     'scorecard': scorecard?.toJson(),
-    'humeResult': humeResult?.toJson(),
     'isPractice': isPractice,
   };
 }
 
-// ── Hume Emotion ──
-class HumeEmotion {
-  final String name;
-  final double score;
 
-  HumeEmotion({required this.name, required this.score});
 
-  factory HumeEmotion.fromJson(Map<String, dynamic> json) {
-    return HumeEmotion(
-      name: json['name'] ?? '',
-      score: (json['score'] as num?)?.toDouble() ?? 0.0,
-    );
-  }
 
-  Map<String, dynamic> toJson() => {
-    'name': name,
-    'score': score,
-  };
-}
-
-// ── Hume Emotion Snapshot ──
-class EmotionSnapshot {
-  final double timestamp; // in seconds relative to job audio
-  final List<HumeEmotion> emotions;
-  final Map<String, double> categoryScores;
-  final String dominant;
-
-  EmotionSnapshot({
-    required this.timestamp,
-    required this.emotions,
-    required this.categoryScores,
-    required this.dominant,
-  });
-
-  factory EmotionSnapshot.fromJson(Map<String, dynamic> json) {
-    return EmotionSnapshot(
-      timestamp: (json['timestamp'] as num?)?.toDouble() ?? 0.0,
-      emotions: (json['emotions'] as List?)
-              ?.map((e) => HumeEmotion.fromJson(e))
-              .toList() ??
-          [],
-      categoryScores: Map<String, double>.from(
-          (json['categoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
-      dominant: json['dominant'] ?? 'Neutral',
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'timestamp': timestamp,
-    'emotions': emotions.map((e) => e.toJson()).toList(),
-    'categoryScores': categoryScores,
-    'dominant': dominant,
-  };
-}
-
-// ── Hume Per-Question Summary ──
-class QuestionEmotionSummary {
-  final int questionIdx;
-  final String questionText;
-  final Map<String, double> avgCategoryScores;
-  final String dominant;
-  final List<EmotionSnapshot> timeline;
-  final List<HumeEmotion> topEmotions;
-
-  QuestionEmotionSummary({
-    required this.questionIdx,
-    required this.questionText,
-    required this.avgCategoryScores,
-    required this.dominant,
-    required this.timeline,
-    required this.topEmotions,
-  });
-
-  factory QuestionEmotionSummary.fromJson(Map<String, dynamic> json) {
-    return QuestionEmotionSummary(
-      questionIdx: json['questionIdx'] ?? 0,
-      questionText: json['questionText'] ?? '',
-      avgCategoryScores: Map<String, double>.from(
-          (json['avgCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
-      dominant: json['dominant'] ?? 'Neutral',
-      timeline: (json['timeline'] as List?)
-              ?.map((e) => EmotionSnapshot.fromJson(e))
-              .toList() ??
-          [],
-      topEmotions: (json['topEmotions'] as List?)
-              ?.map((e) => HumeEmotion.fromJson(e))
-              .toList() ??
-          [],
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'questionIdx': questionIdx,
-    'questionText': questionText,
-    'avgCategoryScores': avgCategoryScores,
-    'dominant': dominant,
-    'timeline': timeline.map((e) => e.toJson()).toList(),
-    'topEmotions': topEmotions.map((e) => e.toJson()).toList(),
-  };
-}
-
-// ── Hume Session Result ──
-class HumeSessionResult {
-  final String jobId;
-  final String status;
-  final Map<String, double> overallCategoryScores;
-  final List<HumeEmotion> overallTopEmotions;
-  final List<QuestionEmotionSummary> perQuestion;
-  final List<EmotionSnapshot> timeline;
-  final int compositeScore;
-
-  HumeSessionResult({
-    required this.jobId,
-    required this.status,
-    required this.overallCategoryScores,
-    required this.overallTopEmotions,
-    required this.perQuestion,
-    required this.timeline,
-    required this.compositeScore,
-  });
-
-  factory HumeSessionResult.fromJson(Map<String, dynamic> json) {
-    return HumeSessionResult(
-      jobId: json['jobId'] ?? '',
-      status: json['status'] ?? 'COMPLETED',
-      overallCategoryScores: Map<String, double>.from(
-          (json['overallCategoryScores'] as Map?)?.map((k, v) => MapEntry(k.toString(), (v as num?)?.toDouble() ?? 0.0)) ?? {}),
-      overallTopEmotions: (json['overallTopEmotions'] as List?)
-              ?.map((e) => HumeEmotion.fromJson(e))
-              .toList() ??
-          [],
-      perQuestion: (json['perQuestion'] as List?)
-              ?.map((e) => QuestionEmotionSummary.fromJson(e))
-              .toList() ??
-          [],
-      timeline: (json['timeline'] as List?)
-              ?.map((e) => EmotionSnapshot.fromJson(e))
-              .toList() ??
-          [],
-      compositeScore: json['compositeScore'] ?? 50,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'jobId': jobId,
-    'status': status,
-    'overallCategoryScores': overallCategoryScores,
-    'overallTopEmotions': overallTopEmotions.map((e) => e.toJson()).toList(),
-    'perQuestion': perQuestion.map((e) => e.toJson()).toList(),
-    'timeline': timeline.map((e) => e.toJson()).toList(),
-    'compositeScore': compositeScore,
-  };
-}
 
 // ── Gemini Scored Dimension ──
 class ScoredDimension {
