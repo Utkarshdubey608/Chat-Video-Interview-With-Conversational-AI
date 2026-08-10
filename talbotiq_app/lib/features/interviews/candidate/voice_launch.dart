@@ -211,7 +211,6 @@ Future<void> _scoreAndStore({
       questions: interview.questions,
       wpm: 0,
       totalFillers: 0,
-      facialSummary: null,
     );
 
     await repo.completeWithResult(interview.id, {

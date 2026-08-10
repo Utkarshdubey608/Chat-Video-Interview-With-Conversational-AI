@@ -300,6 +300,24 @@ workers, so N workers allow roughly N x the configured limit. That is deliberate
 retry loop, a script with a stolen ID token). If exact limits are ever needed,
 swap the store in `app/ratelimit.py`; the routes do not change.
 
+## Tavus conversation defaults
+
+Recording destination and session timeouts are org infrastructure, set here rather
+than in the app:
+
+```bash
+TAVUS_ENABLE_RECORDING=false
+TAVUS_RECORDING_S3_BUCKET=
+TAVUS_RECORDING_S3_REGION=
+TAVUS_AWS_ASSUME_ROLE_ARN=
+```
+
+The app sends only what is genuinely per-interview (replica, persona, context,
+duration, language); this service merges the rest in at create time. The four
+recording fields are **locked** — a caller that supplied them would be able to
+point the org's AWS assume-role at a bucket it controls, so they are dropped from
+the request body rather than passed through.
+
 ## Known limits of this design
 
 Worth knowing before relying on it:

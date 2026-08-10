@@ -18,7 +18,7 @@ import 'package:talbotiq/core/constants/colors.dart';
 import 'package:talbotiq/core/utils/date_format.dart';
 import 'package:talbotiq/core/utils/validators.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
-import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
@@ -109,6 +109,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   bool _loadingReplicas = false;
   bool _saving = false;
   bool _timingAccessExpanded = false;
+  bool _advancedExpanded = false;
   String? _error;
   String? _recruiterName;
 
@@ -130,6 +131,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     if (existing != null) {
       _hydrateFrom(existing);
       _recruiterName = existing.recruiterName;
+      // Open Advanced when this interview was customised, so reopening it never
+      // hides a choice the recruiter already made.
+      _advancedExpanded = _advancedDifferences.isNotEmpty;
     } else {
       // Pre-fill the prompt with the app's default interviewer prompt and the
       // five default questions.
@@ -328,17 +332,23 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       .where((t) => t.isNotEmpty)
       .toList();
 
-  Future<void> _loadReplicas() async {
+  /// Cached read — the catalog only calls Tavus once per 10-hour window, so
+  /// re-opening this form costs no round trips.
+  Future<void> _loadReplicas() => _fetchAvatars(refresh: false);
+
+  /// Explicit user action, from the Refresh control on the avatar picker.
+  Future<void> _refreshAvatars() => _fetchAvatars(refresh: true);
+
+  Future<void> _fetchAvatars({required bool refresh}) async {
+    final catalog = context.read<AvatarCatalog>();
     setState(() => _loadingReplicas = true);
-    try {
-      final replicas = await tavusService.listReplicas();
-      if (!mounted) return;
-      setState(() => _replicas = replicas);
-    } catch (_) {
-      // Manual replica-id entry remains available; no hard failure.
-    } finally {
-      if (mounted) setState(() => _loadingReplicas = false);
-    }
+    await (refresh ? catalog.refresh() : catalog.ensureLoaded());
+    if (!mounted) return;
+    // Manual replica-id entry stays available, so a failure is never fatal here.
+    setState(() {
+      _loadingReplicas = false;
+      _replicas = catalog.replicas;
+    });
   }
 
   void _addQuestion() =>
@@ -744,7 +754,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                   _buildJobDetailsCard(theme),
                   _buildCandidatesCard(theme),
                   _buildInterviewDesignCard(theme),
-                  if (_type == InterviewType.chat) _buildIntegrityBrandingCard(theme),
+                  _buildAdvancedCard(theme),
                   _buildTimingAccessCard(theme),
                   if (_error != null) ...[
                     Padding(
@@ -875,6 +885,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     );
   }
 
+  /// The two decisions with no sensible default: what KIND of interview, and
+  /// what it is for. Language and duration moved to Advanced — they default to
+  /// English and 15 minutes, which is right almost always.
   Widget _buildJobDetailsCard(ThemeData theme) {
     return _buildFormSection(
       context: context,
@@ -889,26 +902,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             label: 'Job Title / Interview Role',
             placeholder: 'e.g. Senior Flutter Engineer — Screen 1',
             controller: _titleController,
-          ),
-          const SizedBox(height: 16),
-          CustomSelectDropdown<String>(
-            label: 'Interview Language',
-            value: _language,
-            items: [
-              for (final l in _languages)
-                DropdownMenuItem(value: l, child: Text(l)),
-            ],
-            onChanged: (v) => setState(() => _language = v ?? 'English'),
-          ),
-          const SizedBox(height: 16),
-          CustomSlider(
-            label: 'Interview Duration',
-            min: 5,
-            max: 60,
-            divisions: 11,
-            value: _durationMinutes.toDouble(),
-            formatValue: (v) => '${v.round()} mins',
-            onChanged: (v) => setState(() => _durationMinutes = v.round()),
           ),
         ],
       ),
@@ -1102,10 +1095,10 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
 
   Widget _buildInterviewDesignCard(ThemeData theme) {
     final title = _type == InterviewType.video
-        ? 'Video Setup'
+        ? 'Avatar & Questions'
         : _type == InterviewType.chat
             ? 'Chat Questions'
-            : 'Voice & Persona';
+            : 'Voice Questions';
 
     final icon = _type == InterviewType.video
         ? Icons.video_settings_outlined
@@ -1121,20 +1114,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (_type == InterviewType.video) ...[
-            CustomInputField(
-              label: 'AI Interviewer Instructions / Prompt',
-              placeholder: 'e.g. You are a professional tech recruiter. Be encouraging, ask deep technical questions...',
-              controller: _promptController,
-              maxLines: 5,
-            ),
-            const SizedBox(height: 16),
-            CustomToggle(
-              label: 'Collect Resume',
-              description: 'Require candidates to upload a resume to ground the avatar\'s questions.',
-              checked: _collectResume,
-              onChanged: (v) => setState(() => _collectResume = v),
-            ),
-            const SizedBox(height: 16),
+            // The avatar is the one video setting with no default — an interview
+            // cannot run without a replica. The prompt is pre-filled and lives
+            // in Advanced.
             _buildAvatarSection(theme),
             const SizedBox(height: 20),
             _buildQuestions(theme),
@@ -1167,26 +1149,12 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              CustomToggle(
-                label: 'Allow Follow-ups',
-                description: 'Let the AI ask conversational follow-up questions based on the candidate\'s responses.',
-                checked: _adaptiveFollowUps,
-                onChanged: (v) => setState(() => _adaptiveFollowUps = v),
-              ),
             ] else ...[
               _buildQuestions(theme),
             ],
           ] else if (_type == InterviewType.voice) ...[
-            _buildVoiceConfigSection(theme),
-            const SizedBox(height: 16),
-            CustomInputField(
-              label: 'AI Voice Instructions / Prompt',
-              placeholder: 'Describe how the AI voice agent should behave, context of the interview, tone...',
-              controller: _promptController,
-              maxLines: 5,
-            ),
-            const SizedBox(height: 20),
+            // Voice + persona default to the catalog's picks and live in
+            // Advanced, as does the prompt.
             _buildQuestions(theme),
           ],
         ],
@@ -1326,12 +1294,36 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Select Avatar Video',
-          style: theme.textTheme.titleSmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w500,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Select Avatar Video',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            // Avatars are cached for 10 hours; this is the only way to refetch.
+            Consumer<AvatarCatalog>(
+              builder: (_, catalog, __) => Row(
+                children: [
+                  Text(
+                    'Updated ${catalog.ageLabel}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  IconButton(
+                    tooltip: 'Refresh avatars',
+                    icon: const Icon(Icons.refresh, size: 18),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _loadingReplicas ? null : _refreshAvatars,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         if (_loadingReplicas)
@@ -1433,12 +1425,135 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     );
   }
 
-  Widget _buildIntegrityBrandingCard(ThemeData theme) {
-    return _buildFormSection(
+  /// Proctoring + welcome message. Content only — nested inside Advanced.
+  /// Everything with a working default, behind one collapsed section.
+  ///
+  /// The form above it is the minimum to run an interview: type, title,
+  /// candidates, questions, and an avatar for video. Every field in here is
+  /// already pre-filled — the interviewer prompt from the app default, questions
+  /// from the five defaults, 15 minutes, English, the catalog's voice — so a
+  /// recruiter who never opens this still gets a sensible interview.
+  ///
+  /// The summary line names what has been changed from default, so a collapsed
+  /// section never hides a decision someone made earlier (or on an edit).
+  Widget _buildAdvancedCard(ThemeData theme) {
+    return _buildCollapsibleSection(
       context: context,
-      title: 'Proctoring & Experience',
-      icon: Icons.security_outlined,
+      title: 'Advanced settings',
+      subtitle: _advancedSummary,
+      icon: Icons.tune,
+      isExpanded: _advancedExpanded,
+      onToggle: () => setState(() => _advancedExpanded = !_advancedExpanded),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _advancedGroup(theme, 'Interviewer'),
+          CustomInputField(
+            label: _type == InterviewType.video
+                ? 'AI Interviewer Instructions / Prompt'
+                : 'AI Instructions / Prompt',
+            placeholder:
+                'How the AI should behave, the tone, and what to probe for…',
+            controller: _promptController,
+            maxLines: 5,
+          ),
+          if (_type == InterviewType.video) ...[
+            const SizedBox(height: 16),
+            CustomToggle(
+              label: 'Collect Resume',
+              description:
+                  'Require candidates to upload a resume to ground the avatar\'s questions.',
+              checked: _collectResume,
+              onChanged: (v) => setState(() => _collectResume = v),
+            ),
+          ],
+
+          if (_type == InterviewType.voice) ...[
+            _advancedGroup(theme, 'Voice & persona'),
+            _buildVoiceConfigSection(theme),
+          ],
+
+          if (_isAdaptiveChat) ...[
+            _advancedGroup(theme, 'Adaptive questions'),
+            CustomToggle(
+              label: 'Allow Follow-ups',
+              description:
+                  'Let the AI ask conversational follow-up questions based on the candidate\'s responses.',
+              checked: _adaptiveFollowUps,
+              onChanged: (v) => setState(() => _adaptiveFollowUps = v),
+            ),
+          ],
+
+          _advancedGroup(theme, 'Language & length'),
+          CustomSelectDropdown<String>(
+            label: 'Interview Language',
+            value: _language,
+            items: [
+              for (final l in _languages)
+                DropdownMenuItem(value: l, child: Text(l)),
+            ],
+            onChanged: (v) => setState(() => _language = v ?? 'English'),
+          ),
+          const SizedBox(height: 16),
+          CustomSlider(
+            label: 'Interview Duration',
+            min: 5,
+            max: 60,
+            divisions: 11,
+            value: _durationMinutes.toDouble(),
+            formatValue: (v) => '${v.round()} mins',
+            onChanged: (v) => setState(() => _durationMinutes = v.round()),
+          ),
+
+          if (_type == InterviewType.chat) ...[
+            _advancedGroup(theme, 'Proctoring & experience'),
+            _buildIntegrityBrandingCard(theme),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Sub-heading inside Advanced, so one long section still scans.
+  Widget _advancedGroup(ThemeData theme, String label) => Padding(
+        padding: const EdgeInsets.only(top: 24, bottom: 12),
+        child: Text(
+          label.toUpperCase(),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.primary,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
+          ),
+        ),
+      );
+
+  /// Advanced values that differ from the defaults.
+  ///
+  /// Drives both the collapsed summary and whether the section opens on an EDIT:
+  /// a recruiter reopening an interview they customised must not have those
+  /// choices hidden behind a collapsed header.
+  List<String> get _advancedDifferences {
+    final changed = <String>[];
+    if (_language != 'English') changed.add(_language);
+    if (_durationMinutes != 15) changed.add('$_durationMinutes min');
+    if (_collectResume) changed.add('resume required');
+    if (_type == InterviewType.chat && !_detectTabSwitch) {
+      changed.add('proctoring off');
+    }
+    if (_welcomeController.text.trim().isNotEmpty) changed.add('welcome message');
+    return changed;
+  }
+
+  String get _advancedSummary {
+    final changed = _advancedDifferences;
+    if (changed.isEmpty) {
+      return 'Using defaults — English, 15 min, standard prompt';
+    }
+    return 'Changed: ${changed.join(' · ')}';
+  }
+
+  Widget _buildIntegrityBrandingCard(ThemeData theme) {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           CustomToggle(
@@ -1468,8 +1583,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             controller: _welcomeController,
             maxLines: 3,
           ),
-        ],
-      ),
+      ],
     );
   }
 

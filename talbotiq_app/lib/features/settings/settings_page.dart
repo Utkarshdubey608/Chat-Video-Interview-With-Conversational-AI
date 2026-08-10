@@ -3,16 +3,24 @@ import 'package:flutter/material.dart';
 import 'package:talbotiq/shared/widgets/apple_ui.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/guide/mimic_guide_page.dart';
-import 'package:talbotiq/features/settings/sections/session_setup_section.dart';
-import 'package:talbotiq/features/settings/sections/recording_storage_section.dart';
-import 'package:talbotiq/features/settings/sections/webhook_section.dart';
-import 'package:talbotiq/features/settings/sections/mailer_section.dart';
 import 'package:talbotiq/features/settings/sections/appearance_section.dart';
+import 'package:talbotiq/features/settings/sections/my_recordings_section.dart';
+import 'package:talbotiq/features/settings/sections/service_status_section.dart';
 
-/// Settings shell. Keeps this file small: an Apple-style large title, a category
-/// navigator (sidebar rail on wide screens, scrollable pills on narrow) and the
-/// active category section. Each category lives in its own file under
-/// `views/settings/` and owns its own controllers + Save action.
+/// Settings shell: an Apple-style large title, a category navigator (sidebar rail
+/// on wide screens, scrollable pills on narrow) and the active category section.
+///
+/// Deliberately small, and DIFFERENT PER ROLE. Nothing here configures the
+/// platform: every credential and every piece of org infrastructure (vendor API
+/// keys, the S3 recording destination, mail delivery, Tavus session properties)
+/// lives in the backend environment. What is left is what genuinely belongs to
+/// the person holding the device.
+///
+///   candidate — how the app looks, and the interview audio kept on their phone
+///   recruiter — how the app looks, and whether the server's AI features are up
+///
+/// Before adding a category, ask whether a user could get it wrong in a way that
+/// breaks an interview. If so it belongs on the server.
 class SettingsPage extends StatefulWidget {
   /// Which account type is viewing Settings.
   final AppRole role;
@@ -26,27 +34,29 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   int _category = 0;
 
-  // Category metadata; index maps 1:1 to the sections kept alive below.
-  //
-  // There is no "API Credentials" category: vendor keys live in the backend
-  // environment and are not user-editable. `GET /health` is what reports which
-  // AI features are available.
-  static const List<_CategoryMeta> _categories = [
-    _CategoryMeta('Session Setup', Icons.tune, Color(0xFF6366F1)),
-    _CategoryMeta('Recording & Storage', Icons.videocam_outlined, Color(0xFFEF4444)),
-    _CategoryMeta('Webhook', Icons.webhook_outlined, Color(0xFFA855F7)),
-    _CategoryMeta('Candidate Emails', Icons.mail_outline, Color(0xFF10B981)),
-    _CategoryMeta('Appearance', Icons.palette_outlined, Color(0xFFF59E0B)),
-  ];
+  bool get _isRecruiter => widget.role == AppRole.recruiter;
 
-  // The live section widgets, kept alive so unsaved edits survive switching.
-  late final List<Widget> _sections = [
-    const SessionSetupSection(),
-    const RecordingStorageSection(),
-    const WebhookSection(),
-    const MailerSection(),
-    const AppearanceSection(),
-  ];
+  // Categories, paired with their section widget so the two lists can never
+  // drift out of index alignment.
+  late final List<_Category> _items = _isRecruiter
+      ? const [
+          _Category('Appearance', Icons.palette_outlined, Color(0xFFF59E0B),
+              AppearanceSection()),
+          _Category('Service Status', Icons.dns_outlined, Color(0xFF0EA5E9),
+              ServiceStatusSection()),
+        ]
+      : const [
+          _Category('Appearance', Icons.palette_outlined, Color(0xFFF59E0B),
+              AppearanceSection()),
+          _Category('My Recordings', Icons.mic_none_outlined, Color(0xFFEF4444),
+              MyRecordingsSection()),
+        ];
+
+  List<_Category> get _categories => _items;
+
+  // Kept alive so state survives switching category.
+  List<Widget> get _sections =>
+      _items.map((c) => c.section).toList(growable: false);
 
   @override
   Widget build(BuildContext context) {
@@ -251,10 +261,13 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-// Label + icon + accent colour for one settings category.
-class _CategoryMeta {
+/// One settings category: its label, icon, accent colour, and the widget it
+/// shows. Bundling the section with its metadata is what stops the label list
+/// and the widget list from drifting out of alignment.
+class _Category {
   final String label;
   final IconData icon;
   final Color color;
-  const _CategoryMeta(this.label, this.icon, this.color);
+  final Widget section;
+  const _Category(this.label, this.icon, this.color, this.section);
 }

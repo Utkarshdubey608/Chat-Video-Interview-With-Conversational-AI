@@ -16,7 +16,6 @@ import 'package:talbotiq/shared/widgets/response_widgets.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_modals.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_loading_view.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/ats_assessment_card.dart';
-import 'package:talbotiq/features/interviews/candidate/results/widgets/facial_analysis_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/dimension_scores_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/strengths_watchpoints_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_stats_widgets.dart';
@@ -291,25 +290,6 @@ class _ResultsPageState extends State<ResultsPage> {
     });
 
     try {
-      // Use the pre-call facefit capture when present; otherwise a neutral
-      // placeholder (facefit skipped / camera unavailable).
-      final summary = store.facialSummary ??
-          FacialSessionSummary(
-            totalFrames: 0,
-            usableFrames: 0,
-            usableFramePercent: 0.0,
-            perQuestion: [],
-            sessionDominantEmotions: [],
-            sessionAvgAttention: 0.0,
-            sessionAvgSmile: 0.0,
-            overallLookingAwayPercent: 0.0,
-            dataQuality: 'insufficient',
-            dataQualityNote: 'Facefit was not captured',
-            integrityFlags: [],
-            engagementFlags: [],
-            concernFlags: [],
-          );
-
       final scorecard = await geminiService.analyze(
         candidateName:
             (store.currentConversation?.conversationName ?? 'Candidate')
@@ -322,7 +302,6 @@ class _ResultsPageState extends State<ResultsPage> {
         questions: store.questions,
         wpm: store.wpm,
         totalFillers: store.fillers,
-        facialSummary: summary,
         transcriptSource: _transcriptSource,
       );
 
@@ -882,9 +861,6 @@ class _ResultsPageState extends State<ResultsPage> {
                     const SizedBox(height: 24),
 
                     _buildTranscriptCard(context, store),
-                    const SizedBox(height: 24),
-
-                    FacialAnalysisPanel(summary: store.facialSummary),
                     const SizedBox(height: 24),
 
                     _buildRecruiterActions(

@@ -16,18 +16,20 @@
 // Styling follows the recruiter analytics design language via the shared
 // primitives in recruiter_ui.dart, so the page is theme-correct in both light
 // and dark modes.
+//
+// This file is the LIST only. One attempt's report lives in
+// practice/practice_report_page.dart, and the date/duration formatting both
+// screens share is in practice/practice_formatters.dart.
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/shared/widgets/response_widgets.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
-import 'package:talbotiq/features/interviews/candidate/results/widgets/strengths_watchpoints_panel.dart';
+import 'package:talbotiq/features/interviews/candidate/practice/practice_formatters.dart';
+import 'package:talbotiq/features/interviews/candidate/practice/practice_report_page.dart';
 
 class PracticeHistoryPage extends StatelessWidget {
   const PracticeHistoryPage({super.key});
@@ -160,7 +162,7 @@ class _AttemptTile extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => PracticeAttemptDetailPage(result: result),
+          builder: (_) => PracticeReportPage(result: result),
         ),
       ),
       child: Column(
@@ -273,235 +275,3 @@ class _AttemptTile extends StatelessWidget {
 /// Read-only view of one stored attempt: the AI scorecard, strengths /
 /// watch-points, speech metrics and the transcript. Re-renders what was
 /// generated when the interview first ran — it never calls Gemini again.
-class PracticeAttemptDetailPage extends StatelessWidget {
-  final InterviewResult result;
-  const PracticeAttemptDetailPage({super.key, required this.result});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final sc = result.scorecard;
-    final color = scoreColor(context, result.score);
-
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      appBar: AppBar(title: const Text('Practice Report')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 860),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                RecruiterPageHeader(
-                  kicker: 'Practice attempt',
-                  title: result.name.isEmpty ? 'Practice interview' : result.name,
-                  subtitle: formatAttemptDate(result.createdAt),
-                ),
-                const SizedBox(height: 20),
-                const RecruiterSectionTitle('Overview'),
-                const SizedBox(height: 12),
-                RecruiterResponsiveGrid(
-                  children: [
-                    RecruiterStatCard(
-                      icon: Icons.speed_rounded,
-                      label: 'Overall score',
-                      value: result.score > 0 ? '${result.score}' : '—',
-                      footnote: 'out of 100',
-                      color: color,
-                    ),
-                    RecruiterStatCard(
-                      icon: Icons.how_to_reg_outlined,
-                      label: 'Recommendation',
-                      value: (sc?.hiringRecommendation.isNotEmpty ?? false)
-                          ? sc!.hiringRecommendation
-                          : '—',
-                      color: color,
-                    ),
-                    RecruiterStatCard(
-                      icon: Icons.schedule_outlined,
-                      label: 'Duration',
-                      value: formatAttemptDuration(result.transcript),
-                    ),
-                    RecruiterStatCard(
-                      icon: Icons.record_voice_over_outlined,
-                      label: 'Speaking pace',
-                      value: '${result.wpm}',
-                      footnote: '${result.fillers} filler words',
-                    ),
-                  ],
-                ),
-                if (sc != null) ...[
-                  const SizedBox(height: 28),
-                  const RecruiterSectionTitle('Assessment'),
-                  const SizedBox(height: 12),
-                  _assessmentPanel(context, sc, color),
-                  if (sc.topStrengths.isNotEmpty ||
-                      sc.topConcerns.isNotEmpty) ...[
-                    const SizedBox(height: 28),
-                    const RecruiterSectionTitle('Strengths & watch-points'),
-                    const SizedBox(height: 12),
-                    StrengthsWatchpointsPanel(
-                      strengths: sc.topStrengths,
-                      watchPoints: sc.topConcerns,
-                    ),
-                  ],
-                ] else ...[
-                  const SizedBox(height: 28),
-                  RecruiterPanel(
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline,
-                            color: warningColor(context), size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'No AI report was generated for this attempt — '
-                            'scoring may have failed or the answers were too '
-                            'short to assess.',
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                if (result.transcript.isNotEmpty) ...[
-                  const SizedBox(height: 28),
-                  const RecruiterSectionTitle('Transcript'),
-                  const SizedBox(height: 12),
-                  _transcriptPanel(context),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _assessmentPanel(
-      BuildContext context, ATSScorecard sc, Color color) {
-    final theme = Theme.of(context);
-    return RecruiterPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              CircularScoreRing(
-                score: result.score,
-                verdict: sc.overallFitLabel,
-              ),
-              const SizedBox(width: 20),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'OVERALL FIT',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      sc.overallFitScore != null
-                          ? '${sc.overallFitScore} / 100'
-                          : '—',
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.5,
-                        color: color,
-                      ),
-                    ),
-                    if (sc.overallFitLabel.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      RecruiterBadge(text: sc.overallFitLabel, color: color),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (sc.hiringRecommendationRationale.trim().isNotEmpty) ...[
-            const SizedBox(height: 20),
-            Text(sc.hiringRecommendationRationale,
-                style: theme.textTheme.bodyMedium),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _transcriptPanel(BuildContext context) {
-    // Excludes Tavus-injected config turns persisted before the
-    // parse-time filter existed (see isNonDialogueTurn).
-    final turns = result.transcript
-        .where((e) => !isNonDialogueTurn(e.text))
-        .toList();
-    return RecruiterPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (int i = 0; i < turns.length; i++) ...[
-            if (i > 0) const SizedBox(height: 12),
-            _turn(context, turns[i]),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _turn(BuildContext context, TranscriptEntry e) {
-    final theme = Theme.of(context);
-    final isCandidate = e.role == 'candidate';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          isCandidate ? 'You' : 'Interviewer',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: isCandidate
-                ? theme.colorScheme.primary
-                : theme.colorScheme.secondary,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(e.text, style: theme.textTheme.bodyMedium),
-      ],
-    );
-  }
-}
-
-// ── Shared formatting ────────────────────────────────────────────────────────
-
-/// "12 Mar 2026, 14:05" from an ISO-8601 string; falls back to the raw value.
-String formatAttemptDate(String iso) {
-  final dt = DateTime.tryParse(iso);
-  if (dt == null) return iso;
-  return DateFormat('d MMM yyyy, HH:mm').format(dt.toLocal());
-}
-
-/// Attempt length derived from the transcript's first→last timestamps.
-/// InterviewResult stores no duration, and the entries carry epoch-ms stamps,
-/// so this is the only signal available for a completed attempt.
-String formatAttemptDuration(List<TranscriptEntry> transcript) {
-  if (transcript.length < 2) return '—';
-  var min = transcript.first.timestamp;
-  var max = transcript.first.timestamp;
-  for (final e in transcript) {
-    if (e.timestamp < min) min = e.timestamp;
-    if (e.timestamp > max) max = e.timestamp;
-  }
-  final secs = ((max - min) / 1000).round();
-  if (secs <= 0) return '—';
-  if (secs >= 3600) return '${secs ~/ 3600}h ${(secs % 3600) ~/ 60}m';
-  if (secs >= 60) return '${secs ~/ 60}m ${secs % 60}s';
-  return '${secs}s';
-}

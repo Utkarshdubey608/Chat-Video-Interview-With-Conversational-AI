@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:talbotiq/firebase_options.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
@@ -68,6 +69,8 @@ void main() async {
         ChangeNotifierProvider.value(value: recruiterStore),
         Provider<AuthService>(create: (_) => AuthService()),
         Provider<InterviewRepository>(create: (_) => InterviewRepository()),
+        // Shared so a refresh on one screen is visible on all of them.
+        ChangeNotifierProvider(create: (_) => AvatarCatalog()),
       ],
       child: const MyApp(),
     ),

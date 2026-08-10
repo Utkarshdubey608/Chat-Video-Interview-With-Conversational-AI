@@ -3,13 +3,15 @@
 // Recruiter-side: view the Tavus replicas (avatars) available on the configured
 // account, grouped into custom vs stock, with status and training progress.
 // READ-ONLY management surface over the EXISTING, unmodified
-// `tavusService.listReplicas()`. It does not touch the Tavus service or any
+// the shared `AvatarCatalog` (cached 10h; Refresh forces a refetch). It does
+// not touch any
 // interview code.
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 
-import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 
@@ -31,25 +33,29 @@ class _ReplicasPageState extends State<ReplicasPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
-  Future<void> _load() async {
+  /// Cached read. The catalog only hits Tavus when its 10-hour window has
+  /// elapsed, so re-opening this page costs nothing.
+  Future<void> _load() async => _run(() => _catalog.ensureLoaded());
+
+  /// Explicit user action — always refetches.
+  Future<void> _refresh() async => _run(() => _catalog.refresh());
+
+  AvatarCatalog get _catalog => context.read<AvatarCatalog>();
+
+  Future<void> _run(Future<void> Function() action) async {
     setState(() {
       _loading = true;
       _error = null;
     });
-    try {
-      final list = await tavusService.listReplicas();
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _replicas = list;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString().replaceAll('Exception: ', '');
-      });
-    }
+    await action();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _replicas = _catalog.replicas;
+      // The catalog keeps serving cached data on a failed fetch, so only report
+      // an error when there is genuinely nothing to show.
+      _error = _replicas.isEmpty ? _catalog.error : null;
+    });
   }
 
   bool _isStock(TavusReplica r) =>
@@ -65,7 +71,7 @@ class _ReplicasPageState extends State<ReplicasPage> {
           IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _load,
+            onPressed: _loading ? null : _refresh,
           ),
           const SizedBox(width: 4),
         ],

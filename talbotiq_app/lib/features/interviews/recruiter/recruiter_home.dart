@@ -204,16 +204,6 @@ class _RecruiterHomeState extends State<RecruiterHome> {
                   builder: (_) => const RecruiterLibraryPage()),
             ),
           ),
-          IconButton(
-            tooltip: 'Rebuild test list',
-            icon: _backfilling
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.sync),
-            onPressed: _backfilling ? null : () => _runBackfill(),
-          ),
           const LogoutButton(),
           const SizedBox(width: 4),
         ],

@@ -202,58 +202,14 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final countLabel =
-        _total >= 0 ? '$_total candidate(s)' : 'every candidate';
 
-    final ctrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return StatefulBuilder(
-          builder: (ctx, setLocal) => AlertDialog(
-            title: const Text('Delete entire test?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'This permanently deletes "${widget.test.title}" and the '
-                  'assignments, answers and AI reports of $countLabel who took '
-                  'it. This cannot be undone.',
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                Text('Type DELETE to confirm',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: ctrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(isDense: true),
-                  onChanged: (_) => setLocal(() {}),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: ctrl.text.trim().toUpperCase() == 'DELETE'
-                    ? () => Navigator.pop(ctx, true)
-                    : null,
-                child: Text('Delete test',
-                    style: TextStyle(color: theme.colorScheme.error)),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (ctx) => _DeleteTestDialog(
+        title: widget.test.title,
+        countLabel: _total >= 0 ? '$_total candidate(s)' : 'every candidate',
+      ),
     );
-    ctrl.dispose();
     if (ok != true) return;
 
     try {
@@ -956,6 +912,101 @@ class _StatusChip extends StatelessWidget {
         style: TextStyle(
             fontSize: 11, fontWeight: FontWeight.w600, color: bg),
       ),
+    );
+  }
+}
+
+/// Type-to-confirm dialog for deleting an entire test.
+///
+/// A StatefulWidget rather than a `StatefulBuilder` + local controller so the
+/// TextEditingController's lifetime matches the dialog's. The previous version
+/// called `ctrl.dispose()` on the line after `showDialog` returned — which is
+/// BEFORE the dialog's exit transition finishes, so the still-mounted TextField
+/// was left holding a disposed controller. That surfaced as a framework
+/// assertion (`_dependents.isEmpty`) rather than anything that pointed here.
+///
+/// The content also scrolls: `autofocus: true` raises the keyboard immediately,
+/// and an AlertDialog does not scroll its content by default, so on a phone the
+/// column had nowhere to go.
+class _DeleteTestDialog extends StatefulWidget {
+  const _DeleteTestDialog({required this.title, required this.countLabel});
+
+  final String title;
+  final String countLabel;
+
+  @override
+  State<_DeleteTestDialog> createState() => _DeleteTestDialogState();
+}
+
+class _DeleteTestDialogState extends State<_DeleteTestDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuilds to enable/disable the destructive action as they type.
+    _controller.addListener(_onChanged);
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool get _confirmed => _controller.text.trim().toUpperCase() == 'DELETE';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Delete entire test?'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This permanently deletes "${widget.title}" and the assignments, '
+              'answers and AI reports of ${widget.countLabel} who took it. '
+              'This cannot be undone.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Type DELETE to confirm',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: const InputDecoration(isDense: true),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) {
+                if (_confirmed) Navigator.pop(context, true);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _confirmed ? () => Navigator.pop(context, true) : null,
+          child: Text(
+            'Delete test',
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
+      ],
     );
   }
 }

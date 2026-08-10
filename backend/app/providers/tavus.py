@@ -13,6 +13,17 @@ import asyncio
 
 from app.providers.base import ProviderClient
 
+# Properties a caller may never set. These decide WHERE the org's recording is
+# written and WHETHER it happens at all — infrastructure, and billable. A client
+# that could set `recording_s3_bucket_name` would have the org's AWS assume-role
+# write into a bucket of its choosing.
+_LOCKED_PROPERTIES = frozenset({
+    "enable_recording",
+    "recording_s3_bucket_name",
+    "recording_s3_bucket_region",
+    "aws_assume_role_arn",
+})
+
 
 class TavusClient(ProviderClient):
     name = "Tavus"
@@ -67,7 +78,52 @@ class TavusClient(ProviderClient):
 
     # --- conversations -------------------------------------------------------
     async def create_conversation(self, payload: dict) -> dict:
-        return await self.request("POST", "/conversations", json=payload)
+        """Start a conversation, applying the org's server-side defaults.
+
+        The caller supplies what is genuinely per-interview (replica, persona,
+        context, greeting, duration, language). Recording destination and the
+        session timeouts are org infrastructure and are merged in here, so a
+        client can neither set nor see them.
+
+        Caller-supplied properties win where they overlap, so the interview's own
+        duration is not overwritten by a global default — EXCEPT for the
+        infrastructure fields in `_LOCKED_PROPERTIES`, where the server always
+        wins. Without that exception a client could point recording at a bucket
+        it controls and have the org's AWS role write there.
+        """
+        body = dict(payload)
+        defaults = self._default_properties()
+        caller = {
+            k: v
+            for k, v in (body.get("properties") or {}).items()
+            if k not in _LOCKED_PROPERTIES
+        }
+        body["properties"] = {**defaults, **caller}
+        return await self.request("POST", "/conversations", json=body)
+
+    def _default_properties(self) -> dict:
+        settings = self.settings
+        props: dict = {
+            "participant_left_timeout": settings.tavus_participant_left_timeout,
+            "participant_absent_timeout": settings.tavus_participant_absent_timeout,
+            "enable_transcription": settings.tavus_enable_transcription,
+            "enable_recording": settings.tavus_enable_recording,
+        }
+
+        # Only meaningful when recording is on, and only when a destination is
+        # actually configured — Tavus rejects a partial S3 target.
+        if settings.tavus_enable_recording:
+            bucket = settings.tavus_recording_s3_bucket.strip()
+            region = settings.tavus_recording_s3_region.strip()
+            role = settings.tavus_aws_assume_role_arn.strip()
+            if bucket:
+                props["recording_s3_bucket_name"] = bucket
+            if region:
+                props["recording_s3_bucket_region"] = region
+            if role:
+                props["aws_assume_role_arn"] = role
+
+        return props
 
     async def get_conversation(self, conversation_id: str, *, verbose: bool = False) -> dict:
         return await self.request(

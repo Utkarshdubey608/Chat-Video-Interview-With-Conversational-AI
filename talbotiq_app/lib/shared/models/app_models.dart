@@ -110,9 +110,6 @@ class ConversationProperties {
   final bool enableRecording;
   final bool enableTranscription;
   final String language;
-  final String recordingS3BucketName;
-  final String recordingS3BucketRegion;
-  final String awsAssumeRoleArn;
   final bool applyConversationOverride;
   final bool applyGreenscreen;
   final String backgroundUrl;
@@ -125,9 +122,6 @@ class ConversationProperties {
     this.enableRecording = false,
     this.enableTranscription = true,
     this.language = 'English',
-    this.recordingS3BucketName = '',
-    this.recordingS3BucketRegion = '',
-    this.awsAssumeRoleArn = '',
     this.applyConversationOverride = false,
     this.applyGreenscreen = false,
     this.backgroundUrl = '',
@@ -142,9 +136,6 @@ class ConversationProperties {
       enableRecording: json['enable_recording'] ?? false,
       enableTranscription: json['enable_transcription'] ?? true,
       language: json['language'] ?? 'English',
-      recordingS3BucketName: json['recording_s3_bucket_name'] ?? '',
-      recordingS3BucketRegion: json['recording_s3_bucket_region'] ?? '',
-      awsAssumeRoleArn: json['aws_assume_role_arn'] ?? '',
       applyConversationOverride: json['apply_conversation_override'] ?? false,
       applyGreenscreen: json['apply_greenscreen'] ?? false,
       backgroundUrl: json['background_url'] ?? '',
@@ -159,9 +150,6 @@ class ConversationProperties {
     'enable_recording': enableRecording,
     'enable_transcription': enableTranscription,
     if (language != 'English') 'language': language,
-    if (recordingS3BucketName.isNotEmpty) 'recording_s3_bucket_name': recordingS3BucketName,
-    if (recordingS3BucketRegion.isNotEmpty) 'recording_s3_bucket_region': recordingS3BucketRegion,
-    if (awsAssumeRoleArn.isNotEmpty) 'aws_assume_role_arn': awsAssumeRoleArn,
     'apply_conversation_override': applyConversationOverride,
     'apply_greenscreen': applyGreenscreen,
     if (applyGreenscreen && backgroundUrl.isNotEmpty) 'background_url': backgroundUrl,
@@ -251,9 +239,6 @@ class DraftForm {
   final String backgroundUrl;
   final String language;
   final String pipelineMode;
-  final String recordingS3BucketName;
-  final String recordingS3BucketRegion;
-  final String awsAssumeRoleArn;
 
   DraftForm({
     required this.replicaId,
@@ -272,9 +257,6 @@ class DraftForm {
     required this.backgroundUrl,
     required this.language,
     required this.pipelineMode,
-    required this.recordingS3BucketName,
-    required this.recordingS3BucketRegion,
-    required this.awsAssumeRoleArn,
   });
 
   factory DraftForm.fromJson(Map<String, dynamic> json) {
@@ -295,9 +277,6 @@ class DraftForm {
       backgroundUrl: json['background_url'] ?? '',
       language: json['language'] ?? 'English',
       pipelineMode: json['pipeline_mode'] ?? 'full',
-      recordingS3BucketName: json['recording_s3_bucket_name'] ?? '',
-      recordingS3BucketRegion: json['recording_s3_bucket_region'] ?? '',
-      awsAssumeRoleArn: json['aws_assume_role_arn'] ?? '',
     );
   }
 
@@ -318,9 +297,6 @@ class DraftForm {
     'background_url': backgroundUrl,
     'language': language,
     'pipeline_mode': pipelineMode,
-    'recording_s3_bucket_name': recordingS3BucketName,
-    'recording_s3_bucket_region': recordingS3BucketRegion,
-    'aws_assume_role_arn': awsAssumeRoleArn,
   };
 
   // Sensible starting values for a fresh interview session config.
@@ -342,9 +318,6 @@ class DraftForm {
         backgroundUrl: '',
         language: 'English',
         pipelineMode: 'full',
-        recordingS3BucketName: '',
-        recordingS3BucketRegion: '',
-        awsAssumeRoleArn: '',
       );
 
   // Returns a copy with only the provided fields overridden. Lets each
@@ -366,9 +339,6 @@ class DraftForm {
     String? backgroundUrl,
     String? language,
     String? pipelineMode,
-    String? recordingS3BucketName,
-    String? recordingS3BucketRegion,
-    String? awsAssumeRoleArn,
   }) {
     return DraftForm(
       replicaId: replicaId ?? this.replicaId,
@@ -391,11 +361,6 @@ class DraftForm {
       backgroundUrl: backgroundUrl ?? this.backgroundUrl,
       language: language ?? this.language,
       pipelineMode: pipelineMode ?? this.pipelineMode,
-      recordingS3BucketName:
-          recordingS3BucketName ?? this.recordingS3BucketName,
-      recordingS3BucketRegion:
-          recordingS3BucketRegion ?? this.recordingS3BucketRegion,
-      awsAssumeRoleArn: awsAssumeRoleArn ?? this.awsAssumeRoleArn,
     );
   }
 }
@@ -865,143 +830,5 @@ class ATSScorecard {
     'analysisTimestamp': analysisTimestamp,
     'geminiModel': geminiModel,
     'inputDataQuality': inputDataQuality,
-  };
-}
-
-// ── AWS Rekognition Facial Session Summary ──
-class QuestionFacialSummary {
-  final int questionIdx;
-  final int frameCount;
-  final int usableFrameCount;
-  final List<Map<String, dynamic>> dominantEmotions;
-  final double avgAttentionScore;
-  final double avgSmileScore;
-  final int lookingAwayCount;
-  final double lookingAwayPercent;
-  final int eyesClosedCount;
-  final double mouthOpenAvg;
-  final double headPoseVariance;
-  final String qualityNote;
-
-  QuestionFacialSummary({
-    required this.questionIdx,
-    required this.frameCount,
-    required this.usableFrameCount,
-    required this.dominantEmotions,
-    required this.avgAttentionScore,
-    required this.avgSmileScore,
-    required this.lookingAwayCount,
-    required this.lookingAwayPercent,
-    required this.eyesClosedCount,
-    required this.mouthOpenAvg,
-    required this.headPoseVariance,
-    required this.qualityNote,
-  });
-
-  factory QuestionFacialSummary.fromJson(Map<String, dynamic> json) {
-    return QuestionFacialSummary(
-      questionIdx: json['questionIdx'] ?? 0,
-      frameCount: json['frameCount'] ?? 0,
-      usableFrameCount: json['usableFrameCount'] ?? 0,
-      dominantEmotions: (json['dominantEmotions'] as List?)
-              ?.map((e) => Map<String, dynamic>.from(e))
-              .toList() ??
-          [],
-      avgAttentionScore: (json['avgAttentionScore'] as num?)?.toDouble() ?? 0.0,
-      avgSmileScore: (json['avgSmileScore'] as num?)?.toDouble() ?? 0.0,
-      lookingAwayCount: json['lookingAwayCount'] ?? 0,
-      lookingAwayPercent: (json['lookingAwayPercent'] as num?)?.toDouble() ?? 0.0,
-      eyesClosedCount: json['eyesClosedCount'] ?? 0,
-      mouthOpenAvg: (json['mouthOpenAvg'] as num?)?.toDouble() ?? 0.0,
-      headPoseVariance: (json['headPoseVariance'] as num?)?.toDouble() ?? 0.0,
-      qualityNote: json['qualityNote'] ?? '',
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'questionIdx': questionIdx,
-    'frameCount': frameCount,
-    'usableFrameCount': usableFrameCount,
-    'dominantEmotions': dominantEmotions,
-    'avgAttentionScore': avgAttentionScore,
-    'avgSmileScore': avgSmileScore,
-    'lookingAwayCount': lookingAwayCount,
-    'lookingAwayPercent': lookingAwayPercent,
-    'eyesClosedCount': eyesClosedCount,
-    'mouthOpenAvg': mouthOpenAvg,
-    'headPoseVariance': headPoseVariance,
-    'qualityNote': qualityNote,
-  };
-}
-
-class FacialSessionSummary {
-  final int totalFrames;
-  final int usableFrames;
-  final double usableFramePercent;
-  final List<QuestionFacialSummary> perQuestion;
-  final List<Map<String, dynamic>> sessionDominantEmotions;
-  final double sessionAvgAttention;
-  final double sessionAvgSmile;
-  final double overallLookingAwayPercent;
-  final String dataQuality; // 'high' | 'medium' | 'low' | 'insufficient'
-  final String dataQualityNote;
-  final List<String> integrityFlags;
-  final List<String> engagementFlags;
-  final List<String> concernFlags;
-
-  FacialSessionSummary({
-    required this.totalFrames,
-    required this.usableFrames,
-    required this.usableFramePercent,
-    required this.perQuestion,
-    required this.sessionDominantEmotions,
-    required this.sessionAvgAttention,
-    required this.sessionAvgSmile,
-    required this.overallLookingAwayPercent,
-    required this.dataQuality,
-    required this.dataQualityNote,
-    required this.integrityFlags,
-    required this.engagementFlags,
-    required this.concernFlags,
-  });
-
-  factory FacialSessionSummary.fromJson(Map<String, dynamic> json) {
-    return FacialSessionSummary(
-      totalFrames: json['totalFrames'] ?? 0,
-      usableFrames: json['usableFrames'] ?? 0,
-      usableFramePercent: (json['usableFramePercent'] as num?)?.toDouble() ?? 0.0,
-      perQuestion: (json['perQuestion'] as List?)
-              ?.map((e) => QuestionFacialSummary.fromJson(e))
-              .toList() ??
-          [],
-      sessionDominantEmotions: (json['sessionDominantEmotions'] as List?)
-              ?.map((e) => Map<String, dynamic>.from(e))
-              .toList() ??
-          [],
-      sessionAvgAttention: (json['sessionAvgAttention'] as num?)?.toDouble() ?? 0.0,
-      sessionAvgSmile: (json['sessionAvgSmile'] as num?)?.toDouble() ?? 0.0,
-      overallLookingAwayPercent: (json['overallLookingAwayPercent'] as num?)?.toDouble() ?? 0.0,
-      dataQuality: json['dataQuality'] ?? 'insufficient',
-      dataQualityNote: json['dataQualityNote'] ?? '',
-      integrityFlags: List<String>.from(json['integrityFlags'] ?? []),
-      engagementFlags: List<String>.from(json['engagementFlags'] ?? []),
-      concernFlags: List<String>.from(json['concernFlags'] ?? []),
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'totalFrames': totalFrames,
-    'usableFrames': usableFrames,
-    'usableFramePercent': usableFramePercent,
-    'perQuestion': perQuestion.map((e) => e.toJson()).toList(),
-    'sessionDominantEmotions': sessionDominantEmotions,
-    'sessionAvgAttention': sessionAvgAttention,
-    'sessionAvgSmile': sessionAvgSmile,
-    'overallLookingAwayPercent': overallLookingAwayPercent,
-    'dataQuality': dataQuality,
-    'dataQualityNote': dataQualityNote,
-    'integrityFlags': integrityFlags,
-    'engagementFlags': engagementFlags,
-    'concernFlags': concernFlags,
   };
 }

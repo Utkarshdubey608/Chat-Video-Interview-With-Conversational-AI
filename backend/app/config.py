@@ -82,6 +82,20 @@ class Settings(BaseSettings):
     # session, and a tight cap limits what a misused preview token can cost.
     gemini_preview_session_minutes: int = 2
 
+    # --- Tavus conversation defaults ---
+    # Org infrastructure, applied when the backend creates a conversation. These
+    # were text fields in the app's Settings — an AWS assume-role ARN typed on a
+    # phone — and are server-side for the same reason the API keys are.
+    tavus_enable_recording: bool = False
+    tavus_recording_s3_bucket: str = ""
+    tavus_recording_s3_region: str = ""
+    tavus_aws_assume_role_arn: str = ""
+    # Session properties the app used to expose globally. Sensible defaults; the
+    # per-interview values (duration, language) still come from the interview.
+    tavus_participant_left_timeout: int = 60
+    tavus_participant_absent_timeout: int = 300
+    tavus_enable_transcription: bool = True
+
     # --- Rate limiting (per user, per worker) ---
     # Auth proves a caller is a real user; these bound how much one user can
     # spend. In-process counters — see app/ratelimit.py for the caveats.

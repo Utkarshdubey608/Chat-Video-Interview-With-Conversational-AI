@@ -63,7 +63,6 @@ class GeminiService {
     required List<String> questions,
     required int wpm,
     required int totalFillers,
-    required FacialSessionSummary? facialSummary,
     // 'tavus' | 'deepgram' | null (unknown) — which pipeline actually
     // produced [transcript], so the prompt can name the real ASR source
     // instead of a hardcoded one that may not match what was used.
@@ -123,7 +122,6 @@ class GeminiService {
       totalFillers: totalFillers,
       fillerRate: overallFillerRate,
       questionInputs: questionInputs,
-      facialSummary: facialSummary,
       transcriptSource: transcriptSource,
     );
 
@@ -210,7 +208,6 @@ class GeminiService {
     required int totalFillers,
     required double fillerRate,
     required List<Map<String, dynamic>> questionInputs,
-    required FacialSessionSummary? facialSummary,
     required String? transcriptSource,
   }) {
     final String asrSourceLabel = switch (transcriptSource) {
@@ -229,39 +226,6 @@ Filler words detected: ${q['fillerCount']} (${(q['fillerWords'] as List).join(',
 ''';
     }).join('\n');
 
-    final f = facialSummary;
-    final facialSection = f != null && f.dataQuality != 'insufficient'
-        ? '''
----
-FACIAL ANALYSIS DATA (AWS Rekognition — ${f.dataQuality} quality):
-Data quality note: ${f.dataQualityNote}
-Frames: ${f.usableFrames} usable of ${f.totalFrames} captured
-
-IMPORTANT: Facial data is SUPPLEMENTARY only. Never override voice/transcript findings with facial
-data alone. If facial data quality is "low", reduce its weight accordingly.
-
-Session facial overview:
-- Average camera attention: ${(f.sessionAvgAttention * 100).toStringAsFixed(1)}%
-- Looking away from camera: ${f.overallLookingAwayPercent.toStringAsFixed(1)}% of frames
-- Dominant facial emotions: ${f.sessionDominantEmotions.map((e) => '${e['type']} (${(((e['avgConfidence'] ?? e['confidence']) as num?) ?? 0).toStringAsFixed(1)}%)').join(', ')}
-
-Per-question facial signals:
-${f.perQuestion.map((q) => '  Q${q.questionIdx + 1}: ${q.usableFrameCount} usable frames — attention ${(q.avgAttentionScore * 100).toStringAsFixed(0)}%, looking away ${q.lookingAwayPercent.toStringAsFixed(0)}%, dominant facial emotion ${q.dominantEmotions.isNotEmpty ? '${q.dominantEmotions[0]['type']} (${(((q.dominantEmotions[0]['avgConfidence'] ?? q.dominantEmotions[0]['confidence']) as num?) ?? 0).toStringAsFixed(0)}%)' : 'insufficient'}, head variance ${q.headPoseVariance.toStringAsFixed(0)} (>200 notable)').join('\n')}
-
-Facial integrity flags: ${f.integrityFlags.isNotEmpty ? f.integrityFlags.join('; ') : 'none'}
-Facial engagement signals: ${f.engagementFlags.isNotEmpty ? f.engagementFlags.join('; ') : 'none'}
-Facial concern signals: ${f.concernFlags.isNotEmpty ? f.concernFlags.join('; ') : 'none'}
-
-CROSS-VALIDATION RULES:
-- Facial-expression data (Rekognition), where present, is a supporting signal only.
-- Camera attention is an engagement proxy, NOT a measure of honesty.
-- Multiple faces in frame is an integrity flag, NOT proof of cheating.
-'''
-        : '''
----
-FACIAL ANALYSIS: Not available for this session (no camera, permission denied, or proxy not configured). Do not factor facial signals into scoring.
-''';
-
     return '''You are an expert ATS (Applicant Tracking System) analyst. You are analyzing a job interview for the role of "$jobRole".
 
 CRITICAL INSTRUCTIONS — READ BEFORE ANALYZING:
@@ -270,9 +234,9 @@ CRITICAL INSTRUCTIONS — READ BEFORE ANALYZING:
 
 2. TRANSCRIPT IS ASR OUTPUT: The transcript comes from $asrSourceLabel. It is accurate but not infallible — treat oddly-worded fragments as possible transcription artifacts, not as the candidate misspeaking. Do not quote a garbled fragment as if it were a deliberate statement.
 
-3. NO VOCAL-EMOTION DATA: This pipeline provides NO vocal prosody / emotion measurements. Set every emotional dimension's cannotAssess=true rather than inferring a candidate's emotional state from transcript wording — inferred emotion is not evidence.
+3. NO EMOTION OR VISUAL DATA: This pipeline provides NO vocal prosody measurements and NO facial/camera signals. Set every emotional dimension's cannotAssess=true, and never infer a candidate's emotional state, attention or engagement from transcript wording — inferred emotion is not evidence. The transcript is the ONLY observation you have.
 
-4. NO BIAS: Do not factor in name, perceived gender, accent, or any demographic signals. Score only communication quality, answer substance, and observable engagement signals.
+4. NO BIAS: Do not factor in name, perceived gender, accent, or any demographic signals. Score only communication quality and answer substance.
 
 5. EVIDENCE CITATIONS: Every score must cite specific evidence — "The candidate said X" — not vague impressions.
 
@@ -293,10 +257,6 @@ OVERALL FILLERS: $totalFillers (${fillerRate.toStringAsFixed(2)}/min)
 ---
 INTERVIEW Q&A:
 $questionSections
-
----
-FACIAL DATA:
-$facialSection
 
 ---
 FULL TRANSCRIPT (for context):

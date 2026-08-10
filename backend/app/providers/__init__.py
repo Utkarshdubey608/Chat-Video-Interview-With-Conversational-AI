@@ -28,8 +28,13 @@ def readiness(settings: Settings) -> dict[str, bool]:
     This replaces the app's old per-key "Test Connection" buttons: availability is
     reported by the server, never derived from a key the client holds.
     """
+    from app import mailer
+
     return {
         "gemini": bool(settings.gemini_api_key.strip()),
         "tavus": bool(settings.tavus_api_key.strip()),
         "deepgram": bool(settings.deepgram_api_key.strip()),
+        # Not a provider key, but the app's Service Status screen asks the same
+        # question of it: can this feature actually be used right now?
+        "email": mailer.config_hint(settings) is None,
     }

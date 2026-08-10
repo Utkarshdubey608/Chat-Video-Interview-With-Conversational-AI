@@ -279,3 +279,92 @@ def test_the_models_prefix_is_tolerated(client):
         "/api/gemini/generate", params={"model": "models/gemini-2.5-pro"}, json=_contents()
     )
     assert "gemini-2.5-pro:generateContent" in last(client)["url"]
+
+
+# --- Tavus session defaults (org infrastructure, server-side) --------------
+def test_org_defaults_are_merged_into_a_new_conversation(client):
+    """The S3 destination and timeouts used to be text fields in the app."""
+    client.app.state.settings = Settings(
+        _env_file=None,
+        tavus_enable_recording=True,
+        tavus_recording_s3_bucket="acme-interviews",
+        tavus_recording_s3_region="ap-south-1",
+        tavus_aws_assume_role_arn="arn:aws:iam::1:role/tavus",
+        **KEYS,
+    )
+    client.post("/api/tavus/conversations", json={"replica_id": "r1"})
+    props = sent_json(client)["properties"]
+
+    assert props["recording_s3_bucket_name"] == "acme-interviews"
+    assert props["recording_s3_bucket_region"] == "ap-south-1"
+    assert props["aws_assume_role_arn"] == "arn:aws:iam::1:role/tavus"
+    assert props["enable_recording"] is True
+    assert props["participant_absent_timeout"] == 300
+
+
+def test_no_s3_target_is_sent_when_recording_is_off(client):
+    client.app.state.settings = Settings(
+        _env_file=None,
+        tavus_enable_recording=False,
+        tavus_recording_s3_bucket="acme-interviews",
+        **KEYS,
+    )
+    client.post("/api/tavus/conversations", json={"replica_id": "r1"})
+    props = sent_json(client)["properties"]
+    assert props["enable_recording"] is False
+    # A partial S3 target is rejected by Tavus, so send none of it.
+    assert "recording_s3_bucket_name" not in props
+
+
+def test_per_interview_properties_win_over_org_defaults(client):
+    """The interview's own duration must not be clobbered by a global default."""
+    client.post(
+        "/api/tavus/conversations",
+        json={"replica_id": "r1", "properties": {"max_call_duration": 1800}},
+    )
+    props = sent_json(client)["properties"]
+    assert props["max_call_duration"] == 1800
+    # …and the org defaults still arrive alongside it.
+    assert "enable_transcription" in props
+
+
+def test_a_client_cannot_choose_its_own_recording_destination(client):
+    """Recording writes to org storage using the org's AWS role. A client that
+    could pick the bucket would have that role write wherever it liked."""
+    client.app.state.settings = Settings(
+        _env_file=None,
+        tavus_enable_recording=True,
+        tavus_recording_s3_bucket="acme-interviews",
+        **KEYS,
+    )
+    client.post(
+        "/api/tavus/conversations",
+        json={
+            "replica_id": "r1",
+            "properties": {
+                "recording_s3_bucket_name": "attacker-bucket",
+                "aws_assume_role_arn": "arn:aws:iam::999:role/attacker",
+                "enable_recording": False,
+            },
+        },
+    )
+    props = sent_json(client)["properties"]
+    assert props["recording_s3_bucket_name"] == "acme-interviews"
+    # The server has no role ARN configured, so the field must be ABSENT rather
+    # than carrying the caller's — a locked field is dropped, never passed through.
+    assert props.get("aws_assume_role_arn") is None
+    # Nor can a caller silently turn recording off for an org that requires it.
+    assert props["enable_recording"] is True
+
+
+def test_locking_does_not_block_legitimate_per_interview_properties(client):
+    client.post(
+        "/api/tavus/conversations",
+        json={
+            "replica_id": "r1",
+            "properties": {"max_call_duration": 900, "language": "Spanish"},
+        },
+    )
+    props = sent_json(client)["properties"]
+    assert props["max_call_duration"] == 900
+    assert props["language"] == "Spanish"

@@ -355,26 +355,43 @@ class InterviewRepository {
         .where('recruiterId', isEqualTo: recruiterId)
         .where('testId', isEqualTo: testId)
         .get();
-    final docs = q.docs.toList();
+
+    // References, not snapshots: a snapshot from `doc().get()` is a
+    // DocumentSnapshot, NOT a QueryDocumentSnapshot, so collecting snapshots
+    // forced an unsafe downcast on the legacy path below that threw at runtime.
+    final refs = q.docs.map((d) => d.reference).toList();
 
     // Tests created before `testId` was populated group under the interview's
     // OWN id, so that document would not match the query above. Include it, but
     // only after confirming it belongs to this recruiter.
-    if (docs.every((d) => d.id != testId)) {
-      final legacy = await _col.doc(testId).get();
-      if (legacy.exists && legacy.data()?['recruiterId'] == recruiterId) {
-        docs.add(legacy as QueryDocumentSnapshot<Map<String, dynamic>>);
+    if (refs.every((r) => r.id != testId)) {
+      try {
+        final legacy = await _col.doc(testId).get();
+        if (legacy.exists && legacy.data()?['recruiterId'] == recruiterId) {
+          refs.add(legacy.reference);
+        }
+      } on FirebaseException catch (e) {
+        // EXPECTED for every test created since `testId` existed: there is no
+        // interview document at that id, and `firestore.rules` gates reads on
+        // `resource.data.recruiterId` — which cannot be evaluated for a missing
+        // document, so Firestore answers PERMISSION_DENIED rather than handing
+        // back a snapshot with `exists == false`.
+        //
+        // Letting that propagate aborted the whole delete before a single batch
+        // was committed, so "delete test" failed and left everything in place.
+        // Absence of a legacy document is not an error.
+        debugPrint('deleteTest: no legacy doc at $testId (${e.code})');
       }
     }
 
     // Firestore hard-caps a batch at 500 writes; stay well under and commit
     // chunk by chunk.
     const chunk = 400;
-    for (var i = 0; i < docs.length; i += chunk) {
-      final end = (i + chunk < docs.length) ? i + chunk : docs.length;
+    for (var i = 0; i < refs.length; i += chunk) {
+      final end = (i + chunk < refs.length) ? i + chunk : refs.length;
       final batch = _db.batch();
-      for (final d in docs.sublist(i, end)) {
-        batch.delete(d.reference);
+      for (final ref in refs.sublist(i, end)) {
+        batch.delete(ref);
       }
       await batch.commit();
     }
@@ -387,7 +404,7 @@ class InterviewRepository {
     } catch (e) {
       debugPrint('deleteTest: metadata doc cleanup failed for $testId: $e');
     }
-    return docs.length;
+    return refs.length;
   }
 
   /// "End test" — publish results for every candidate of [testId] owned by

@@ -21,7 +21,6 @@ import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_result_page.dart';
 import 'package:talbotiq/features/interviews/candidate/chat_launch_adapter.dart';
-import 'package:talbotiq/features/interviews/candidate/facefit_page.dart';
 import 'package:talbotiq/features/interviews/candidate/resume_intake_page.dart';
 import 'package:talbotiq/features/interviews/candidate/system_check_page.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
@@ -189,25 +188,6 @@ class _CandidateHomeState extends State<CandidateHome> {
     // not an error — abort quietly and leave them on their interview list.
     if (ready != true) return;
 
-    // Optional pre-call facefit capture (camera was granted in the system
-    // check). Returns an 'insufficient' summary if skipped/unavailable.
-    debugPrint('[launch] opening facefit…');
-    final facial = await Navigator.of(context).push<FacialSessionSummary>(
-      MaterialPageRoute(
-        builder: (ctx) => FacefitPage(
-          onCaptured: (s) => Navigator.of(ctx).pop(s),
-        ),
-      ),
-    );
-    debugPrint('[launch] facefit returned ${facial == null ? 'null (backed out)' : 'a summary'} (mounted=$mounted)');
-    if (!mounted) return;
-    // A null result means the candidate pressed BACK out of the attention
-    // check — that is a cancellation and must abort the launch. "Skip" is a
-    // different thing: it pops an 'insufficient' summary (non-null) and
-    // legitimately continues. Without this check a back-press fell through and
-    // started the interview anyway, which is the opposite of what Back means.
-    if (facial == null) return;
-
     setState(() => _launching = true);
     // Tracks how far the launch got, so a failure can name the exact step
     // instead of a generic "could not start" (this sequence hits Firestore
@@ -238,7 +218,6 @@ class _CandidateHomeState extends State<CandidateHome> {
         candidateName: interview.candidateName ?? _localPart(_email),
         interview: interview,
         resumeText: resumeText,
-        facialSummary: facial,
       );
       _setStage('Step 2/2 — opening the interview…');
       // The attempt has started — count it. Best-effort: not awaited (so a

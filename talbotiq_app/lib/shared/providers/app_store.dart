@@ -38,8 +38,6 @@ class AppStore extends ChangeNotifier {
   // Theme Mode
   ThemeMode _themeMode = ThemeMode.dark;
 
-  // Recruiter-configured webhook for interview events. A URL, not a credential.
-  String _webhookUrl = '';
 
   // Defaults
   String _defaultReplicaId = '';
@@ -64,9 +62,6 @@ class AppStore extends ChangeNotifier {
   // Saved Drafts
   List<Draft> _drafts = [];
 
-  // Cached Tavus Data
-  List<TavusReplica> _cachedReplicas = [];
-  List<TavusPersona> _cachedPersonas = [];
 
   // Live Metrics
   int _confidence = 0;
@@ -134,7 +129,6 @@ class AppStore extends ChangeNotifier {
 
   // Getters
   ThemeMode get themeMode => _themeMode;
-  String get webhookUrl => _webhookUrl;
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
@@ -147,8 +141,6 @@ class AppStore extends ChangeNotifier {
   bool get interviewActive => _interviewActive;
   List<Draft> get drafts => List.unmodifiable(_drafts);
 
-  List<TavusReplica> get cachedReplicas => List.unmodifiable(_cachedReplicas);
-  List<TavusPersona> get cachedPersonas => List.unmodifiable(_cachedPersonas);
 
   int get confidence => _confidence;
   int get anxiety => _anxiety;
@@ -182,12 +174,6 @@ class AppStore extends ChangeNotifier {
   }
 
   // Setters
-  void setWebhookUrl(String url) {
-    _webhookUrl = url;
-    _saveToPrefs();
-    notifyListeners();
-  }
-
   void setStoreLocalRecordings(bool enable) {
     _storeLocalRecordings = enable;
     _saveToPrefs();
@@ -256,12 +242,6 @@ class AppStore extends ChangeNotifier {
   void incrementIntegrityLeftApp() => _integrityLeftAppCount++;
   void resetIntegrity() => _integrityLeftAppCount = 0;
 
-  // Facefit (pre-call facial analysis) result for the current video interview.
-  // Set from the facefit capture, consumed by the results pipeline. Ephemeral.
-  FacialSessionSummary? _facialSummary;
-  FacialSessionSummary? get facialSummary => _facialSummary;
-  void setFacialSummary(FacialSessionSummary? s) => _facialSummary = s;
-
   void setQuestions(List<String> qs) {
     _questions = qs;
     _saveToPrefs();
@@ -312,13 +292,6 @@ class AppStore extends ChangeNotifier {
 
   void deleteDraft(String id) {
     _drafts.removeWhere((d) => d.id == id);
-    _saveToPrefs();
-    notifyListeners();
-  }
-
-  void setCachedTavusData(List<TavusReplica> replicas, List<TavusPersona> personas) {
-    _cachedReplicas = replicas;
-    _cachedPersonas = personas;
     _saveToPrefs();
     notifyListeners();
   }
@@ -466,7 +439,6 @@ class AppStore extends ChangeNotifier {
         _themeMode = ThemeMode.dark;
       }
 
-      _webhookUrl = data['webhookUrl'] ?? '';
       _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
 
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
@@ -491,15 +463,7 @@ class AppStore extends ChangeNotifier {
         _drafts = draftsList.map((d) => Draft.fromJson(d)).toList();
       }
 
-      if (data['cachedReplicas'] != null) {
-        final List replicasList = data['cachedReplicas'];
-        _cachedReplicas = replicasList.map((r) => TavusReplica.fromJson(r)).toList();
-      }
 
-      if (data['cachedPersonas'] != null) {
-        final List personasList = data['cachedPersonas'];
-        _cachedPersonas = personasList.map((p) => TavusPersona.fromJson(p)).toList();
-      }
 
       if (data['recordings'] != null) {
         final List recordingsList = data['recordings'];
@@ -531,15 +495,12 @@ class AppStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final Map<String, dynamic> data = {
         'themeMode': _themeMode.name,
-        'webhookUrl': _webhookUrl,
         'defaultReplicaId': _defaultReplicaId,
         'defaultPersonaId': _defaultPersonaId,
         'sessionConfig': _sessionConfig.toJson(),
         'storeLocalRecordings': _storeLocalRecordings,
         'questions': _questions,
         'drafts': _drafts.map((d) => d.toJson()).toList(),
-        'cachedReplicas': _cachedReplicas.map((r) => r.toJson()).toList(),
-        'cachedPersonas': _cachedPersonas.map((p) => p.toJson()).toList(),
         'recordings': _recordings.map((r) => r.toJson()).toList(),
         'interviewResults': _interviewResults.map((r) => r.toJson()).toList(),
       };
@@ -555,7 +516,6 @@ class AppStore extends ChangeNotifier {
     await prefs.remove(_kStoreKey);
     reset();
     _themeMode = ThemeMode.dark;
-    _webhookUrl = '';
     _defaultReplicaId = '';
     _defaultPersonaId = '';
     _sessionConfig = DraftForm.defaults();
@@ -567,8 +527,6 @@ class AppStore extends ChangeNotifier {
       'Do you have any questions for us?',
     ];
     _drafts = [];
-    _cachedReplicas = [];
-    _cachedPersonas = [];
     _recordings = [];
     _interviewResults = [];
     notifyListeners();

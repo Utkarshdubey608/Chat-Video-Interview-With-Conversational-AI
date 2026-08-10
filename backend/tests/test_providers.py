@@ -38,11 +38,13 @@ def settings(**overrides) -> Settings:
 
 # --- readiness -------------------------------------------------------------
 def test_readiness_reports_only_configured_providers():
-    assert readiness(settings(gemini_api_key="AIza-x", tavus_api_key="  ")) == {
-        "gemini": True,
-        "tavus": False,  # whitespace is not a key
-        "deepgram": False,
-    }
+    result = readiness(settings(gemini_api_key="AIza-x", tavus_api_key="  "))
+    assert result["gemini"] is True
+    assert result["tavus"] is False  # whitespace is not a key
+    assert result["deepgram"] is False
+    # The Service Status screen treats email as one more thing that either works
+    # or does not, so /health reports it alongside the vendor keys.
+    assert "email" in result
 
 
 def test_live_model_name_is_normalised():
