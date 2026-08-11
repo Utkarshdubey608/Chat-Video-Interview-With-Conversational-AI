@@ -205,4 +205,22 @@ abstract final class VoiceCatalog {
         voiceById(personaById(config.personaId)?.defaultVoiceId) ??
         voices.first;
   }
+
+  /// The voice id actually used when saving a Voice interview/round: [voiceId]
+  /// when it names a known catalog voice, else [defaultVoiceConfig]'s voice.
+  ///
+  /// Voice/persona selection lives inside a collapsed "Advanced settings"
+  /// section in the interview creation UI, which already *displays*
+  /// [defaultVoiceConfig] as selected before a recruiter touches anything —
+  /// so a recruiter who never opens that section should not end up with
+  /// `voiceName: null` persisted. Never returns null.
+  static String resolveVoiceId(String? voiceId) =>
+      voiceById(voiceId) != null ? voiceId! : defaultVoiceConfig.voiceId;
+
+  /// The persona id actually used when saving a Voice interview/round — same
+  /// fallback as [resolveVoiceId], for the persona half of the selection.
+  static String resolvePersonaId(String? personaId) =>
+      personaById(personaId) != null
+          ? personaId!
+          : defaultVoiceConfig.personaId;
 }

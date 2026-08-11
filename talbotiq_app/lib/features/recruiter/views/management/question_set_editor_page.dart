@@ -60,7 +60,7 @@ class _QuestionSetEditorPageState extends State<QuestionSetEditorPage> {
     }
   }
 
-  void _save() {
+  Future<void> _save() async {
     final name = _name.text.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -75,18 +75,24 @@ class _QuestionSetEditorPageState extends State<QuestionSetEditorPage> {
       return;
     }
     final store = context.read<RecruiterStore>();
+    final messenger = ScaffoldMessenger.of(context);
     final base = widget.existing;
     final now = DateTime.now().toIso8601String();
-    store.upsertQuestionSet(QuestionSet(
+    final saved = await store.upsertQuestionSet(QuestionSet(
       id: base?.id ?? recruiterId('set'),
       name: name,
       questions: cleaned,
       createdAt: base?.createdAt ?? now,
       updatedAt: now,
     ));
+    if (!mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Saved “$name”.')));
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Saved “$name”.'
+          : 'Applied “$name” for this session, but the save did not stick — '
+              'it may not survive a restart. Try again.'),
+    ));
   }
 
   @override

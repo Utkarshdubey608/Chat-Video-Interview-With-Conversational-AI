@@ -97,6 +97,6 @@ class LiveTokenGrant {
     }
     // A missing timestamp must not read as "valid forever": treat it as already
     // past so callers re-mint rather than opening a socket that Google refuses.
-    return DateTime.now().toUtc();
+    return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   }
 }

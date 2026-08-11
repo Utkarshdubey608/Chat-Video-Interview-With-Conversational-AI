@@ -5,6 +5,8 @@ import 'dart:ui';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/firebase_options.dart';
 import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
@@ -20,8 +22,29 @@ import 'package:talbotiq/features/app/splash_page.dart';
 /// outside the widget tree (it lives for the whole app lifetime).
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// Desktop (Windows/macOS/Linux) only: a phone-shaped default window helps
+/// no one. Set a sensible desktop starting size and enforce a minimum below
+/// which the sidebar-nav/analytics-dashboard layouts stop making sense.
+Future<void> _initDesktopWindow() async {
+  await windowManager.ensureInitialized();
+  const windowOptions = WindowOptions(
+    size: Size(1440, 900),
+    minimumSize: Size(1024, 700),
+    center: true,
+    title: 'Talbotiq',
+  );
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (isDesktopPlatform) {
+    await _initDesktopWindow();
+  }
 
   // Safety net: log framework-caught errors (build/layout/paint) instead of
   // relying only on the default console dump, and — more importantly — catch

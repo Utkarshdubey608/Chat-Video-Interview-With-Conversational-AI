@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/core/utils/validators.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
@@ -28,7 +29,10 @@ class _LoginPageState extends State<LoginPage> {
   final _nameController = TextEditingController();
 
   bool _isSignUp = false;
-  AppRole _role = AppRole.candidate;
+  // Talbotiq Desktop is recruiter-only (see AuthGate/DesktopAccessDeniedPage):
+  // signing up as a candidate here would only dead-end at the access-denied
+  // screen, so desktop defaults to — and only offers — a recruiter account.
+  AppRole _role = isDesktopPlatform ? AppRole.recruiter : AppRole.candidate;
   bool _loading = false;
   String? _error;
 
@@ -180,10 +184,13 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 32),
                 if (_isSignUp) ...[
-                  _RolePicker(
-                    value: _role,
-                    onChanged: (r) => setState(() => _role = r),
-                  ),
+                  if (!isDesktopPlatform)
+                    _RolePicker(
+                      value: _role,
+                      onChanged: (r) => setState(() => _role = r),
+                    )
+                  else
+                    const _DesktopRecruiterOnlyNotice(),
                   const SizedBox(height: 16),
                   CustomInputField(
                     label: 'Name',
@@ -273,6 +280,31 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Shown instead of [_RolePicker] on desktop sign-up: there is no candidate
+/// option to pick, so say so rather than silently omitting it.
+class _DesktopRecruiterOnlyNotice extends StatelessWidget {
+  const _DesktopRecruiterOnlyNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Icon(Icons.work_outline_rounded,
+            size: 18, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Talbotiq Desktop is for recruiters — this creates a recruiter account.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+      ],
     );
   }
 }

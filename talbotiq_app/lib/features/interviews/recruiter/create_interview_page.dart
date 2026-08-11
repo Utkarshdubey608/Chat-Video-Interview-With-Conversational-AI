@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'package:excel/excel.dart' as xl;
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -80,6 +81,33 @@ class CreateInterviewPage extends StatefulWidget {
   State<CreateInterviewPage> createState() => _CreateInterviewPageState();
 }
 
+/// Flattens every cell of an .xlsx workbook to a single text blob so the email
+/// regex can extract addresses regardless of which column they're in.
+///
+/// Top-level (not a method) and run via `compute()`: it touches no instance
+/// state — only the input bytes in, a plain String out — so the whole
+/// decode, which can be slow on a large workbook, runs on a worker isolate
+/// instead of blocking the UI thread. The `excel` package's own objects
+/// (`book`/`table`/`row`/`cell`) are created and consumed entirely inside
+/// this call and never cross the isolate boundary themselves.
+String _extractXlsxTextInBackground(List<int> bytes) {
+  try {
+    final book = xl.Excel.decodeBytes(bytes);
+    final sb = StringBuffer();
+    for (final table in book.tables.values) {
+      for (final row in table.rows) {
+        for (final cell in row) {
+          final v = cell?.value;
+          if (v != null) sb.write(' ${v.toString()}');
+        }
+      }
+    }
+    return sb.toString();
+  } catch (_) {
+    return '';
+  }
+}
+
 class _CreateInterviewPageState extends State<CreateInterviewPage> {
   InterviewType _type = InterviewType.video;
 
@@ -128,6 +156,14 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   // Voice track: selected Gemini Live voice + persona.
   String? _voiceName;
   String? _voicePersonaId;
+
+  // The value actually persisted for a Voice interview/round: an explicit,
+  // recognized selection, or else VoiceCatalog's existing default — never
+  // null. See VoiceCatalog.resolveVoiceId/resolvePersonaId.
+  String get _resolvedVoiceName => VoiceCatalog.resolveVoiceId(_voiceName);
+
+  String get _resolvedVoicePersonaId =>
+      VoiceCatalog.resolvePersonaId(_voicePersonaId);
 
   // Chat proctoring/integrity (enforced by the conversation runner) + branding.
   bool _detectTabSwitch = true;
@@ -351,6 +387,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     _promptController.dispose();
     _replicaIdController.dispose();
     _personaIdController.dispose();
+    _requiredSkillsController.dispose();
+    _niceToHaveController.dispose();
     for (final c in _candidateEmailControllers) {
       c.dispose();
     }
@@ -369,26 +407,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     setState(() {
       _candidateEmailControllers.removeAt(i).dispose();
     });
-  }
-
-  /// Flattens every cell of an .xlsx workbook to a single text blob so the email
-  /// regex can extract addresses regardless of which column they're in.
-  String _extractXlsxText(List<int> bytes) {
-    try {
-      final book = xl.Excel.decodeBytes(bytes);
-      final sb = StringBuffer();
-      for (final table in book.tables.values) {
-        for (final row in table.rows) {
-          for (final cell in row) {
-            final v = cell?.value;
-            if (v != null) sb.write(' ${v.toString()}');
-          }
-        }
-      }
-      return sb.toString();
-    } catch (_) {
-      return '';
-    }
   }
 
   /// Bulk-import candidate emails from a CSV or plain-text file. Extracts every
@@ -415,7 +433,10 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     // regex below then pulls addresses out of whatever text we produced.
     String content;
     if (res.files.first.name.toLowerCase().endsWith('.xlsx')) {
-      content = _extractXlsxText(bytes);
+      // Off the UI thread: a large workbook's decode+flatten can take long
+      // enough to visibly freeze the app otherwise.
+      content = await compute(_extractXlsxTextInBackground, bytes);
+      if (!mounted) return;
     } else {
       try {
         content = utf8.decode(bytes, allowMalformed: true);
@@ -691,9 +712,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                 : null,
             collectResume: _type == InterviewType.video && _collectResume,
             language: _language,
-            voiceName: _type == InterviewType.voice ? _voiceName : null,
+            voiceName: _type == InterviewType.voice ? _resolvedVoiceName : null,
             voicePersonaId:
-                _type == InterviewType.voice ? _voicePersonaId : null,
+                _type == InterviewType.voice ? _resolvedVoicePersonaId : null,
             // Integrity + branding are enforced/shown by the chat runner.
             integrity: _type == InterviewType.chat
                 ? {
@@ -858,8 +879,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               : _personaIdController.text.trim(),
         ).toMap(),
         'maxAttempts': _maxAttempts,
-        if (_hasVoiceRound) 'voiceName': _voiceName,
-        if (_hasVoiceRound) 'voicePersonaId': _voicePersonaId,
+        if (_hasVoiceRound) 'voiceName': _resolvedVoiceName,
+        if (_hasVoiceRound) 'voicePersonaId': _resolvedVoicePersonaId,
         'integrity': {
           'enforceFullscreen': false,
           'detectTabSwitch': _detectTabSwitch,
@@ -1075,8 +1096,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               ? null
               : _personaIdController.text.trim(),
         ).toMap(),
-        if (_roundKind == RoundKind.voice) 'voiceName': _voiceName,
-        if (_roundKind == RoundKind.voice) 'voicePersonaId': _voicePersonaId,
+        if (_roundKind == RoundKind.voice) 'voiceName': _resolvedVoiceName,
+        if (_roundKind == RoundKind.voice)
+          'voicePersonaId': _resolvedVoicePersonaId,
         if (_roundKind == RoundKind.chat)
           'integrity': {
             'enforceFullscreen': false,
@@ -2554,12 +2576,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     final base = VoiceCatalog.defaultVoiceConfig;
     final current = VoiceConfig(
       engine: base.engine,
-      personaId: VoiceCatalog.personaById(_voicePersonaId) != null
-          ? _voicePersonaId!
-          : base.personaId,
-      voiceId: VoiceCatalog.voiceById(_voiceName) != null
-          ? _voiceName!
-          : base.voiceId,
+      personaId: _resolvedVoicePersonaId,
+      voiceId: _resolvedVoiceName,
       allowBargeIn: base.allowBargeIn,
       language: base.language,
     );

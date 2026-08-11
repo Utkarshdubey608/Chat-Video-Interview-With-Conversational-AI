@@ -84,7 +84,7 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
     });
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     final enabled = _kpis.where((k) => k.enabled).toList();
     if (enabled.isEmpty) {
@@ -93,6 +93,7 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
       return;
     }
     final store = context.read<RecruiterStore>();
+    final messenger = ScaffoldMessenger.of(context);
     final now = DateTime.now().toIso8601String();
     final base = widget.existing;
     final seniority = _seniority.text.trim();
@@ -128,11 +129,15 @@ class _TemplateEditorPageState extends State<TemplateEditorPage> {
       updatedAt: now,
     );
 
-    store.upsertTemplate(template);
+    final saved = await store.upsertTemplate(template);
+    if (!mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Saved “${template.name}”.')),
-    );
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Saved “${template.name}”.'
+          : 'Applied “${template.name}” for this session, but the save did '
+              'not stick — it may not survive a restart. Try again.'),
+    ));
   }
 
   @override

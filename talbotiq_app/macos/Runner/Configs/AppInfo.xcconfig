@@ -5,10 +5,14 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = talbotiq_app
+PRODUCT_NAME = Talbotiq
 
 // The application's bundle identifier
+// NOTE: left matching the Android applicationId (com.example.talbotiq_app) for
+// now — changing this is a signing/provisioning decision, not a desktop-support
+// change, and must be made deliberately together with a real Apple Developer
+// Team ID before distribution.
 PRODUCT_BUNDLE_IDENTIFIER = com.example.talbotiqApp
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Talbotiq. All rights reserved.

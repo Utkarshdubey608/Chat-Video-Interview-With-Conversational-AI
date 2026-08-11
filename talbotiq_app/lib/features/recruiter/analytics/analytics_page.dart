@@ -12,8 +12,15 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/shared/widgets/desktop_card.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/metric_card.dart';
+import 'package:talbotiq/shared/widgets/responsive_grid.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
+import 'package:talbotiq/shared/widgets/status_badge.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/recruiter/evaluate_interview_page.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
@@ -357,6 +364,98 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     final theme = Theme.of(context);
     final repo = context.read<InterviewRepository>();
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final desktop = isDesktopPlatform;
+
+    final streamBuilder = StreamBuilder<List<Interview>>(
+      stream: repo.watchForRecruiter(uid),
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return AppMessageState(
+            icon: Icons.error_outline,
+            title: 'Could not load analytics',
+            subtitle: '${snap.error}',
+          );
+        }
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final all = snap.data!;
+        if (all.isEmpty) {
+          return const AppMessageState(
+            icon: Icons.insights_outlined,
+            title: 'Nothing to analyze yet',
+            subtitle:
+                'Create interviews and assign them to candidates — metrics '
+                'appear here as candidates take them.',
+          );
+        }
+
+        final testOptions = _service.testOptions(all);
+        if (_testId != null && !testOptions.any((o) => o.testId == _testId)) {
+          _testId = null;
+        }
+
+        final filtered = _service.applyFilter(all, _filter);
+        final summary = _service.compute(filtered);
+
+        if (desktop) {
+          return _buildDesktopBody(context, testOptions, filtered, summary);
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Clean Header with filter trigger button
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Dashboard Overview',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () => _openFilterSheet(context, testOptions),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: theme.colorScheme.primaryContainer,
+                      foregroundColor: theme.colorScheme.onPrimaryContainer,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      minimumSize: Size.zero,
+                      elevation: 0,
+                    ),
+                    icon: const Icon(Icons.filter_list_rounded, size: 16),
+                    label: Text(
+                      _activeFilterCount > 0 ? 'Filters ($_activeFilterCount)' : 'Filter',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _buildActiveFilterChips(testOptions),
+            Expanded(
+              child: summary.isEmpty
+                  ? AppMessageState(
+                      icon: Icons.filter_alt_off_outlined,
+                      title: 'No interviews match these filters',
+                      subtitle: _hasActiveFilter
+                          ? 'Adjust or clear the filters to see your metrics.'
+                          : 'Nothing to analyze yet.',
+                    )
+                  : _Dashboard(summary: summary),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (desktop) return streamBuilder;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -364,90 +463,70 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
         title: const Text('Analytics'),
         actions: const [LogoutButton(), SizedBox(width: 4)],
       ),
-      body: StreamBuilder<List<Interview>>(
-        stream: repo.watchForRecruiter(uid),
-        builder: (context, snap) {
-          if (snap.hasError) {
-            return AppMessageState(
-              icon: Icons.error_outline,
-              title: 'Could not load analytics',
-              subtitle: '${snap.error}',
-            );
-          }
-          if (!snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final all = snap.data!;
-          if (all.isEmpty) {
-            return const AppMessageState(
-              icon: Icons.insights_outlined,
-              title: 'Nothing to analyze yet',
-              subtitle:
-                  'Create interviews and assign them to candidates — metrics '
-                  'appear here as candidates take them.',
-            );
-          }
+      body: streamBuilder,
+    );
+  }
 
-          final testOptions = _service.testOptions(all);
-          if (_testId != null &&
-              !testOptions.any((o) => o.testId == _testId)) {
-            _testId = null;
-          }
+  String _dateRangeLabel() {
+    if (_dateFrom == null && _dateTo == null) return 'All time';
+    if (_dateFrom != null && _dateTo != null) {
+      return '${_fmtDayShort(_dateFrom!)} – ${_fmtDayShort(_dateTo!)}, ${_dateTo!.year}';
+    }
+    if (_dateFrom != null) return 'From ${_fmtDayShort(_dateFrom!)}';
+    return 'Until ${_fmtDayShort(_dateTo!)}';
+  }
 
-          final filtered = _service.applyFilter(all, _filter);
-          final summary = _service.compute(filtered);
-
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Clean Header with filter trigger button
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Dashboard Overview',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: -0.2,
-                        ),
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: () => _openFilterSheet(context, testOptions),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: theme.colorScheme.primaryContainer,
-                        foregroundColor: theme.colorScheme.onPrimaryContainer,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                        minimumSize: Size.zero,
-                        elevation: 0,
-                      ),
-                      icon: const Icon(Icons.filter_list_rounded, size: 16),
-                      label: Text(
-                        _activeFilterCount > 0 ? 'Filters ($_activeFilterCount)' : 'Filter',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
+  Widget _buildDesktopBody(
+    BuildContext context,
+    List<TestOption> testOptions,
+    List<Interview> filtered,
+    AnalyticsSummary summary,
+  ) {
+    final theme = Theme.of(context);
+    return SingleChildScrollView(
+      child: DesktopPageContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionHeader(
+            title: 'Analytics Overview',
+            subtitle: 'Track interview performance, candidate progress, and hiring insights.',
+            isPageTitle: true,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _openFilterSheet(context, testOptions),
+                  icon: const Icon(Icons.event_outlined, size: 16),
+                  label: Text(_dateRangeLabel()),
                 ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: () => _openFilterSheet(context, testOptions),
+                  icon: const Icon(Icons.filter_list_rounded, size: 16),
+                  label: Text(_activeFilterCount > 0 ? 'Filters ($_activeFilterCount)' : 'Filter'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          _buildActiveFilterChips(testOptions),
+          const SizedBox(height: 16),
+          if (summary.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 48),
+              child: AppMessageState(
+                icon: Icons.filter_alt_off_outlined,
+                title: 'No interviews match these filters',
+                subtitle: _hasActiveFilter
+                    ? 'Adjust or clear the filters to see your metrics.'
+                    : 'Nothing to analyze yet.',
               ),
-              _buildActiveFilterChips(testOptions),
-              Expanded(
-                child: summary.isEmpty
-                    ? AppMessageState(
-                        icon: Icons.filter_alt_off_outlined,
-                        title: 'No interviews match these filters',
-                        subtitle: _hasActiveFilter
-                            ? 'Adjust or clear the filters to see your metrics.'
-                            : 'Nothing to analyze yet.',
-                      )
-                    : _Dashboard(summary: summary),
-              ),
-            ],
-          );
-        },
+            )
+          else
+            _DesktopDashboard(summary: summary, interviews: filtered, theme: theme),
+        ],
+      ),
       ),
     );
   }
@@ -1415,3 +1494,538 @@ String _fmtDay(DateTime d) =>
 
 String _fmtDayShort(DateTime d) =>
     '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+
+// ─────────────────────────────────────────────────────────────────────────
+// Desktop dashboard. Every number below comes from the same AnalyticsSummary
+// (or, for Recent Interviews, the same filtered Interview list) the mobile
+// _Dashboard above already renders — this is a visual redesign only, no new
+// computation, no fabricated deltas/trend/skills data. _TrendChart is reused
+// as-is from the mobile dashboard (same widget, same data, just restyled by
+// the DesktopCard wrapper around it).
+class _DesktopDashboard extends StatelessWidget {
+  final AnalyticsSummary summary;
+  final List<Interview> interviews;
+  final ThemeData theme;
+
+  const _DesktopDashboard({
+    required this.summary,
+    required this.interviews,
+    required this.theme,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = theme.colorScheme;
+    final avg = summary.averageOverallScore;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ResponsiveGrid(
+          tileMinWidth: 200,
+          maxPerRow: 5,
+          children: [
+            MetricCard(
+              label: 'Total Interviews',
+              value: '${summary.totals.total}',
+              icon: Icons.forum_outlined,
+              color: scheme.primary,
+            ),
+            MetricCard(
+              label: 'Completion Rate',
+              value: '${(summary.completionRate * 100).round()}%',
+              icon: Icons.pie_chart_outline_rounded,
+              color: scheme.primary,
+              footnote: '${summary.totals.completed} of ${summary.totals.total} completed',
+            ),
+            MetricCard(
+              label: 'Average Score',
+              value: avg == null ? '—' : avg.toStringAsFixed(1),
+              footnote: avg == null ? null : 'out of 100',
+              icon: Icons.stars_rounded,
+              color: scheme.secondary,
+            ),
+            MetricCard(
+              label: 'Evaluated Candidates',
+              value: '${summary.scoredCount}',
+              icon: Icons.checklist_rtl_rounded,
+              color: Colors.green,
+            ),
+            MetricCard(
+              label: 'Published',
+              value: '${summary.totals.published}',
+              icon: Icons.verified_user_outlined,
+              color: scheme.secondary,
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth > 900;
+            final funnel = _FunnelPanel(totals: summary.totals);
+            final trend = DesktopCard(
+              title: 'Performance Trend',
+              child: SizedBox(height: 240, child: _TrendChart(trend: summary.trend)),
+            );
+            if (!wide) {
+              return Column(children: [funnel, const SizedBox(height: 16), trend]);
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 2, child: funnel),
+                const SizedBox(width: 16),
+                Expanded(flex: 3, child: trend),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 24),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth > 900;
+            final distribution = _ScoreDistributionPanel(summary: summary);
+            final byTrack = _PerformanceByTrackPanel(byType: summary.byType);
+            if (!wide) {
+              return Column(children: [distribution, const SizedBox(height: 16), byTrack]);
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: distribution),
+                const SizedBox(width: 16),
+                Expanded(child: byTrack),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 24),
+        _RecentInterviewsPanel(interviews: interviews),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+}
+
+class _FunnelPanel extends StatelessWidget {
+  final FunnelTotals totals;
+  const _FunnelPanel({required this.totals});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final rows = <(String, int, Color)>[
+      ('Total', totals.total, scheme.primary),
+      ('Assigned', totals.assigned, scheme.outline),
+      ('In Progress', totals.inProgress, Colors.orange),
+      ('Completed', totals.completed, Colors.green),
+      ('Published', totals.published, scheme.secondary),
+    ];
+    final base = totals.total == 0 ? 1 : totals.total;
+
+    return DesktopCard(
+      title: 'Interview Funnel',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final r in rows) ...[
+            _FunnelRow(label: r.$1, count: r.$2, color: r.$3, total: base),
+            const SizedBox(height: 14),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FunnelRow extends StatelessWidget {
+  final String label;
+  final int count;
+  final Color color;
+  final int total;
+  const _FunnelRow({
+    required this.label,
+    required this.count,
+    required this.color,
+    required this.total,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final fraction = total == 0 ? 0.0 : count / total;
+    final pct = total == 0 ? 0 : (count / total * 100).round();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label,
+                  style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+            ),
+            Text('$count',
+                style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(width: 6),
+            Text('($pct%)',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: fraction.clamp(0, 1),
+            minHeight: 8,
+            color: color,
+            backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ScoreDistributionPanel extends StatelessWidget {
+  final AnalyticsSummary summary;
+  const _ScoreDistributionPanel({required this.summary});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    if (summary.scoredCount == 0) {
+      return const DesktopCard(
+        title: 'Score Distribution',
+        child: _EmptyChart(message: 'No scored interviews yet.'),
+      );
+    }
+
+    final buckets = summary.scoreDistribution;
+    // Low -> high score, muted -> full brand green: a sequential intensity
+    // scale rather than a "bad/good" red-to-green scale, since a low score
+    // bucket isn't an error/warning state — it's just fewer candidates there.
+    final bucketColors = <Color>[
+      scheme.outline,
+      scheme.secondary.withValues(alpha: 0.55),
+      scheme.secondary,
+      scheme.primary.withValues(alpha: 0.6),
+      scheme.primary,
+    ];
+    final avg = summary.averageOverallScore;
+
+    return DesktopCard(
+      title: 'Score Distribution',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                avg == null ? '—' : avg.toStringAsFixed(1),
+                style: theme.textTheme.headlineLarge
+                    ?.copyWith(color: scheme.primary, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(width: 6),
+              Text('/ 100',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(color: scheme.onSurfaceVariant)),
+            ],
+          ),
+          Text(
+            'Average score across ${summary.scoredCount} evaluated candidate(s)',
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 120,
+                height: 120,
+                child: PieChart(
+                  PieChartData(
+                    sectionsSpace: 2,
+                    centerSpaceRadius: 38,
+                    sections: [
+                      for (var k = 0; k < buckets.length; k++)
+                        if (buckets[k].count > 0)
+                          PieChartSectionData(
+                            value: buckets[k].count.toDouble(),
+                            color: bucketColors[k],
+                            radius: 20,
+                            showTitle: false,
+                          ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var k = 0; k < buckets.length; k++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _BucketLegendRow(
+                          color: bucketColors[k],
+                          label: buckets[k].label,
+                          count: buckets[k].count,
+                          total: summary.scoredCount,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BucketLegendRow extends StatelessWidget {
+  final Color color;
+  final String label;
+  final int count;
+  final int total;
+  const _BucketLegendRow({
+    required this.color,
+    required this.label,
+    required this.count,
+    required this.total,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final pct = total == 0 ? 0 : (count / total * 100).round();
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(label, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+        ),
+        Text('$count', style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(width: 6),
+        Text('($pct%)',
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+      ],
+    );
+  }
+}
+
+/// The redesign's "Top Skills Performance" slot, honestly filled: this app
+/// exposes no per-skill/KPI breakdown anywhere (checked AnalyticsSummary —
+/// there isn't one), so per the brief's own fallback instruction this uses
+/// the KPI data that actually exists: per-track (video/chat/voice) average
+/// score and completion rate.
+class _PerformanceByTrackPanel extends StatelessWidget {
+  final List<TypeStat> byType;
+  const _PerformanceByTrackPanel({required this.byType});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = byType.where((t) => t.count > 0).toList();
+    if (active.isEmpty) {
+      return const DesktopCard(
+        title: 'Performance by Track',
+        child: _EmptyChart(message: 'No interviews yet.'),
+      );
+    }
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return DesktopCard(
+      title: 'Performance by Track',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final t in active) ...[
+            Row(
+              children: [
+                Icon(_iconFor(t.type), size: 16, color: scheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(t.label,
+                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                ),
+                Text(
+                  t.averageScore == null ? 'avg —' : 'avg ${t.averageScore!.toStringAsFixed(1)}',
+                  style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(width: 10),
+                Text('${t.completedCount}/${t.count} completed',
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: ((t.averageScore ?? 0) / 100).clamp(0, 1),
+                minHeight: 8,
+                color: scheme.primary,
+                backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static IconData _iconFor(InterviewType type) {
+    switch (type) {
+      case InterviewType.video:
+        return Icons.videocam_rounded;
+      case InterviewType.chat:
+        return Icons.chat_bubble_rounded;
+      case InterviewType.voice:
+        return Icons.mic_rounded;
+    }
+  }
+}
+
+class _RecentInterviewsPanel extends StatelessWidget {
+  final List<Interview> interviews;
+  const _RecentInterviewsPanel({required this.interviews});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final sorted = [...interviews]
+      ..sort((a, b) {
+        final ac = a.createdAt;
+        final bc = b.createdAt;
+        if (ac == null && bc == null) return 0;
+        if (ac == null) return 1;
+        if (bc == null) return -1;
+        return bc.compareTo(ac);
+      });
+    final recent = sorted.take(8).toList();
+
+    return DesktopCard(
+      title: 'Recent Interviews',
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      child: recent.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: _EmptyChart(message: 'No interviews yet.'),
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    children: [
+                      Expanded(
+                          flex: 3,
+                          child: Text('CANDIDATE',
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant))),
+                      Expanded(
+                          flex: 3,
+                          child: Text('ROLE',
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant))),
+                      Expanded(
+                          flex: 2,
+                          child: Text('DATE',
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant))),
+                      Expanded(
+                          flex: 2,
+                          child: Text('STATUS',
+                              style: theme.textTheme.labelSmall
+                                  ?.copyWith(color: scheme.onSurfaceVariant))),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                for (final i in recent) _RecentInterviewRow(interview: i),
+              ],
+            ),
+    );
+  }
+}
+
+class _RecentInterviewRow extends StatefulWidget {
+  final Interview interview;
+  const _RecentInterviewRow({required this.interview});
+
+  @override
+  State<_RecentInterviewRow> createState() => _RecentInterviewRowState();
+}
+
+class _RecentInterviewRowState extends State<_RecentInterviewRow> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final i = widget.interview;
+    final name = (i.candidateName != null && i.candidateName!.trim().isNotEmpty)
+        ? i.candidateName!.trim()
+        : i.candidateEmail;
+    final date = i.createdAt == null ? '—' : _fmtDay(i.createdAt!);
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      cursor: SystemMouseCursors.click,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => EvaluateInterviewPage(interview: i)),
+        ),
+        child: Container(
+          color: _hovering ? scheme.onSurface.withValues(alpha: 0.04) : null,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text(i.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text(date,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
+              Expanded(flex: 2, child: StatusBadge.forInterview(i)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
