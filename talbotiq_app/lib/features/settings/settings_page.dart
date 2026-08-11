@@ -1,6 +1,9 @@
 // lib/views/settings_page.dart
 import 'package:flutter/material.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/widgets/apple_ui.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/guide/mimic_guide_page.dart';
 import 'package:talbotiq/features/settings/sections/appearance_section.dart';
@@ -61,6 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (isDesktopPlatform) return _buildDesktop(theme);
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       body: LayoutBuilder(
@@ -91,6 +95,44 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// Desktop is already hosted inside RecruiterShell's own Scaffold, under
+  /// the persistent top nav — this used to wrap itself in a second Scaffold
+  /// with `colorScheme.surface` as its background, which is a visibly
+  /// different (lighter) shade than the shell's own `scaffoldBackgroundColor`,
+  /// producing a color seam right under the top nav. Rendering the content
+  /// directly (no nested Scaffold) lets it inherit the same background as
+  /// Home/Library/Analytics, and swapping the centered Apple-style large
+  /// title for the same [SectionHeader] those pages use keeps the header
+  /// treatment consistent instead of looking like a different app screen.
+  Widget _buildDesktop(ThemeData theme) {
+    return DesktopPageContainer(
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionHeader(
+              title: 'Settings',
+              subtitle: 'Manage platform behaviour by category.',
+              isPageTitle: true,
+            ),
+            const SizedBox(height: 24),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 920),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildWide(theme),
+                  const SizedBox(height: 24),
+                  _buildGuideEntry(theme),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

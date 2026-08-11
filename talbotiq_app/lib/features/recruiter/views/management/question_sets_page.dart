@@ -26,6 +26,18 @@ class QuestionSetsPage extends StatelessWidget {
     );
   }
 
+  Future<void> _duplicate(BuildContext context, QuestionSet s) async {
+    final store = context.read<RecruiterStore>();
+    final messenger = ScaffoldMessenger.of(context);
+    final saved = await store.duplicateQuestionSet(s.id);
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Duplicated “${s.name}”.'
+          : 'Duplicated “${s.name}”, but the save did not stick — it may '
+              'disappear on restart. Try again.'),
+    ));
+  }
+
   Future<void> _delete(BuildContext context, QuestionSet s) async {
     final store = context.read<RecruiterStore>();
     final messenger = ScaffoldMessenger.of(context);
@@ -48,8 +60,13 @@ class QuestionSetsPage extends StatelessWidget {
       ),
     );
     if (ok != true) return;
-    store.deleteQuestionSet(s.id);
-    messenger.showSnackBar(SnackBar(content: Text('Deleted “${s.name}”.')));
+    final saved = await store.deleteQuestionSet(s.id);
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Deleted “${s.name}”.'
+          : 'Removed “${s.name}” from this session, but the change did not '
+              'save — it may come back on restart. Try again.'),
+    ));
   }
 
   @override
@@ -137,11 +154,7 @@ class QuestionSetsPage extends StatelessWidget {
                               _openEditor(context, existing: s);
                               break;
                             case 'duplicate':
-                              store.duplicateQuestionSet(s.id);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                    content: Text('Duplicated “${s.name}”.')),
-                              );
+                              _duplicate(context, s);
                               break;
                             case 'delete':
                               _delete(context, s);

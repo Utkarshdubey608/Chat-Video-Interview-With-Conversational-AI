@@ -13,7 +13,9 @@ import 'package:talbotiq/features/auth/auth_service.dart';
 class LogoutButton extends StatelessWidget {
   const LogoutButton({super.key});
 
-  Future<void> _signOut(BuildContext context) async {
+  /// The one sign-out implementation — call this from any other sign-out
+  /// affordance (e.g. the desktop profile menu) instead of re-deriving it.
+  static Future<void> signOut(BuildContext context) async {
     // Read the provider before the first await — using `context` across an
     // async gap is unsafe once the widget may have been unmounted.
     final auth = context.read<AuthService>();
@@ -30,7 +32,7 @@ class LogoutButton extends StatelessWidget {
     return IconButton(
       tooltip: 'Sign out',
       icon: const Icon(Icons.logout),
-      onPressed: () => _signOut(context),
+      onPressed: () => signOut(context),
     );
   }
 }

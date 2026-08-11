@@ -22,9 +22,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:talbotiq/core/theme/desktop_tokens.dart';
 import 'package:talbotiq/core/utils/date_format.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
@@ -191,6 +195,7 @@ class _RecruiterHomeState extends State<RecruiterHome> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (isDesktopPlatform) return _buildDesktop(theme);
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -218,6 +223,90 @@ class _RecruiterHomeState extends State<RecruiterHome> {
           if (_tests.isNotEmpty) _searchBar(),
           Expanded(child: _body(theme)),
         ],
+      ),
+    );
+  }
+
+  /// Same state, same _searchBar()/_body() as mobile — only the chrome
+  /// around them changes: a page header with the primary "Create interview"
+  /// action instead of an AppBar + FAB, matching the desktop redesign's
+  /// header pattern. The top nav (RecruiterShell) already owns the
+  /// wordmark/logout for desktop, so this doesn't repeat them.
+  Widget _buildDesktop(ThemeData theme) {
+    return DesktopPageContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SectionHeader(
+            title: 'Interviews',
+            subtitle: 'Manage the interview tests you’ve created and their candidates.',
+            isPageTitle: true,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const RecruiterLibraryPage()),
+                  ),
+                  icon: const Icon(Icons.folder_special_outlined, size: 18),
+                  label: const Text('Library'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton.icon(
+                  onPressed: _create,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Create interview'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          if (_tests.isNotEmpty) _desktopSearchBar(theme),
+          if (_tests.isNotEmpty) const SizedBox(height: 20),
+          Expanded(child: _body(theme)),
+        ],
+      ),
+    );
+  }
+
+  /// Same controller/debounce as mobile's [_searchBar] — only the visual
+  /// treatment differs: a taller, bordered field matching the desktop
+  /// card surface instead of the compact mobile field.
+  Widget _desktopSearchBar(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    return TextField(
+      controller: _searchCtrl,
+      onChanged: _onSearchChanged,
+      textInputAction: TextInputAction.search,
+      style: theme.textTheme.bodyMedium,
+      decoration: InputDecoration(
+        hintText: 'Search tests by name',
+        prefixIcon: Icon(Icons.search, size: 20, color: scheme.onSurfaceVariant),
+        suffixIcon: _searchCtrl.text.isEmpty
+            ? null
+            : IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Clear search',
+                onPressed: () {
+                  _searchCtrl.clear();
+                  _onSearchChanged('');
+                },
+              ),
+        filled: true,
+        fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(DesktopTokens.cardRadius),
+          borderSide: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.3)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(DesktopTokens.cardRadius),
+          borderSide: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.3)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(DesktopTokens.cardRadius),
+          borderSide: BorderSide(color: scheme.primary, width: 1.5),
+        ),
       ),
     );
   }
@@ -269,17 +358,23 @@ class _RecruiterHomeState extends State<RecruiterHome> {
             : 'Try a different name.',
       );
     }
+    final desktop = isDesktopPlatform;
     return RefreshIndicator(
       onRefresh: () => _refresh(allowBackfill: false),
       child: ListView.builder(
         controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+        padding: desktop
+            ? const EdgeInsets.only(bottom: 40)
+            : const EdgeInsets.fromLTRB(16, 8, 16, 96),
         itemCount: items.length + 1,
         itemBuilder: (context, index) {
           if (index == items.length) return _pagerRow(theme);
+          final test = items[index];
           return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _TestRow(test: items[index], onTap: () => _open(items[index])),
+            padding: EdgeInsets.only(bottom: desktop ? 12 : 10),
+            child: desktop
+                ? _DesktopTestRow(test: test, onTap: () => _open(test))
+                : _TestRow(test: test, onTap: () => _open(test)),
           );
         },
       ),
@@ -309,19 +404,27 @@ class _RecruiterHomeState extends State<RecruiterHome> {
   }
 }
 
-/// One test row. Candidate/completed totals come from count() aggregates rather
-/// than from loading the test's interviews, so the dashboard never reads
-/// candidate documents.
-class _TestRow extends StatefulWidget {
+IconData _testTypeIcon(InterviewType type) => switch (type) {
+      InterviewType.video => Icons.videocam_outlined,
+      InterviewType.voice => Icons.record_voice_over_outlined,
+      InterviewType.chat => Icons.chat_bubble_outline,
+    };
+
+/// Loads a test's candidate/completed totals from count() aggregates (never
+/// the test's interviews, so the dashboard never reads candidate documents)
+/// and hands them to [builder]. Shared by both the mobile row and the
+/// desktop row so the fetch logic exists in exactly one place.
+class _TestCounts extends StatefulWidget {
   final TestSummary test;
-  final VoidCallback onTap;
-  const _TestRow({required this.test, required this.onTap});
+  final Widget Function(BuildContext context, int total, int completed)
+      builder;
+  const _TestCounts({required this.test, required this.builder});
 
   @override
-  State<_TestRow> createState() => _TestRowState();
+  State<_TestCounts> createState() => _TestCountsState();
 }
 
-class _TestRowState extends State<_TestRow> {
+class _TestCountsState extends State<_TestCounts> {
   int _total = -1;
   int _completed = -1;
 
@@ -348,63 +451,180 @@ class _TestRowState extends State<_TestRow> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final t = widget.test;
-    final icon = switch (t.type) {
-      InterviewType.video => Icons.videocam_outlined,
-      InterviewType.voice => Icons.record_voice_over_outlined,
-      InterviewType.chat => Icons.chat_bubble_outline,
-    };
-    final counts = _total < 0
-        ? 'Loading…'
-        : '$_total candidate(s)'
-            '${_completed >= 0 ? ' · $_completed completed' : ''}';
+  Widget build(BuildContext context) =>
+      widget.builder(context, _total, _completed);
+}
 
-    return Card(
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(24),
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 20, color: theme.colorScheme.primary),
+/// One test row (mobile/web).
+class _TestRow extends StatelessWidget {
+  final TestSummary test;
+  final VoidCallback onTap;
+  const _TestRow({required this.test, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return _TestCounts(
+      test: test,
+      builder: (context, total, completed) {
+        final theme = Theme.of(context);
+        final counts = total < 0
+            ? 'Loading…'
+            : '$total candidate(s)'
+                '${completed >= 0 ? ' · $completed completed' : ''}';
+
+        return Card(
+          margin: EdgeInsets.zero,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(24),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(_testTypeIcon(test.type),
+                        size: 20, color: theme.colorScheme.primary),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(test.title,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 4),
+                        Text(counts, style: theme.textTheme.bodySmall),
+                        if (test.createdAt != null) ...[
+                          const SizedBox(height: 2),
+                          Text(formatDateTime(test.createdAt!),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      color: theme.colorScheme.onSurfaceVariant),
+                ],
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(t.title,
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                    const SizedBox(height: 4),
-                    Text(counts, style: theme.textTheme.bodySmall),
-                    if (t.createdAt != null) ...[
-                      const SizedBox(height: 2),
-                      Text(formatDateTime(t.createdAt!),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right_rounded,
-                  color: theme.colorScheme.onSurfaceVariant),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
+    );
+  }
+}
+
+/// One test row (desktop): a premium-SaaS row with a hover state instead of
+/// the mobile row's Material ripple, and a clearer title/secondary/tertiary
+/// weight split (title strongest, candidate/completion counts secondary,
+/// date tertiary) per the desktop redesign brief. Same [_TestCounts]
+/// data-loading, same [onTap] destination as mobile.
+class _DesktopTestRow extends StatefulWidget {
+  final TestSummary test;
+  final VoidCallback onTap;
+  const _DesktopTestRow({required this.test, required this.onTap});
+
+  @override
+  State<_DesktopTestRow> createState() => _DesktopTestRowState();
+}
+
+class _DesktopTestRowState extends State<_DesktopTestRow> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return _TestCounts(
+      test: widget.test,
+      builder: (context, total, completed) {
+        final theme = Theme.of(context);
+        final scheme = theme.colorScheme;
+        final counts = total < 0
+            ? 'Loading…'
+            : '$total candidate(s)'
+                '${completed >= 0 ? ' · $completed completed' : ''}';
+
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovering = true),
+          onExit: (_) => setState(() => _hovering = false),
+          child: GestureDetector(
+            onTap: widget.onTap,
+            behavior: HitTestBehavior.opaque,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              decoration: BoxDecoration(
+                color: _hovering
+                    ? scheme.surfaceContainerHighest.withValues(alpha: 0.4)
+                    : scheme.surfaceContainerHighest.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(DesktopTokens.cardRadius),
+                border: Border.all(
+                  color: _hovering
+                      ? scheme.primary.withValues(alpha: 0.3)
+                      : scheme.outlineVariant.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(_testTypeIcon(widget.test.type),
+                        size: 20, color: scheme.primary),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.test.title,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 5),
+                        Text(counts,
+                            style: theme.textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant)),
+                        if (widget.test.createdAt != null) ...[
+                          const SizedBox(height: 2),
+                          Text(formatDateTime(widget.test.createdAt!),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant
+                                      .withValues(alpha: 0.75),
+                                  fontSize: 11.5)),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      color: _hovering
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

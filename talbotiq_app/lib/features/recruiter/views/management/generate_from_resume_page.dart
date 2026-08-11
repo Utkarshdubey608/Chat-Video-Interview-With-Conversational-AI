@@ -88,6 +88,14 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
         _busy = false;
         _results = questions;
         _selected.addAll(List.generate(questions.length, (i) => i));
+        // A successful call that yields no questions (e.g. the requested
+        // technical/non-technical split has nothing to match in this résumé)
+        // is otherwise indistinguishable from the button doing nothing.
+        if (questions.isEmpty) {
+          _error = 'No questions could be generated from this résumé for the '
+              'requested split. Try adjusting the technical / non-technical '
+              'counts or role.';
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -136,17 +144,26 @@ class _GenerateFromResumePageState extends State<GenerateFromResumePage> {
     nameCtrl.dispose();
     if (name == null || name.isEmpty) return;
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     final now = DateTime.now().toIso8601String();
-    context.read<RecruiterStore>().upsertQuestionSet(QuestionSet(
-          id: recruiterId('set'),
-          name: name,
-          questions: [for (final q in chosen) q.toFixedQuestion()],
-          createdAt: now,
-          updatedAt: now,
-        ));
+    final saved = await context.read<RecruiterStore>().upsertQuestionSet(
+          QuestionSet(
+            id: recruiterId('set'),
+            name: name,
+            questions: [for (final q in chosen) q.toFixedQuestion()],
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    if (!mounted) return;
     Navigator.of(context).pop();
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved “$name” (${chosen.length} questions).')));
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Saved “$name” (${chosen.length} questions).'
+          : 'Applied “$name” (${chosen.length} questions) for this session, '
+              'but the save did not stick — it may not survive a restart. '
+              'Try again.'),
+    ));
   }
 
   @override

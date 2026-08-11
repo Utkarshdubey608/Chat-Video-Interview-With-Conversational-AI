@@ -6,6 +6,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'package:talbotiq/shared/widgets/adaptive_nav_scaffold.dart';
 import 'package:talbotiq/shared/widgets/floating_nav_bar.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
@@ -24,11 +25,31 @@ class CandidateShell extends StatefulWidget {
 class _CandidateShellState extends State<CandidateShell> {
   int _index = 0;
 
+  static const _items = [
+    FloatingNavItem(
+        icon: Icons.home_outlined,
+        activeIcon: Icons.home_rounded,
+        label: 'Home'),
+    FloatingNavItem(
+        icon: Icons.smart_toy_outlined,
+        activeIcon: Icons.smart_toy,
+        label: 'Practice'),
+    FloatingNavItem(
+        icon: Icons.history_outlined,
+        activeIcon: Icons.history_rounded,
+        label: 'History'),
+    FloatingNavItem(
+        icon: Icons.settings_outlined,
+        activeIcon: Icons.settings_rounded,
+        label: 'Settings'),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+    return AdaptiveNavScaffold(
+      currentIndex: _index,
+      onSelect: (i) => setState(() => _index = i),
+      items: _items,
       body: IndexedStack(
         index: _index,
         children: const [
@@ -36,28 +57,6 @@ class _CandidateShellState extends State<CandidateShell> {
           PracticePage(),
           PracticeHistoryPage(),
           _CandidateSettingsTab(),
-        ],
-      ),
-      bottomNavigationBar: FloatingNavBar(
-        currentIndex: _index,
-        onSelect: (i) => setState(() => _index = i),
-        items: const [
-          FloatingNavItem(
-              icon: Icons.home_outlined,
-              activeIcon: Icons.home_rounded,
-              label: 'Home'),
-          FloatingNavItem(
-              icon: Icons.smart_toy_outlined,
-              activeIcon: Icons.smart_toy,
-              label: 'Practice'),
-          FloatingNavItem(
-              icon: Icons.history_outlined,
-              activeIcon: Icons.history_rounded,
-              label: 'History'),
-          FloatingNavItem(
-              icon: Icons.settings_outlined,
-              activeIcon: Icons.settings_rounded,
-              label: 'Settings'),
         ],
       ),
     );

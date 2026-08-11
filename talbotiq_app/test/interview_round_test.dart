@@ -84,10 +84,18 @@ void main() {
     });
 
     test('willAutoClose only when a future deadline is still pending', () {
-      expect(round(closesAt: future).willAutoClose, isTrue);
-      expect(round(closesAt: past).willAutoClose, isFalse);
+      // Unlike stateAt(now), willAutoClose reads the real wall clock (it
+      // drives a live "closes in 2d" UI hint, not a point-in-time query), so
+      // its future/past must be relative to DateTime.now() — not the fixed
+      // `now` above, which this suite's other cases inject explicitly into
+      // stateAt() and so never actually elapses.
+      final realFuture = DateTime.now().add(const Duration(days: 1));
+      final realPast = DateTime.now().subtract(const Duration(days: 1));
+      expect(round(closesAt: realFuture).willAutoClose, isTrue);
+      expect(round(closesAt: realPast).willAutoClose, isFalse);
       expect(round().willAutoClose, isFalse);
-      expect(round(closesAt: future, closedAt: now).willAutoClose, isFalse);
+      expect(
+          round(closesAt: realFuture, closedAt: now).willAutoClose, isFalse);
     });
   });
 

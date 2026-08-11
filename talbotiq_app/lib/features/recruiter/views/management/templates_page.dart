@@ -27,8 +27,9 @@ class TemplatesPage extends StatelessWidget {
     );
   }
 
-  void _duplicate(BuildContext context, InterviewTemplate t) {
+  Future<void> _duplicate(BuildContext context, InterviewTemplate t) async {
     final store = context.read<RecruiterStore>();
+    final messenger = ScaffoldMessenger.of(context);
     final now = DateTime.now().toIso8601String();
     // Round-trip through JSON so every nested config copies faithfully, then
     // stamp a fresh id/name/timestamps. Uses only public model + store API.
@@ -37,10 +38,13 @@ class TemplatesPage extends StatelessWidget {
     json['name'] = '${t.name} (copy)';
     json['createdAt'] = now;
     json['updatedAt'] = now;
-    store.upsertTemplate(InterviewTemplate.fromJson(json));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Duplicated “${t.name}”.')),
-    );
+    final saved = await store.upsertTemplate(InterviewTemplate.fromJson(json));
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Duplicated “${t.name}”.'
+          : 'Duplicated “${t.name}”, but the save did not stick — it may '
+              'disappear on restart. Try again.'),
+    ));
   }
 
   Future<void> _delete(BuildContext context, InterviewTemplate t) async {
@@ -67,8 +71,13 @@ class TemplatesPage extends StatelessWidget {
       ),
     );
     if (ok != true) return;
-    store.deleteTemplate(t.id);
-    messenger.showSnackBar(SnackBar(content: Text('Deleted “${t.name}”.')));
+    final saved = await store.deleteTemplate(t.id);
+    messenger.showSnackBar(SnackBar(
+      content: Text(saved
+          ? 'Deleted “${t.name}”.'
+          : 'Removed “${t.name}” from this session, but the change did not '
+              'save — it may come back on restart. Try again.'),
+    ));
   }
 
   @override
