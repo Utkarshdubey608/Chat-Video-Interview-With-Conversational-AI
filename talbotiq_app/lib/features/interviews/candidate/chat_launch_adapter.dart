@@ -133,7 +133,38 @@ Widget buildChatRunnerPage({
     // Recruiter-configured whole-interview limit; null = no cap.
     maxDurationSeconds:
         interview.durationMinutes > 0 ? interview.durationMinutes * 60 : null,
-    onFinished: (completedSession, report) {
+    onFinished: (completedSession, report, scoringError) {
+      // Mirror the same integrity signal the video track writes, so the
+      // recruiter's evaluate screen surfaces "left the app N times" for chat
+      // interviews too. Only written when it actually happened.
+      final integrity = completedSession.tabSwitchCount > 0
+          ? {'leftAppCount': completedSession.tabSwitchCount}
+          : null;
+      final responses = [
+        for (final g in primaryQuestionGroups(completedSession.transcript ?? []))
+          {'question': g.question, 'answer': g.answer},
+      ];
+
+      // A DEGRADED report is the heuristic fallback: its scores come from answer
+      // LENGTH, not content (see conversationHeuristicReport). It used to be
+      // stored as `evaluatedBy: 'ai'`, which showed the recruiter a fabricated
+      // number indistinguishable from a real evaluation and let it be published
+      // to the candidate. Store the failure instead — no score, the reason, and
+      // the raw answers so the recruiter can retry scoring in one tap.
+      if (report.degraded == true) {
+        repository.completeWithoutScore(
+          interview.id,
+          error: scoringError?.trim().isNotEmpty == true
+              ? scoringError!.trim()
+              // No exception means the scorer was never reachable in the first
+              // place, which is a configuration problem, not a transient one.
+              : 'AI scoring was unavailable, so no score was produced.',
+          responses: responses,
+          integrity: integrity,
+        );
+        return;
+      }
+
       // Store an UNPUBLISHED canonical result so the recruiter can review,
       // edit and publish it. The candidate does not see it yet.
       repository.completeWithResult(interview.id, {
@@ -144,15 +175,8 @@ Widget buildChatRunnerPage({
         'improvements': report.improvements ?? const <String>[],
         'evaluatedBy': 'ai',
         'detail': report.toJson(),
-        // Mirror the same integrity signal the video track writes, so the
-        // recruiter's evaluate screen surfaces "left the app N times" for chat
-        // interviews too. Only written when it actually happened.
-        if (completedSession.tabSwitchCount > 0)
-          'integrity': {'leftAppCount': completedSession.tabSwitchCount},
-        'responses': [
-          for (final g in primaryQuestionGroups(completedSession.transcript ?? []))
-            {'question': g.question, 'answer': g.answer},
-        ],
+        if (integrity != null) 'integrity': integrity,
+        'responses': responses,
       });
     },
   );

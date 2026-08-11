@@ -127,14 +127,11 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
     _placeholderWritten = true;
     // Best-effort — must not crash on a network hiccup (see updateStatus's
     // comment above on unawaited Futures and uncaught async errors).
-    repo.completeWithResult(interview.id, {
-      'overallScore': 0,
-      'summary': '',
-      'recommendation': '',
-      'strengths': const <String>[],
-      'improvements': const <String>[],
-      'evaluatedBy': '',
-    }).catchError((e) => debugPrint('completeWithResult(placeholder) failed: $e'));
+    // No score key at all — not 0. A 0 would rank this candidate last on the
+    // round leaderboard while the AI is still working on them.
+    repo
+        .completeWithoutScore(interview.id)
+        .catchError((e) => debugPrint('completeWithoutScore(placeholder) failed: $e'));
   }
 
   // Once the AI pipeline finishes, its InterviewResult appears in AppStore.
@@ -200,19 +197,15 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
     _fallbackSubmitted = true;
     final geminiError = store.processingError;
     try {
-      await repo.completeWithResult(interview.id, {
-        'overallScore': 0,
-        'summary': '',
-        'recommendation': '',
-        'strengths': const <String>[],
-        'improvements': const <String>[],
-        'evaluatedBy': '',
-        'responses': _buildResponses(store.sessionTranscript, interview.questions),
-        if (geminiError != null && geminiError.isNotEmpty)
-          'evaluationError': geminiError,
-        if (store.integrityLeftAppCount > 0)
-          'integrity': {'leftAppCount': store.integrityLeftAppCount},
-      });
+      await repo.completeWithoutScore(
+        interview.id,
+        error: geminiError,
+        responses:
+            _buildResponses(store.sessionTranscript, interview.questions),
+        integrity: store.integrityLeftAppCount > 0
+            ? {'leftAppCount': store.integrityLeftAppCount}
+            : null,
+      );
       store.setProcessingStage(InterviewProcessingStage.submittedWithoutScoring);
     } catch (e) {
       // A genuine hard failure — even the raw-data fallback couldn't be

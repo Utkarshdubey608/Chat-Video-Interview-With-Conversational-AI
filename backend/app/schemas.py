@@ -117,3 +117,83 @@ class PreviewTokenRequest(BaseModel):
     voice_name: str = Field(default="", max_length=60)
     # Capped again server-side in app.voice — never trust the client's limit.
     sample_text: str = Field(default="", max_length=400)
+
+
+# --- Résumé rounds ---
+class ResumeExtractRequest(BaseModel):
+    """A PDF to transcribe. Base64 because it travels alongside JSON fields.
+
+    The generous max_length is a first gate only: it bounds the *encoded* string,
+    while `app.resume.MAX_PDF_BYTES` bounds the decoded file. Base64 inflates by
+    4/3, so ~14 MB of text is the ceiling for a 10 MB PDF.
+    """
+
+    pdf_base64: str = Field(min_length=1, max_length=14_000_000, alias="pdfBase64")
+    file_name: str | None = Field(default=None, max_length=300, alias="fileName")
+
+    model_config = {"populate_by_name": True}
+
+
+class ResumeExtractResponse(BaseModel):
+    text: str
+    char_count: int = Field(serialization_alias="charCount")
+    # True when the résumé was longer than the server stores/prompts with, so the
+    # UI can say so rather than silently showing a clipped résumé.
+    truncated: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+class ResumeScoreRequest(BaseModel):
+    """Score a résumé against its round's criteria and store the result.
+
+    No criteria, role or prompt here on purpose: those are resolved server-side
+    from the interview and its round, so a candidate cannot lower the bar they are
+    being measured against. See `app.resume` for why the score is computed here at
+    all.
+    """
+
+    interview_id: str = Field(min_length=1, max_length=200, alias="interviewId")
+    resume_text: str = Field(min_length=30, max_length=200_000, alias="resumeText")
+    file_name: str | None = Field(default=None, max_length=300, alias="fileName")
+
+    model_config = {"populate_by_name": True}
+
+
+class ResumeSkillScore(BaseModel):
+    name: str
+    required: bool = False
+    score: int = 0
+    evidence: str = ""
+
+
+class ResumeScore(BaseModel):
+    """The scorer's output.
+
+    `alias` rather than `serialization_alias` (the convention elsewhere in this
+    file) because this model is built FROM the camelCase map that
+    `app.resume.normalise_score` produces and that Firestore stores — so the
+    camelCase names have to validate on the way in as well as serialise on the
+    way out.
+    """
+
+    overall_score: int = Field(alias="overallScore")
+    verdict: str
+    summary: str = ""
+    experience_years: float | None = Field(default=None, alias="experienceYears")
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
+    skills: list[ResumeSkillScore] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
+class ResumeScoreResponse(BaseModel):
+    interview_id: str = Field(serialization_alias="interviewId")
+    score: ResumeScore
+    # How much of the résumé was actually scored, so the recruiter's raw-text
+    # view and the score refer to the same thing.
+    char_count: int = Field(serialization_alias="charCount")
+    model: str
+
+    model_config = {"populate_by_name": True}

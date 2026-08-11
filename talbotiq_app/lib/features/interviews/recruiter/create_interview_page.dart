@@ -27,7 +27,10 @@ import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_models.dart';
 import 'package:talbotiq/features/recruiter/voice/voice_picker.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview_round.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
+import 'package:talbotiq/features/interviews/recruiter/round_timeline_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/widgets/round_step_tile.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
 import 'package:talbotiq/features/mailer/models/email_template.dart';
@@ -37,7 +40,41 @@ import 'package:talbotiq/features/mailer/widgets/notify_candidates_card.dart';
 class CreateInterviewPage extends StatefulWidget {
   /// When provided, the page edits this interview instead of creating a new one.
   final Interview? existing;
-  const CreateInterviewPage({super.key, this.existing});
+
+  /// Round-configuration mode: this form configures ONE round of a timeline and
+  /// returns it via `Navigator.pop`, writing nothing itself.
+  ///
+  /// This mode exists so a round is configured through the SAME fields, labels,
+  /// validation and behaviour as creating a standalone interview of that type.
+  /// There was previously a second, simplified round editor; two config surfaces
+  /// for one thing meant they drifted, and a recruiter met different options
+  /// depending on how they arrived.
+  final bool roundConfigMode;
+
+  /// The round being configured. Null in [roundConfigMode] means a new round.
+  final InterviewRound? roundDraft;
+
+  /// Timeline position for a new round.
+  final int roundOrder;
+
+  /// The test's shared delivery config, used to pre-fill a NEW round so the
+  /// recruiter does not re-pick the avatar and language for every stage.
+  final Map<String, dynamic>? sharedConfig;
+
+  const CreateInterviewPage({super.key, this.existing})
+      : roundConfigMode = false,
+        roundDraft = null,
+        roundOrder = 0,
+        sharedConfig = null;
+
+  /// Opens this form as the configuration screen for one round.
+  const CreateInterviewPage.configureRound({
+    super.key,
+    this.roundDraft,
+    this.roundOrder = 0,
+    this.sharedConfig,
+  })  : roundConfigMode = true,
+        existing = null;
 
   @override
   State<CreateInterviewPage> createState() => _CreateInterviewPageState();
@@ -45,6 +82,38 @@ class CreateInterviewPage extends StatefulWidget {
 
 class _CreateInterviewPageState extends State<CreateInterviewPage> {
   InterviewType _type = InterviewType.video;
+
+  /// Single stage (the original behaviour) vs a multi-round pipeline.
+  ///
+  /// The difference that matters is WHEN candidates see anything. Single-round
+  /// assigns immediately, as it always has. Multi-round designs the whole
+  /// timeline first and then assigns candidates to ROUND 1 ONLY — so a candidate
+  /// never sees a half-built test, and never ends up holding both a round-less
+  /// assignment and a round one for the same test.
+  bool _multiRound = false;
+
+  /// The timeline being built, in running order. Held in memory because rounds
+  /// live at `tests/{testId}/rounds` and that test id does not exist until save.
+  /// Their `id` is empty until then.
+  final List<InterviewRound> _rounds = [];
+
+  // ── Round-configuration mode only ────────────────────────────────────────
+  //
+  // The kind is held separately from [_type] because a round can be a résumé
+  // screen, which is not an interview track at all.
+  RoundKind _roundKind = RoundKind.chat;
+  final _requiredSkillsController = TextEditingController();
+  final _niceToHaveController = TextEditingController();
+  double? _minYears;
+  int? _minScore;
+  AdvanceMode _advanceMode = AdvanceMode.manual;
+  num? _advanceValue;
+
+  bool get _isRoundConfig => widget.roundConfigMode;
+
+  /// The rounds already on an EXISTING test, shown in the edit form so a
+  /// recruiter can jump straight into configuring one. Null while loading.
+  List<InterviewRound>? _existingRounds;
 
   // Chat track only: adaptive (AI generates résumé-grounded questions) vs the
   // fixed question list. Video always uses the fixed list.
@@ -128,12 +197,15 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   void initState() {
     super.initState();
     final existing = widget.existing;
-    if (existing != null) {
+    if (_isRoundConfig) {
+      _hydrateForRound();
+    } else if (existing != null) {
       _hydrateFrom(existing);
       _recruiterName = existing.recruiterName;
       // Open Advanced when this interview was customised, so reopening it never
       // hides a choice the recruiter already made.
       _advancedExpanded = _advancedDifferences.isNotEmpty;
+      _loadExistingRounds(existing);
     } else {
       // Pre-fill the prompt with the app's default interviewer prompt and the
       // five default questions.
@@ -154,6 +226,77 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       });
     }
     _loadReplicas();
+  }
+
+  /// Fills this form from the round being configured.
+  ///
+  /// Routed through [InterviewRound.assignTo] and then [_hydrateFrom] rather than
+  /// unpacking `config` by hand. That is the same code path a candidate's
+  /// assignment goes through, so every field this form offers is guaranteed to
+  /// round-trip — a config key the form can edit but the hydrator forgot would
+  /// otherwise silently reset each time the round was reopened.
+  void _hydrateForRound() {
+    final draft = widget.roundDraft;
+    _roundKind = draft?.kind ?? RoundKind.chat;
+
+    // A new round starts from the test's shared delivery config, so the avatar
+    // and language are not re-picked per stage.
+    final source = draft ??
+        InterviewRound(
+          id: '',
+          testId: '',
+          recruiterId: '',
+          order: widget.roundOrder,
+          title: '',
+          kind: _roundKind,
+          config: widget.sharedConfig ?? const {},
+        );
+
+    _hydrateFrom(source.assignTo(
+      candidateEmail: '',
+      recruiterEmail: '',
+      testTitle: source.title,
+    ));
+
+    // assignTo has no notion of these — they are round concepts.
+    _titleController.text = draft?.title ?? '';
+    _candidateEmailControllers.first.text = '';
+    _opensClosesFromRound(source);
+    _requiredSkillsController.text =
+        source.criteria.requiredSkills.join(', ');
+    _niceToHaveController.text = source.criteria.niceToHave.join(', ');
+    _minYears = source.criteria.minYears;
+    _minScore = source.criteria.minScore;
+    _advanceMode = source.advance.mode;
+    _advanceValue = source.advance.value;
+
+    // A brand-new interview round gets the same starter questions a standalone
+    // interview does, rather than an empty list the recruiter must fill blind.
+    if (draft == null && _roundKind.isInterview) {
+      _promptController.text = DraftForm.defaults().conversationalContext;
+      _questionControllers
+        ..clear()
+        ..addAll(_defaultQuestions.map((q) => TextEditingController(text: q)));
+    }
+    _advancedExpanded = false;
+  }
+
+  void _opensClosesFromRound(InterviewRound r) {
+    _availableFrom = r.opensAt;
+    _expiresAt = r.closesAt;
+  }
+
+  /// Loads the rounds of the test this assignment belongs to, so the edit form
+  /// can offer "configure that round" instead of nothing.
+  Future<void> _loadExistingRounds(Interview existing) async {
+    final testId =
+        existing.testId.isNotEmpty ? existing.testId : existing.id;
+    final rounds = await context.read<InterviewRepository>().fetchRounds(
+          testId: testId,
+          recruiterId: existing.recruiterId,
+        );
+    if (!mounted) return;
+    setState(() => _existingRounds = rounds);
   }
 
   void _hydrateFrom(Interview i) {
@@ -389,7 +532,14 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     });
   }
 
-  Future<void> _save() async {
+  /// Saves the test. With [thenSetUpRounds], lands the recruiter in the timeline
+  /// editor instead of returning to the dashboard.
+  ///
+  /// The rounds editor cannot be part of THIS form: rounds live at
+  /// `tests/{testId}/rounds`, and that test id does not exist until the save
+  /// below has run. So "set up rounds" saves first and hands over, rather than
+  /// collecting rounds here and writing them afterwards.
+  Future<void> _save({bool thenSetUpRounds = false}) async {
     // Re-entrancy guard set BEFORE any await so a fast double-tap can't run the
     // save (and create duplicate interviews) twice.
     if (_saving) return;
@@ -421,14 +571,38 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       fail('Enter valid candidate email(s): ${invalidEmails.join(', ')}');
       return;
     }
-    if (!_isAdaptiveChat && questions.isEmpty) {
-      fail('Add at least one question.');
-      return;
-    }
-    if (_type == InterviewType.video &&
-        _replicaIdController.text.trim().isEmpty) {
-      fail('Pick or enter an avatar (replica) for video.');
-      return;
+    if (_multiRound) {
+      if (_rounds.isEmpty) {
+        fail('Add at least one round, or switch back to a single round.');
+        return;
+      }
+      if (_hasVideoRound && _replicaIdController.text.trim().isEmpty) {
+        fail('Pick an avatar — this timeline has a video round.');
+        return;
+      }
+      // Each round validates its own dates in the round editor; what cannot be
+      // checked there is the ORDER, because a round does not know its neighbours.
+      for (var i = 1; i < _rounds.length; i++) {
+        final prev = _rounds[i - 1];
+        final cur = _rounds[i];
+        if (prev.closesAt != null &&
+            cur.closesAt != null &&
+            !cur.closesAt!.isAfter(prev.closesAt!)) {
+          fail('"${cur.title}" closes before "${prev.title}" does. '
+              'Later rounds should close later, or leave their dates open.');
+          return;
+        }
+      }
+    } else {
+      if (!_isAdaptiveChat && questions.isEmpty) {
+        fail('Add at least one question.');
+        return;
+      }
+      if (_type == InterviewType.video &&
+          _replicaIdController.text.trim().isEmpty) {
+        fail('Pick or enter an avatar (replica) for video.');
+        return;
+      }
     }
 
     // The access window stays OPTIONAL (unchanged behaviour). We only reject the
@@ -564,6 +738,18 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       // email can carry that candidate's own link.
       final invites = <String, String>{};
 
+      if (_multiRound && !_isEdit) {
+        await _saveMultiRound(
+          repo: repo,
+          testId: testId,
+          title: title,
+          recruiterId: user.uid,
+          recruiterEmail: user.email ?? '',
+          candidates: unique,
+        );
+        return;
+      }
+
       if (_isEdit) {
         final existing = widget.existing!;
         final entries = unique.entries.toList();
@@ -592,7 +778,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         }
         // Keep the test's metadata doc in step with the edited title/type so
         // the dashboard's test list stays accurate.
-        await repo.upsertTest(TestSummary(
+        final summary = TestSummary(
           testId: testId,
           recruiterId: existing.recruiterId,
           title: _titleController.text.trim().isEmpty
@@ -600,17 +786,19 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               : _titleController.text.trim(),
           type: _type,
           createdAt: existing.createdAt,
-        ));
+        );
+        await repo.upsertTest(summary);
         final mailNote = await _emailInvites(invites);
         if (!mounted) return;
-        Navigator.of(context).pop();
         final added = entries.length - 1;
         final saved = added > 0
             ? 'Interview updated; $added more candidate${added == 1 ? '' : 's'} assigned.'
             : 'Interview updated.';
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(mailNote == null ? saved : '$saved $mailNote'),
-        ));
+        _finish(
+          summary: summary,
+          thenSetUpRounds: thenSetUpRounds,
+          message: mailNote == null ? saved : '$saved $mailNote',
+        );
         return;
       }
 
@@ -627,7 +815,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       }
       // One metadata doc for the whole batch, so the dashboard can list this
       // test without reading its candidates. createdAt is left to the server.
-      await repo.upsertTest(TestSummary(
+      final summary = TestSummary(
         testId: testId,
         recruiterId: user.uid,
         title: _titleController.text.trim().isEmpty
@@ -635,14 +823,16 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             : _titleController.text.trim(),
         type: _type,
         createdAt: null,
-      ));
+      );
+      await repo.upsertTest(summary);
       final mailNote = await _emailInvites(invites);
       if (!mounted) return;
-      Navigator.of(context).pop();
       final n = unique.length;
       final saved = 'Interview assigned to $n candidate${n == 1 ? '' : 's'}.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(mailNote == null ? saved : '$saved $mailNote')),
+      _finish(
+        summary: summary,
+        thenSetUpRounds: thenSetUpRounds,
+        message: mailNote == null ? saved : '$saved $mailNote',
       );
     } catch (e) {
       if (mounted) {
@@ -652,6 +842,289 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         });
       }
     }
+  }
+
+  /// The delivery settings every round of this test inherits.
+  ///
+  /// Merged UNDER each round's own config, so a round's questions, prompt and
+  /// length win while avatar, voice, language and branding come from here. This is
+  /// what keeps a recruiter from choosing an avatar four times.
+  Map<String, dynamic> _sharedRoundConfig(String title) => {
+        'language': _language,
+        'avatar': AvatarConfig(
+          replicaId: _replicaIdController.text.trim(),
+          personaId: _personaIdController.text.trim().isEmpty
+              ? null
+              : _personaIdController.text.trim(),
+        ).toMap(),
+        'maxAttempts': _maxAttempts,
+        if (_hasVoiceRound) 'voiceName': _voiceName,
+        if (_hasVoiceRound) 'voicePersonaId': _voicePersonaId,
+        'integrity': {
+          'enforceFullscreen': false,
+          'detectTabSwitch': _detectTabSwitch,
+          'disablePasteInAnswers': _disablePaste,
+          'disableCopy': _disableCopy,
+          'maxTabSwitchWarnings': 3,
+          'logEvents': true,
+        },
+        if (_welcomeController.text.trim().isNotEmpty)
+          'branding': {
+            'companyName': _recruiterName ?? 'TalbotIQ',
+            'accentColor': '#0d5c3a',
+            'welcomeMessage': _welcomeController.text.trim(),
+          },
+        if (_chatTimerEnabled)
+          'chatTimer': {
+            'enabled': true,
+            'perQuestionSeconds': _chatTimerPerQuestion.clamp(30, 600),
+            'thinkingSeconds': _chatTimerThinking.clamp(0, 300),
+            'allowEarlySubmit': true,
+            'warningThresholdSeconds': 15,
+            'autoSubmitOnExpiry': _chatTimerAutoSubmit,
+          },
+      };
+
+  /// Writes a multi-round test: the test doc, every round, and assignments for
+  /// ROUND 1 ONLY.
+  ///
+  /// Round 1 only is the whole point of this mode. Assigning every round up front
+  /// would put four items on the candidate's screen at once and let them take
+  /// round 3 before round 1; they are moved on from the timeline as each round
+  /// closes. It is also why nothing is visible while the recruiter is still
+  /// designing — until this method runs, no `interviews` document exists at all.
+  ///
+  /// Order of writes matters: rounds before assignments, because
+  /// `InterviewRound.assignTo` copies the round's config and window onto each
+  /// candidate and needs the round's real id.
+  Future<void> _saveMultiRound({
+    required InterviewRepository repo,
+    required String testId,
+    required String title,
+    required String recruiterId,
+    required String recruiterEmail,
+    required Map<String, String> candidates,
+  }) async {
+    final shared = _sharedRoundConfig(title);
+
+    // The test's `type` is only used for the dashboard's row icon; the first
+    // interview round is the most representative thing to show.
+    final firstInterviewKind = _rounds
+        .map((r) => r.kind)
+        .firstWhere((k) => k.isInterview, orElse: () => RoundKind.chat);
+
+    await repo.upsertTest(TestSummary(
+      testId: testId,
+      recruiterId: recruiterId,
+      title: title,
+      type: firstInterviewKind.interviewType ?? InterviewType.chat,
+      createdAt: null,
+    ));
+
+    InterviewRound? firstRound;
+    for (var i = 0; i < _rounds.length; i++) {
+      final draft = _rounds[i];
+      final round = InterviewRound(
+        id: '',
+        testId: testId,
+        recruiterId: recruiterId,
+        order: i,
+        title: draft.title,
+        kind: draft.kind,
+        // Shared first so the round's own keys win.
+        config: draft.kind == RoundKind.resume
+            ? const {}
+            : {...shared, ...draft.config},
+        opensAt: draft.opensAt,
+        closesAt: draft.closesAt,
+        criteria: draft.criteria,
+        advance: draft.advance,
+      );
+      final id = await repo.createRound(round);
+      if (i == 0) firstRound = round.copyWith(id: id);
+    }
+
+    final invites = <String, String>{};
+    if (firstRound != null) {
+      // Written one at a time rather than through assignCandidatesToRound's
+      // batch, because each invite email needs its candidate's own interview id
+      // and a batch does not hand those back.
+      for (final entry in candidates.entries) {
+        final id = await repo.create(firstRound.assignTo(
+          candidateEmail: entry.value,
+          recruiterEmail: recruiterEmail,
+          recruiterName: _recruiterName,
+          testTitle: title,
+        ));
+        invites[entry.value] = id;
+      }
+    }
+
+    final mailNote = await _emailInvites(invites);
+    if (!mounted) return;
+
+    final n = candidates.length;
+    final rounds = _rounds.length;
+    final saved = '$rounds-round test created. '
+        'Round 1 assigned to $n candidate${n == 1 ? '' : 's'}.';
+    _finish(
+      summary: TestSummary(
+        testId: testId,
+        recruiterId: recruiterId,
+        title: title,
+        type: firstInterviewKind.interviewType ?? InterviewType.chat,
+        createdAt: null,
+      ),
+      // Straight to the timeline: the recruiter has just designed a pipeline and
+      // the timeline is where they will run it from.
+      thenSetUpRounds: true,
+      message: mailNote == null ? saved : '$saved $mailNote',
+    );
+  }
+
+  /// Round-config mode's "save": validate, build the round, hand it back.
+  ///
+  /// Writes nothing. Whoever opened this screen owns persistence — the timeline
+  /// calls `createRound`/`updateRound`, and the create form holds the draft in
+  /// memory until the test exists.
+  void _saveRound() {
+    final title = _titleController.text.trim();
+    void fail(String message) => setState(() => _error = message);
+
+    if (title.isEmpty) {
+      fail('Give the round a name candidates will recognise.');
+      return;
+    }
+    if (_roundKind.isInterview && _questions.isEmpty && !_isAdaptiveChat) {
+      fail('Add at least one question — an interview round with none cannot be '
+          'taken.');
+      return;
+    }
+    if (_roundKind == RoundKind.video &&
+        _replicaIdController.text.trim().isEmpty) {
+      fail('Pick or enter an avatar (replica) for a video round.');
+      return;
+    }
+    if (_availableFrom != null &&
+        _expiresAt != null &&
+        !_expiresAt!.isAfter(_availableFrom!)) {
+      fail('The round has to close after it opens.');
+      return;
+    }
+    if (_advanceMode != AdvanceMode.manual &&
+        (_advanceValue == null || _advanceValue! <= 0)) {
+      fail(_advanceMode == AdvanceMode.topN
+          ? 'Say how many candidates advance.'
+          : 'Set the score candidates must reach to advance.');
+      return;
+    }
+
+    final draft = widget.roundDraft;
+    Navigator.of(context).pop(InterviewRound(
+      id: draft?.id ?? '',
+      testId: draft?.testId ?? '',
+      recruiterId: draft?.recruiterId ??
+          (FirebaseAuth.instance.currentUser?.uid ?? ''),
+      order: draft?.order ?? widget.roundOrder,
+      title: title,
+      kind: _roundKind,
+      // A résumé round has no session, so it carries no delivery config at all.
+      config: _roundKind == RoundKind.resume ? const {} : _roundContentConfig(),
+      opensAt: _availableFrom,
+      closesAt: _expiresAt,
+      // Lifecycle is never edited here — ending a round is its own action.
+      closedAt: draft?.closedAt,
+      closedBy: draft?.closedBy,
+      criteria: RoundCriteria(
+        requiredSkills: _splitList(_requiredSkillsController.text),
+        niceToHave: _splitList(_niceToHaveController.text),
+        minYears: _minYears,
+        minScore: _minScore,
+      ),
+      advance: RoundAdvance(mode: _advanceMode, value: _advanceValue),
+      createdAt: draft?.createdAt,
+    ));
+  }
+
+  static List<String> _splitList(String raw) => raw
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+
+  /// This round's config, in exactly the shape [_hydrateForRound] reads back.
+  Map<String, dynamic> _roundContentConfig() => {
+        'prompt': _promptController.text.trim(),
+        'questions': _isAdaptiveChat ? const <String>[] : _questions,
+        'adaptive': _isAdaptiveChat,
+        if (_isAdaptiveChat)
+          'adaptiveConfig': {
+            'role': _titleController.text.trim(),
+            'numberOfQuestions': _adaptiveNumQuestions,
+            'allowFollowUps': _adaptiveFollowUps,
+            'difficulty': 'mixed',
+            'style': 'mix',
+          },
+        'collectResume': _roundKind == RoundKind.video && _collectResume,
+        'language': _language,
+        'durationMinutes': _durationMinutes,
+        'maxAttempts': _maxAttempts,
+        'avatar': AvatarConfig(
+          replicaId: _replicaIdController.text.trim(),
+          personaId: _personaIdController.text.trim().isEmpty
+              ? null
+              : _personaIdController.text.trim(),
+        ).toMap(),
+        if (_roundKind == RoundKind.voice) 'voiceName': _voiceName,
+        if (_roundKind == RoundKind.voice) 'voicePersonaId': _voicePersonaId,
+        if (_roundKind == RoundKind.chat)
+          'integrity': {
+            'enforceFullscreen': false,
+            'detectTabSwitch': _detectTabSwitch,
+            'disablePasteInAnswers': _disablePaste,
+            'disableCopy': _disableCopy,
+            'maxTabSwitchWarnings': 3,
+            'logEvents': true,
+          },
+        if (_welcomeController.text.trim().isNotEmpty)
+          'branding': {
+            'companyName': _recruiterName ?? 'TalbotIQ',
+            'accentColor': '#0d5c3a',
+            'welcomeMessage': _welcomeController.text.trim(),
+          },
+        if (_roundKind == RoundKind.chat && _chatTimerEnabled)
+          'chatTimer': {
+            'enabled': true,
+            'perQuestionSeconds': _chatTimerPerQuestion.clamp(30, 600),
+            'thinkingSeconds': _chatTimerThinking.clamp(0, 300),
+            'allowEarlySubmit': true,
+            'warningThresholdSeconds': 15,
+            'autoSubmitOnExpiry': _chatTimerAutoSubmit,
+          },
+      };
+
+  /// Leaves this form after a successful save, and reports what happened.
+  ///
+  /// [thenSetUpRounds] uses pushReplacement rather than push-on-top-of-pop: the
+  /// form is finished with, and replacing it means Back from the timeline goes to
+  /// the dashboard instead of reopening a form whose test already exists (which
+  /// is how duplicate assignments get made).
+  void _finish({
+    required TestSummary summary,
+    required bool thenSetUpRounds,
+    required String message,
+  }) {
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (thenSetUpRounds) {
+      navigator.pushReplacement(MaterialPageRoute(
+        builder: (_) => RoundTimelinePage(test: summary),
+      ));
+    } else {
+      navigator.pop();
+    }
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Emails every candidate their own interview link, using the template the
@@ -739,7 +1212,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEdit ? 'Edit Interview' : 'Create Interview'),
+        title: Text(_appBarTitle),
         elevation: 0,
       ),
       body: SafeArea(
@@ -751,11 +1224,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildJobDetailsCard(theme),
-                  _buildCandidatesCard(theme),
-                  _buildInterviewDesignCard(theme),
-                  _buildAdvancedCard(theme),
-                  _buildTimingAccessCard(theme),
+                  ..._sections(theme),
                   if (_error != null) ...[
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -771,11 +1240,17 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
                   ],
                   const SizedBox(height: 16),
                   CustomButton(
-                    text: _isEdit ? 'Save Changes' : 'Save & Assign Interview',
+                    text: _saveLabel,
                     isLoading: _saving,
                     width: double.infinity,
-                    onPressed: _saving ? () {} : _save,
+                    onPressed: _saving
+                        ? () {}
+                        : (_isRoundConfig ? _saveRound : _save),
                   ),
+                  if (!_multiRound && !_isEdit && !_isRoundConfig) ...[
+                    const SizedBox(height: 10),
+                    _buildSingleRoundNote(theme),
+                  ],
                   const SizedBox(height: 24),
                 ],
               ),
@@ -785,6 +1260,538 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       ),
     );
   }
+
+  String get _appBarTitle {
+    if (_isRoundConfig) {
+      return widget.roundDraft == null ? 'Add Round' : 'Configure Round';
+    }
+    return _isEdit ? 'Edit Interview' : 'Create Test';
+  }
+
+  String get _saveLabel {
+    if (_isRoundConfig) {
+      return widget.roundDraft == null ? 'Add round' : 'Save round';
+    }
+    if (_isEdit) return 'Save Changes';
+    // Name what actually happens: the whole timeline is created, but only round 1
+    // reaches candidates.
+    return _multiRound
+        ? 'Create test & assign round 1'
+        : 'Save & Assign Interview';
+  }
+
+  /// The form's sections, by workflow.
+  ///
+  /// Three shapes, deliberately built from the SAME section widgets:
+  ///
+  ///   round config — kind + name, then that kind's own configuration exactly as
+  ///                  a standalone interview of that type is configured;
+  ///   multi-round  — the timeline FIRST (it is the structure everything else
+  ///                  hangs off), then the roster and the shared delivery config;
+  ///   single round — unchanged from before any of this existed.
+  List<Widget> _sections(ThemeData theme) {
+    if (_isRoundConfig) {
+      return [
+        _buildRoundBasicsCard(theme),
+        // A résumé round has no session to design, no length and no avatar.
+        if (_roundKind.isInterview) ...[
+          _buildInterviewDesignCard(theme),
+          _buildAdvancedCard(theme),
+        ] else
+          _buildResumeCriteriaCard(theme),
+        _buildRoundWindowCard(theme),
+        _buildAdvanceCard(theme),
+      ];
+    }
+
+    if (_multiRound && !_isEdit) {
+      return [
+        // The timeline leads: it is what the recruiter is building, and every
+        // other section on this screen is in service of it.
+        _buildRoundStyleCard(theme),
+        _buildRoundsCard(theme),
+        _buildTestBasicsCard(theme),
+        _buildCandidatesCard(theme),
+        // Only when the timeline actually contains a round that needs it — an
+        // all-résumé pipeline has no avatar to choose.
+        if (_hasVideoRound || _hasVoiceRound)
+          _buildSharedDeliveryCard(theme),
+        _buildAdvancedCard(theme),
+      ];
+    }
+
+    return [
+      if (!_isEdit) _buildRoundStyleCard(theme),
+      _buildJobDetailsCard(theme),
+      // An EXISTING test's structure is managed from its timeline, not here, so
+      // this lists its rounds to configure and offers no way to add one.
+      if (_isEdit) _buildExistingRoundsCard(theme),
+      _buildCandidatesCard(theme),
+      _buildInterviewDesignCard(theme),
+      _buildAdvancedCard(theme),
+      _buildTimingAccessCard(theme),
+    ];
+  }
+
+  // ── Cards used by the round-config and multi-round workflows ──────────────
+
+  /// "Round Style": the first thing on the test builder, because it decides what
+  /// the rest of the screen is.
+  Widget _buildRoundStyleCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Round Style',
+        icon: Icons.tune,
+        child: _buildModeToggle(theme),
+      );
+
+  /// The round's kind and name — the round-config equivalent of Interview Basics.
+  Widget _buildRoundBasicsCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Round Basics',
+        icon: Icons.flag_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildKindToggle(theme),
+            const SizedBox(height: 20),
+            CustomInputField(
+              label: 'Round Name',
+              placeholder: 'e.g. Résumé screen, Technical round',
+              controller: _titleController,
+            ),
+          ],
+        ),
+      );
+
+  /// The test's title in multi-round mode. Same field as Interview Basics, minus
+  /// the interview-type toggle — each round carries its own kind.
+  Widget _buildTestBasicsCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Test Basics',
+        icon: Icons.assignment_outlined,
+        child: CustomInputField(
+          label: 'Job Title / Role',
+          placeholder: 'e.g. Senior Flutter Engineer',
+          controller: _titleController,
+        ),
+      );
+
+  /// What a résumé round is scored against.
+  Widget _buildResumeCriteriaCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Résumé Scoring',
+        icon: Icons.checklist_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Résumés are scored against these. Leave them empty and the résumé '
+              'is judged on the role in general.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            CustomInputField(
+              label: 'Must-have skills',
+              placeholder: 'Flutter, Dart, REST APIs',
+              controller: _requiredSkillsController,
+              maxLines: 2,
+            ),
+            const SizedBox(height: 14),
+            CustomInputField(
+              label: 'Nice-to-have skills',
+              placeholder: 'Firebase, CI/CD',
+              controller: _niceToHaveController,
+              maxLines: 2,
+            ),
+            const SizedBox(height: 8),
+            CustomToggle(
+              label: 'Require minimum experience',
+              description: 'Flag résumés below a number of years.',
+              checked: _minYears != null,
+              onChanged: (v) => setState(() => _minYears = v ? 2 : null),
+            ),
+            if (_minYears != null)
+              _labelledStepper(theme, 'Years of experience',
+                  _minYears!.round(), min: 1, max: 20,
+                  onChanged: (v) =>
+                      setState(() => _minYears = v.toDouble())),
+            CustomToggle(
+              label: 'Flag résumés below a score',
+              description: 'Advisory only — it never blocks a submission.',
+              checked: _minScore != null,
+              onChanged: (v) => setState(() => _minScore = v ? 60 : null),
+            ),
+            if (_minScore != null)
+              _labelledStepper(theme, 'Minimum score', _minScore!,
+                  min: 10, max: 100, step: 5,
+                  onChanged: (v) => setState(() => _minScore = v)),
+          ],
+        ),
+      );
+
+  /// The round's own open/close window. Same pickers as the single-round access
+  /// window, worded for a round.
+  Widget _buildRoundWindowCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'When It Runs',
+        icon: Icons.schedule_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Leave both empty to open this round as soon as candidates reach it '
+              'and close it by hand. A closing time ends it on its own.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            _buildDateTimeTile(
+                label: 'Opens At', value: _availableFrom, isExpiry: false),
+            const SizedBox(height: 12),
+            _buildDateTimeTile(
+                label: 'Closes At', value: _expiresAt, isExpiry: true),
+          ],
+        ),
+      );
+
+  /// Who moves on from this round.
+  Widget _buildAdvanceCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Who Moves On',
+        icon: Icons.trending_up_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            CustomSelectDropdown<AdvanceMode>(
+              label: 'Advance to the next round',
+              value: _advanceMode,
+              items: const [
+                DropdownMenuItem(
+                    value: AdvanceMode.manual, child: Text('I pick, manually')),
+                DropdownMenuItem(
+                    value: AdvanceMode.topN, child: Text('Top N by score')),
+                DropdownMenuItem(
+                    value: AdvanceMode.threshold,
+                    child: Text('Everyone above a score')),
+              ],
+              onChanged: (v) => setState(() {
+                _advanceMode = v ?? AdvanceMode.manual;
+                _advanceValue ??=
+                    _advanceMode == AdvanceMode.topN ? 10 : 70;
+              }),
+            ),
+            if (_advanceMode != AdvanceMode.manual)
+              _labelledStepper(
+                theme,
+                _advanceMode == AdvanceMode.topN
+                    ? 'Candidates who advance'
+                    : 'Score to beat',
+                (_advanceValue ?? 0).round(),
+                min: 1,
+                max: _advanceMode == AdvanceMode.topN ? 500 : 100,
+                step: 5,
+                onChanged: (v) => setState(() => _advanceValue = v),
+              ),
+            const SizedBox(height: 8),
+            Text(
+              'Recorded with the round so the bar is written down, and used to '
+              'pre-tick the shortlist when the round closes. Nothing advances on '
+              'its own.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+
+  /// An existing test's rounds, listed so each can be configured.
+  ///
+  /// No "add" here on purpose: the structure of a live test is changed from its
+  /// timeline, where reordering and ending rounds also live. This card is a way
+  /// IN to configuring a round, not a second place to design one.
+  Widget _buildExistingRoundsCard(ThemeData theme) {
+    final rounds = _existingRounds;
+    if (rounds == null || rounds.isEmpty) return const SizedBox.shrink();
+
+    return _buildFormSection(
+      context: context,
+      title: 'Rounds In This Test (${rounds.length})',
+      icon: Icons.timeline_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Tap a round to change its configuration. Adding, reordering and '
+            'ending rounds is done from the test\'s timeline.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 12),
+          for (var i = 0; i < rounds.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: RoundStepTile(
+                round: rounds[i],
+                position: i + 1,
+                total: rounds.length,
+                showConnector: i < rounds.length - 1,
+                // Mark the round the assignment being edited belongs to, so the
+                // recruiter can see where this candidate sits in the sequence.
+                highlight: rounds[i].id == widget.existing?.roundId,
+                highlightLabel: rounds[i].id == widget.existing?.roundId
+                    ? 'this candidate'
+                    : null,
+                trailing: Icon(Icons.chevron_right,
+                    size: 18, color: theme.colorScheme.onSurfaceVariant),
+                onTap: () => _configureExistingRound(rounds[i]),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Opens the shared configuration screen for [round] and saves what comes back.
+  Future<void> _configureExistingRound(InterviewRound round) async {
+    final updated = await Navigator.of(context).push<InterviewRound>(
+      MaterialPageRoute(
+        builder: (_) => CreateInterviewPage.configureRound(roundDraft: round),
+      ),
+    );
+    if (updated == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await context.read<InterviewRepository>().updateRound(updated);
+      if (!mounted) return;
+      setState(() {
+        final at = _existingRounds!.indexWhere((r) => r.id == updated.id);
+        if (at >= 0) _existingRounds![at] = updated;
+      });
+      messenger.showSnackBar(
+          SnackBar(content: Text('"${updated.title}" updated.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not save: $e')));
+    }
+  }
+
+  /// Row of `label  −  n  +`, matching the stepper used elsewhere in this form.
+  Widget _labelledStepper(
+    ThemeData theme,
+    String label,
+    int value, {
+    required int min,
+    required int max,
+    int step = 1,
+    required ValueChanged<int> onChanged,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
+            _buildModernStepper(
+              value: value,
+              min: min,
+              max: max,
+              step: step,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      );
+
+  // ── Multi-round: the timeline builder ─────────────────────────────────────
+
+  bool get _hasVideoRound => _rounds.any((r) => r.kind == RoundKind.video);
+  bool get _hasVoiceRound => _rounds.any((r) => r.kind == RoundKind.voice);
+
+  /// Avatar and voice: chosen once for the whole test, not per round.
+  ///
+  /// A recruiter picks their company's avatar once; asking again on every round
+  /// would be busywork, and letting rounds disagree would mean a candidate meets
+  /// a different interviewer at each stage for no reason.
+  Widget _buildSharedDeliveryCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'Shared by every round',
+        icon: Icons.face_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'The interviewer that delivers every round. Questions and dates are '
+              'per round; this is not.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            if (_hasVideoRound) _buildAvatarSection(theme),
+            if (_hasVideoRound && _hasVoiceRound) const SizedBox(height: 20),
+            if (_hasVoiceRound) _buildVoiceConfigSection(theme),
+          ],
+        ),
+      );
+
+  /// Adds a round, configured through this very form in round-config mode — so
+  /// the recruiter meets the same fields they would creating that type on its own.
+  Future<void> _addRound() async {
+    final draft = await Navigator.of(context).push<InterviewRound>(
+      MaterialPageRoute(
+        builder: (_) => CreateInterviewPage.configureRound(
+          roundOrder: _rounds.length,
+          // Pre-fill from what has already been chosen for the test, so an
+          // avatar picked for round 1 is not re-picked for round 2.
+          sharedConfig: _rounds.isEmpty
+              ? null
+              : _rounds.last.config.isEmpty
+                  ? null
+                  : _rounds.last.config,
+        ),
+      ),
+    );
+    if (draft == null || !mounted) return;
+    setState(() => _rounds.add(draft));
+  }
+
+  Future<void> _editRoundAt(int index) async {
+    final updated = await Navigator.of(context).push<InterviewRound>(
+      MaterialPageRoute(
+        builder: (_) =>
+            CreateInterviewPage.configureRound(roundDraft: _rounds[index]),
+      ),
+    );
+    if (updated == null || !mounted) return;
+    setState(() => _rounds[index] = updated);
+  }
+
+  /// The pipeline as a numbered, reorderable list — the recruiter's picture of
+  /// what a candidate will go through, in order.
+  Widget _buildRoundsCard(ThemeData theme) {
+    final summary = _rounds.isEmpty
+        ? 'No rounds yet'
+        : _rounds.map((r) => r.kind.label.split(' ').first).join(' → ');
+
+    return _buildFormSection(
+      context: context,
+      title: 'Rounds (${_rounds.length})',
+      icon: Icons.timeline_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(summary,
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(
+            'Candidates are added to round 1 when you save. They see nothing '
+            'until then, and only ever see the round they are in — you move them '
+            'on from the timeline as each round closes.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 14),
+          if (_rounds.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: theme.colorScheme.outline.withValues(alpha: 0.2),
+                ),
+              ),
+              child: Text('Add the first round to start the timeline',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant)),
+            )
+          else
+            // shrinkWrap: this list lives inside the form's own scroll view, so
+            // it must size to its content rather than demand a viewport.
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _rounds.length,
+              onReorder: (oldIndex, newIndex) => setState(() {
+                // ReorderableListView reports the target as if the dragged row
+                // were still in place, so a downward move is one too high.
+                final to = newIndex > oldIndex ? newIndex - 1 : newIndex;
+                final moved = _rounds.removeAt(oldIndex);
+                _rounds.insert(to, moved);
+              }),
+              itemBuilder: (context, i) => Padding(
+                key: ValueKey('round-$i-${_rounds[i].title}'),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _roundDraftTile(theme, i),
+              ),
+            ),
+          const SizedBox(height: 10),
+          CustomButton(
+            text: 'Add round',
+            variant: ButtonVariant.outline,
+            isLoading: false,
+            icon: const Icon(Icons.add, size: 18),
+            onPressed: _addRound,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A draft round in the builder, drawn with the shared timeline tile so it
+  /// looks identical to the same round on the live timeline screen.
+  Widget _roundDraftTile(ThemeData theme, int i) => RoundStepTile(
+        round: _rounds[i],
+        position: i + 1,
+        total: _rounds.length,
+        showConnector: i < _rounds.length - 1,
+        // Round 1 is the only one candidates get on save, so say so.
+        highlight: i == 0,
+        highlightLabel: i == 0 ? 'assigned on save' : null,
+        onTap: () => _editRoundAt(i),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Remove round',
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () => setState(() => _rounds.removeAt(i)),
+            ),
+            ReorderableDragStartListener(
+              index: i,
+              child: Icon(Icons.drag_handle,
+                  size: 18, color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+
+  /// Says plainly that single-round assigns immediately, and points at the
+  /// toggle rather than offering a second "save then add rounds" path.
+  ///
+  /// There used to be a "Save & set up rounds" button here. It created a
+  /// round-LESS assignment and then opened the timeline, which is precisely the
+  /// sequence that left candidates holding both an orphan assignment and a round
+  /// one for the same test. Multi-round mode exists so that cannot happen.
+  Widget _buildSingleRoundNote(ThemeData theme) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline,
+              size: 14, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Candidates can start this as soon as you save (or from the '
+              '"Accessible From" time, if you set one). For a sequence of stages, '
+              'switch to Multi-round at the top.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      );
 
   Widget _buildFormSection({
     required BuildContext context,
@@ -896,15 +1903,173 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildTypeToggle(theme),
           const SizedBox(height: 20),
+          // In multi-round mode each round picks its own kind, so a single
+          // test-wide type would be a lie.
+          if (!_multiRound) ...[
+            _buildTypeToggle(theme),
+            const SizedBox(height: 20),
+          ],
           CustomInputField(
             label: 'Job Title / Interview Role',
-            placeholder: 'e.g. Senior Flutter Engineer — Screen 1',
+            placeholder: _multiRound
+                ? 'e.g. Senior Flutter Engineer'
+                : 'e.g. Senior Flutter Engineer — Screen 1',
             controller: _titleController,
           ),
         ],
       ),
+    );
+  }
+
+  /// The round's kind. Four options, because a round can be a résumé screen —
+  /// which [_buildTypeToggle]'s three interview tracks cannot express.
+  ///
+  /// Selecting a kind switches which of this form's existing sections apply, so
+  /// the recruiter sees the same Chat/Video/Voice configuration they would when
+  /// creating a standalone interview of that type.
+  Widget _buildKindToggle(ThemeData theme) {
+    final cs = theme.colorScheme;
+
+    Widget seg(RoundKind kind, IconData icon, String label) {
+      final selected = _roundKind == kind;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() {
+            _roundKind = kind;
+            // Keep _type in step so every type-specific section below (which all
+            // switch on _type) shows the right fields.
+            _type = kind.interviewType ?? _type;
+          }),
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+            decoration: BoxDecoration(
+              color: selected
+                  ? cs.primary.withValues(alpha: 0.12)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color:
+                    selected ? cs.primary : cs.outline.withValues(alpha: 0.12),
+                width: 1.5,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon,
+                    size: 20,
+                    color: selected ? cs.primary : cs.onSurfaceVariant),
+                const SizedBox(height: 4),
+                Text(label,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight:
+                          selected ? FontWeight.bold : FontWeight.w600,
+                      color: selected ? cs.primary : cs.onSurface,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        seg(RoundKind.resume, Icons.description_outlined, 'Résumé'),
+        const SizedBox(width: 8),
+        seg(RoundKind.chat, Icons.chat_bubble_outline, 'Chat'),
+        const SizedBox(width: 8),
+        seg(RoundKind.video, Icons.videocam_outlined, 'Video'),
+        const SizedBox(width: 8),
+        seg(RoundKind.voice, Icons.mic_none_outlined, 'Voice'),
+      ],
+    );
+  }
+
+  /// Single stage vs a multi-round pipeline — the first decision, because it
+  /// changes what the rest of this form asks for.
+  Widget _buildModeToggle(ThemeData theme) {
+    final cs = theme.colorScheme;
+
+    Widget seg(bool multi, IconData icon, String label, String desc) {
+      final selected = _multiRound == multi;
+      return Expanded(
+        child: GestureDetector(
+          onTap: _isEdit ? null : () => setState(() => _multiRound = multi),
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+            decoration: BoxDecoration(
+              color: selected
+                  ? cs.primary.withValues(alpha: 0.12)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected
+                    ? cs.primary
+                    : cs.outline.withValues(alpha: 0.12),
+                width: 1.5,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon,
+                    size: 20,
+                    color: selected ? cs.primary : cs.onSurfaceVariant),
+                const SizedBox(height: 6),
+                Text(label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight:
+                          selected ? FontWeight.bold : FontWeight.w600,
+                      color: selected ? cs.primary : cs.onSurface,
+                    )),
+                const SizedBox(height: 2),
+                Text(desc,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: selected
+                          ? cs.primary.withValues(alpha: 0.8)
+                          : cs.onSurfaceVariant,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            seg(false, Icons.assignment_turned_in_outlined, 'Single round',
+                'One interview, assigned now'),
+            const SizedBox(width: 10),
+            seg(true, Icons.timeline_outlined, 'Multi-round',
+                'A sequence of stages'),
+          ],
+        ),
+        if (_isEdit)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'The structure of an existing test is changed from its timeline, '
+              'not here.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+      ],
     );
   }
 
@@ -992,7 +2157,12 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           Text(
             _isEdit
                 ? 'The first email remains assigned to this interview; any extra emails are assigned as new interviews.'
-                : 'Assign this interview to one or more candidate email addresses.',
+                : _multiRound
+                    // Says where they actually land: round 1, not the whole
+                    // pipeline at once.
+                    ? 'These candidates are added to round 1 when you save. You '
+                        'move them on to later rounds from the timeline.'
+                    : 'Assign this interview to one or more candidate email addresses.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
               fontSize: 12,

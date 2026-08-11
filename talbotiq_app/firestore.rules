@@ -29,6 +29,19 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
 
+    // True when an update leaves `field` exactly as it was, INCLUDING the case
+    // where it is absent on both sides.
+    //
+    // The absence check is not decoration: `roundId` is written only for tests
+    // that use a timeline, so it is missing from every interview created before
+    // rounds existed. Comparing a missing key directly would fail the rule and
+    // lock those candidates out of interviews they are legitimately assigned.
+    function unchanged(field) {
+      return (field in resource.data) == (field in request.resource.data)
+             && (!(field in resource.data)
+                 || resource.data[field] == request.resource.data[field]);
+    }
+
     // users: a user may read/write only their own profile doc.
     match /users/{uid} {
       allow read: if isSignedIn() && request.auth.uid == uid;
@@ -53,6 +66,26 @@ service cloud.firestore {
                      && request.resource.data.recruiterId == request.auth.uid;
       allow delete: if isRecruiter()
                      && resource.data.recruiterId == request.auth.uid;
+
+      // rounds: the test's custom timeline — one document per stage, each with
+      // its own open/close window (see interview_round.dart).
+      //
+      // Recruiter-only, exactly like the parent test. A candidate never reads
+      // these: everything their device needs (the round's kind, its order, and
+      // its window) is COPIED onto their own interview document at assignment
+      // time, so the timeline stays private to the recruiter who designed it.
+      //
+      // Authorisation is on the round's OWN recruiterId rather than a get() of
+      // the parent test: a get() inside a rule is a billed read, and this rule
+      // runs once per round document returned by the timeline query.
+      match /rounds/{roundId} {
+        allow read: if isRecruiter()
+                       && resource.data.recruiterId == request.auth.uid;
+        allow create, update: if isRecruiter()
+                       && request.resource.data.recruiterId == request.auth.uid;
+        allow delete: if isRecruiter()
+                       && resource.data.recruiterId == request.auth.uid;
+      }
     }
 
     // interviews:
@@ -78,12 +111,32 @@ service cloud.firestore {
                         && request.resource.data.resultPublished
                            == resource.data.resultPublished
                         // Candidate must not re-assign the interview to another
-                        // recruiter/candidate or move it between tests.
+                        // recruiter/candidate, or move it between tests/rounds.
                         && request.resource.data.recruiterId
                            == resource.data.recruiterId
                         && request.resource.data.candidateEmailLower
                            == resource.data.candidateEmailLower
-                        && request.resource.data.testId == resource.data.testId);
+                        && request.resource.data.testId == resource.data.testId
+                        && unchanged('roundId')
+                        // The access window and attempt cap are the ONLY things
+                        // stopping a candidate taking a closed round, and
+                        // "end round now" works by stamping expiresAt onto this
+                        // document. A candidate who could rewrite these fields
+                        // could re-open a round the recruiter had ended, so they
+                        // are recruiter-only. (attemptsUsed is NOT here — the
+                        // client increments it on launch.)
+                        && unchanged('availableFrom')
+                        && unchanged('expiresAt')
+                        && unchanged('maxAttempts')
+                        // `resume` (the extracted text and its AI score) is
+                        // written ONLY by the backend, with the Admin SDK, which
+                        // bypasses these rules. A résumé score decides whether
+                        // someone progresses, so the candidate being scored must
+                        // not be able to write it. `result` cannot be locked the
+                        // same way — a candidate legitimately writes it when they
+                        // finish an interview round — which is exactly why the
+                        // résumé path was moved server-side instead.
+                        && unchanged('resume'));
 
       allow delete: if isRecruiter()
                      && resource.data.recruiterId == request.auth.uid;

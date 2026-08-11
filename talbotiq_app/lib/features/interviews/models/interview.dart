@@ -46,6 +46,85 @@ extension InterviewTypeX on InterviewType {
   }
 }
 
+/// What a candidate does in one round of a test's timeline.
+///
+/// A superset of [InterviewType]: `resume` is a submission step with no
+/// interview session, the other three map 1:1 onto the interview tracks. It is
+/// declared here rather than beside [InterviewRound] because the `interviews`
+/// document itself carries it — putting it in the round file would make these
+/// two models import each other.
+enum RoundKind { resume, chat, video, voice }
+
+extension RoundKindX on RoundKind {
+  String get wire {
+    switch (this) {
+      case RoundKind.resume:
+        return 'resume';
+      case RoundKind.chat:
+        return 'chat';
+      case RoundKind.video:
+        return 'video';
+      case RoundKind.voice:
+        return 'voice';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case RoundKind.resume:
+        return 'Résumé screen';
+      case RoundKind.chat:
+        return 'Chat Interview';
+      case RoundKind.video:
+        return 'Video Interview';
+      case RoundKind.voice:
+        return 'Voice Interview';
+    }
+  }
+
+  /// True when the round runs a live interview session (so it has a transcript,
+  /// attempts and a runner). A résumé round has none of those.
+  bool get isInterview => this != RoundKind.resume;
+
+  /// The interview track to launch, or null for a résumé round.
+  InterviewType? get interviewType {
+    switch (this) {
+      case RoundKind.resume:
+        return null;
+      case RoundKind.chat:
+        return InterviewType.chat;
+      case RoundKind.video:
+        return InterviewType.video;
+      case RoundKind.voice:
+        return InterviewType.voice;
+    }
+  }
+
+  static RoundKind fromWire(String? v) {
+    switch (v) {
+      case 'resume':
+        return RoundKind.resume;
+      case 'video':
+        return RoundKind.video;
+      case 'voice':
+        return RoundKind.voice;
+      default:
+        return RoundKind.chat;
+    }
+  }
+
+  static RoundKind fromInterviewType(InterviewType t) {
+    switch (t) {
+      case InterviewType.video:
+        return RoundKind.video;
+      case InterviewType.voice:
+        return RoundKind.voice;
+      case InterviewType.chat:
+        return RoundKind.chat;
+    }
+  }
+}
+
 /// Lifecycle of an assigned interview.
 enum InterviewStatus { assigned, inProgress, completed }
 
@@ -108,6 +187,28 @@ class Interview {
   /// Shared by all candidates created together in one action, so a recruiter
   /// can review + publish a whole "test" at once.
   final String testId;
+
+  /// Which round of the test's timeline this assignment belongs to — the id of a
+  /// `tests/{testId}/rounds/{roundId}` document (see [InterviewRound]).
+  ///
+  /// EMPTY on every interview created before timelines existed. Such a document
+  /// is treated as the single implicit round of a one-round test, which is why no
+  /// migration is needed: see [hasRound] and [effectiveRoundOrder].
+  final String roundId;
+
+  /// The round's position in the timeline, copied here so the recruiter list can
+  /// group and sort by round without reading the round documents. Null on
+  /// pre-timeline interviews.
+  final int? roundOrder;
+
+  /// What the candidate does in this round, copied from the round at assignment.
+  ///
+  /// Exists because [type] cannot express a résumé round — it only names the
+  /// three live interview tracks — and because the candidate's device can then
+  /// route the round without reading `tests/{testId}/rounds`, which it has no
+  /// permission to read. Null on pre-timeline interviews → derived from [type].
+  final RoundKind? roundKind;
+
   final String recruiterId;
   final String recruiterEmail;
 
@@ -203,9 +304,87 @@ class Interview {
   /// Whether the result is visible to the candidate. Recruiter-controlled.
   final bool resultPublished;
 
+  /// A résumé submission and its AI score (a `ResumeSubmission` JSON map:
+  /// text, charCount, fileName, extractedAt, score).
+  ///
+  /// READ-ONLY here, and absent from both write maps below on purpose: this field
+  /// is written only by the backend with the Admin SDK, and `firestore.rules`
+  /// blocks the candidate from touching it. See `resume_submission.dart`.
+  final Map<String, dynamic>? resume;
+
+  // ── Evaluation state ──────────────────────────────────────────────────────
+  //
+  // Who — if anyone — produced the stored score. `evaluatedBy` is the single
+  // source of truth: 'ai', 'manual', or EMPTY meaning nothing has scored this.
+  //
+  // Empty is deliberately never a score. A heuristic fallback used to be written
+  // here as `'ai'`, which put a number derived from answer LENGTH in front of a
+  // recruiter looking like a judgement of content, and let it be published to the
+  // candidate. Failed scoring now stores no score at all, which is why
+  // `overallScore` is absent rather than 0 — a 0 would rank on the leaderboard as
+  // if the candidate had earned it.
+
+  String get evaluatedBy => (result?['evaluatedBy'] as String?)?.trim() ?? '';
+
+  /// Why AI scoring failed, when it did and recorded a reason.
+  String get evaluationError =>
+      (result?['evaluationError'] as String?)?.trim() ?? '';
+
+  bool get isAiScored => evaluatedBy == 'ai';
+  bool get isManuallyScored => evaluatedBy == 'manual';
+
+  /// A real score exists — produced by the AI or entered by a recruiter.
+  bool get hasScore => evaluatedBy.isNotEmpty && result?['overallScore'] != null;
+
+  /// The candidate finished, but nothing has produced a score.
+  ///
+  /// Covers both "AI scoring failed" and "the AI never got there" — from the
+  /// recruiter's point of view both need the same thing done about them, which is
+  /// why [canRetryEvaluation] rather than this decides what the retry button acts
+  /// on.
+  bool get awaitingEvaluation =>
+      status == InterviewStatus.completed &&
+      result != null &&
+      evaluatedBy.isEmpty;
+
+  /// Scoring failed and said why — the case worth reporting as a FAILURE rather
+  /// than as "not scored yet".
+  bool get evaluationFailed =>
+      awaitingEvaluation && evaluationError.isNotEmpty;
+
+  /// The candidate's raw answers, kept so a failed evaluation can be retried
+  /// without making them sit the interview again.
+  List<Map<String, dynamic>> get storedResponses => [
+        for (final e in (result?['responses'] as List?) ?? const [])
+          if (e is Map)
+            e.map((k, v) => MapEntry(k.toString(), v)),
+      ];
+
+  /// Retryable: nothing scored it, and the answers needed to score it survive.
+  /// Without responses there is nothing to feed the scorer, so the only route is
+  /// a manual evaluation.
+  bool get canRetryEvaluation =>
+      awaitingEvaluation && storedResponses.isNotEmpty;
+
+  /// Whether this interview belongs to an explicit round. False for every
+  /// pre-timeline document, which is treated as a single implicit round.
+  bool get hasRound => roundId.isNotEmpty;
+
+  /// Timeline position, defaulting a pre-timeline interview to the first round so
+  /// grouping and sorting never has to special-case null.
+  int get effectiveRoundOrder => roundOrder ?? 0;
+
+  /// What the candidate does here. Falls back to [type] for pre-timeline
+  /// documents, which were always live interviews.
+  RoundKind get effectiveRoundKind =>
+      roundKind ?? RoundKindX.fromInterviewType(type);
+
   const Interview({
     required this.id,
     this.testId = '',
+    this.roundId = '',
+    this.roundOrder,
+    this.roundKind,
     required this.recruiterId,
     required this.recruiterEmail,
     this.recruiterName,
@@ -236,6 +415,7 @@ class Interview {
     this.updatedAt,
     this.result,
     this.resultPublished = false,
+    this.resume,
   });
 
   /// Time-window checks.
@@ -258,6 +438,13 @@ class Interview {
     return Interview(
       id: doc.id,
       testId: (d['testId'] as String?) ?? '',
+      roundId: (d['roundId'] as String?) ?? '',
+      roundOrder: (d['roundOrder'] as num?)?.toInt(),
+      // Absent (pre-timeline) must stay null rather than defaulting through
+      // fromWire, so `effectiveRoundKind` can fall back to the interview type.
+      roundKind: d['roundKind'] == null
+          ? null
+          : RoundKindX.fromWire(d['roundKind'] as String?),
       recruiterId: (d['recruiterId'] as String?) ?? '',
       recruiterEmail: (d['recruiterEmail'] as String?) ?? '',
       recruiterName: d['recruiterName'] as String?,
@@ -292,12 +479,19 @@ class Interview {
       updatedAt: (d['updatedAt'] as Timestamp?)?.toDate(),
       result: d['result'] as Map<String, dynamic>?,
       resultPublished: (d['resultPublished'] as bool?) ?? false,
+      resume: d['resume'] as Map<String, dynamic>?,
     );
   }
 
   /// Payload for a new document. `createdAt`/`updatedAt` use server timestamps.
   Map<String, dynamic> toCreateMap() => {
         'testId': testId,
+        // Round fields are written only when this interview belongs to a
+        // timeline, so a single-round test's documents stay byte-identical to
+        // what the app wrote before rounds existed.
+        if (roundId.isNotEmpty) 'roundId': roundId,
+        if (roundOrder != null) 'roundOrder': roundOrder,
+        if (roundKind != null) 'roundKind': roundKind!.wire,
         'resultPublished': false,
         'recruiterId': recruiterId,
         'recruiterEmail': recruiterEmail,
@@ -333,6 +527,11 @@ class Interview {
       };
 
   /// Editable fields written on an update (identity + createdAt are preserved).
+  ///
+  /// `testId` and the three round fields are deliberately absent: which round of
+  /// which test an assignment belongs to is identity, not content. Reordering a
+  /// timeline rewrites `roundOrder` through
+  /// `InterviewRepository.reorderRounds`, not through an interview edit.
   Map<String, dynamic> toUpdateMap() => {
         'candidateEmail': candidateEmail,
         'candidateEmailLower': candidateEmailLower,

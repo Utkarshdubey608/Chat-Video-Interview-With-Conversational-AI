@@ -20,6 +20,10 @@ SUPPORTED_VARIABLES: dict[str, str] = {
     "recruiter_name": "Name of the recruiter sending the invite.",
     "company": "Company / organisation name.",
     "deadline": "When the interview must be completed by.",
+    # Multi-round tests (see the app's InterviewRound): the round that just
+    # closed, and what comes next.
+    "round_title": "Name of the round this message is about.",
+    "next_round": "Name of the round the candidate is moving on to.",
 }
 
 _PLACEHOLDER = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
@@ -118,6 +122,60 @@ BUILTIN_TEMPLATES: list[dict] = [
         {{ company }} app.
       </p>""",
             cta_label="View my result",
+        ),
+    },
+    # --- Round outcomes (multi-round tests) ---------------------------------
+    # Both deliberately carry NO call-to-action button. `_shell`'s CTA points at
+    # `interview_link`, which for these means the round the candidate has just
+    # FINISHED — sending someone who advanced back to a closed round, and sending
+    # someone who did not a link to reopen it, are both worse than no button. The
+    # next round is invited separately, once it exists.
+    {
+        "id": "builtin:round_shortlist",
+        "name": "Moving to the next round",
+        "description": "Tells a shortlisted candidate they advanced past a round.",
+        "is_html": True,
+        "subject": "Good news about your {{ interview_title }} application",
+        "body": _shell(
+            "Hi {{ candidate_name }},",
+            """
+      <p style="line-height:1.6;margin-top:12px;">
+        Thanks for completing <b>"{{ round_title }}"</b> for
+        <b>{{ interview_title }}</b> at {{ company }}.
+      </p>
+      <p style="line-height:1.6;">
+        We're pleased to let you know you've been shortlisted to continue to
+        <b>{{ next_round }}</b>. {{ recruiter_name }} will be in touch shortly
+        with the details and everything you need to prepare.
+      </p>
+      <p style="line-height:1.6;">Congratulations, and well done.</p>""",
+            cta_label=None,
+        ),
+    },
+    {
+        "id": "builtin:round_not_advancing",
+        "name": "Not advancing past a round",
+        "description": "Tells a candidate they will not continue past a round.",
+        "is_html": True,
+        "subject": "Update on your {{ interview_title }} application",
+        "body": _shell(
+            "Hi {{ candidate_name }},",
+            """
+      <p style="line-height:1.6;margin-top:12px;">
+        Thank you for taking the time to complete <b>"{{ round_title }}"</b> for
+        <b>{{ interview_title }}</b> at {{ company }}.
+      </p>
+      <p style="line-height:1.6;">
+        After careful review we've decided not to move your application forward
+        to the next round on this occasion. This was a competitive process and
+        the decision was a difficult one.
+      </p>
+      <p style="line-height:1.6;">
+        We're genuinely grateful for your interest, and we'd welcome an
+        application from you for future roles.
+      </p>
+      <p style="line-height:1.6;">Best wishes,<br>{{ recruiter_name }}</p>""",
+            cta_label=None,
         ),
     },
     {

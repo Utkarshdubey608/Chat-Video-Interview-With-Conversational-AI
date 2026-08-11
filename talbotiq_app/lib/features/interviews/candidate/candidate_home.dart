@@ -12,13 +12,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
-import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/features/interviews/services/resume_service.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_result_page.dart';
 import 'package:talbotiq/features/interviews/candidate/chat_launch_adapter.dart';
 import 'package:talbotiq/features/interviews/candidate/resume_intake_page.dart';
@@ -66,17 +66,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       if (!mounted || interview == null) return;
       // Only auto-open an interview actually assigned to this candidate.
       if (interview.candidateEmailLower != _email.trim().toLowerCase()) return;
-      switch (interview.type) {
-        case InterviewType.video:
-          _launchVideo(interview);
-          break;
-        case InterviewType.chat:
-          _launchChat(interview);
-          break;
-        case InterviewType.voice:
-          _launchVoice(interview);
-          break;
-      }
+      _open(interview);
     } catch (_) {
       // Ignore — the interview still appears in the list for manual launch.
     }
@@ -133,13 +123,127 @@ class _CandidateHomeState extends State<CandidateHome> {
     );
   }
 
+  /// Opens whatever [interview] actually is.
+  ///
+  /// Switches on [Interview.effectiveRoundKind], NOT on `type`: a résumé round
+  /// has no interview track, so its document carries the harmless default
+  /// `type: chat`. Routing on `type` would drop a candidate into a chat
+  /// interview with no questions.
+  void _open(Interview interview) {
+    switch (interview.effectiveRoundKind) {
+      case RoundKind.resume:
+        _submitResume(interview);
+      case RoundKind.video:
+        _launchVideo(interview);
+      case RoundKind.chat:
+        _launchChat(interview);
+      case RoundKind.voice:
+        _launchVoice(interview);
+    }
+  }
+
+  /// A résumé round: collect the résumé, post it for scoring, confirm.
+  ///
+  /// There is no session to launch and nothing to reset, so this shares none of
+  /// the video/chat launch machinery. The backend owns the extraction, the score
+  /// and the Firestore write — this method only moves text and reports what
+  /// happened.
+  Future<void> _submitResume(Interview interview) async {
+    if (_launching) return;
+    if (!_guardAccess(interview)) return;
+
+    // Already submitted: offer the result rather than silently letting them
+    // overwrite a score the recruiter may have already read.
+    if (interview.resume != null &&
+        interview.status == InterviewStatus.completed) {
+      final again = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Résumé already submitted'),
+          content: const Text(
+            'You have already submitted a résumé for this round. Submitting '
+            'again replaces it and it will be scored again.',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Leave it')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Replace')),
+          ],
+        ),
+      );
+      if (again != true || !mounted) return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (ctx) => ResumeIntakePage(
+          title: interview.title,
+          submitLabel: 'Submit résumé',
+          subtitle:
+              'Upload your résumé as a PDF, or paste the text. It is reviewed '
+              'against what this role needs, and ${interview.recruiterName ?? 'the recruiter'} '
+              'sees the result.',
+          // The intake page stays put until this completes and shows anything
+          // thrown, so a failed submit never costs the candidate their text.
+          onSubmit: (text) async {
+            await resumeService.submitForScoring(
+              interviewId: interview.id,
+              resumeText: text,
+            );
+            if (!ctx.mounted) return;
+            // Pop the intake first so the confirmation is not stacked on a
+            // screen the candidate has finished with.
+            Navigator.of(ctx).pop();
+            if (mounted) _showResumeSubmitted(interview);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Confirms a résumé submission without showing the score.
+  ///
+  /// The number is deliberately withheld: a résumé score is a recruiter's
+  /// screening tool, and `resultPublished` — which only the recruiter sets — is
+  /// what decides whether a candidate ever sees a result.
+  void _showResumeSubmitted(Interview interview) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.check_circle_outline),
+        title: const Text('Résumé submitted'),
+        content: Text(
+          'Your résumé has been sent for "${interview.title}". '
+          '${interview.recruiterName ?? 'The recruiter'} will be in touch about '
+          'the next round.',
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+        ],
+      ),
+    );
+  }
+
   bool _guardAccess(Interview interview) {
     if (interview.isAccessible) return true;
-    final msg = interview.isExpired
-        ? 'This interview has expired.'
-        : interview.isNotYetAvailable
-            ? 'This interview is not available yet.'
-            : 'You have no attempts left for this interview.';
+    // A round the recruiter ended early reads as expired here, because ending a
+    // round pulls `expiresAt` back to that moment. "Closed" is the honest word
+    // for both, and "interview" is the wrong noun for a résumé round.
+    final noun = interview.effectiveRoundKind == RoundKind.resume
+        ? 'This round'
+        : 'This interview';
+    final String msg;
+    if (interview.isExpired) {
+      msg = '$noun is closed.';
+    } else if (interview.isNotYetAvailable) {
+      msg = '$noun is not open yet.';
+    } else {
+      msg = 'You have no attempts left.';
+    }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     return false;
   }
@@ -164,7 +268,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       resumeText = await Navigator.of(context).push<String>(
         MaterialPageRoute(
           builder: (ctx) => ResumeIntakePage(
-            onReady: (t) => Navigator.of(ctx).pop(t),
+            onSubmit: (t) async => Navigator.of(ctx).pop(t),
           ),
         ),
       );
@@ -335,15 +439,31 @@ class _CandidateHomeState extends State<CandidateHome> {
                       'Interviews assigned to $_email will appear here.',
                 );
               }
-              final video =
-                  all.where((i) => i.type == InterviewType.video).toList();
-              final chat =
-                  all.where((i) => i.type == InterviewType.chat).toList();
-              final voice =
-                  all.where((i) => i.type == InterviewType.voice).toList();
+              // Grouped by ROUND KIND, not by `type`. A résumé round stores
+              // `type: chat` because the document requires one of the three
+              // interview tracks, so grouping by type would list a résumé
+              // upload under "Chat Interviews".
+              List<Interview> ofKind(RoundKind k) =>
+                  all.where((i) => i.effectiveRoundKind == k).toList();
+              final resume = ofKind(RoundKind.resume);
+              final video = ofKind(RoundKind.video);
+              final chat = ofKind(RoundKind.chat);
+              final voice = ofKind(RoundKind.voice);
               return ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: [
+                  // First: a résumé screen is normally the round that gates the
+                  // rest, so it belongs at the top of the candidate's list.
+                  if (resume.isNotEmpty) ...[
+                    _Header(
+                        label: 'Résumé Submissions',
+                        icon: Icons.description_outlined),
+                    ...resume.map((i) => _AssignedCard(
+                          interview: i,
+                          onLaunch: () => _submitResume(i),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
                   if (video.isNotEmpty) ...[
                     _Header(
                         label: 'Video Interviews',
@@ -416,6 +536,10 @@ class _AssignedCard extends StatelessWidget {
   final Interview interview;
   final VoidCallback onLaunch;
   const _AssignedCard({required this.interview, required this.onLaunch});
+
+  /// A résumé round has no session, so several of this card's words change.
+  bool get _isResume =>
+      interview.effectiveRoundKind == RoundKind.resume;
 
   Widget _buildStatusBadge(
       BuildContext context, String text, Color bgColor, Color textColor) {
@@ -499,9 +623,18 @@ class _AssignedCard extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(completed ? 'Re-take' : 'Launch'),
+            // "Launch" is wrong for a résumé round: nothing starts, a file is
+            // handed over.
+            Text(_isResume
+                ? (completed ? 'Replace' : 'Upload')
+                : (completed ? 'Re-take' : 'Launch')),
             const SizedBox(width: 4),
-            Icon(completed ? Icons.refresh : Icons.play_arrow, size: 14),
+            Icon(
+              completed
+                  ? Icons.refresh
+                  : (_isResume ? Icons.upload_file : Icons.play_arrow),
+              size: 14,
+            ),
           ],
         ),
       );
@@ -518,10 +651,11 @@ class _AssignedCard extends StatelessWidget {
     final awaiting =
         interview.status == InterviewStatus.completed && !published;
 
-    final typeIcon = switch (interview.type) {
-      InterviewType.video => Icons.videocam_outlined,
-      InterviewType.voice => Icons.record_voice_over_outlined,
-      InterviewType.chat => Icons.chat_bubble_outline,
+    final typeIcon = switch (interview.effectiveRoundKind) {
+      RoundKind.resume => Icons.description_outlined,
+      RoundKind.video => Icons.videocam_outlined,
+      RoundKind.voice => Icons.record_voice_over_outlined,
+      RoundKind.chat => Icons.chat_bubble_outline,
     };
 
     return Card(

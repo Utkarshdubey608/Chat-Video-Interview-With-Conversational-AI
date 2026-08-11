@@ -115,14 +115,9 @@ Future<void> _scoreAndStore({
   // the first one. `evaluatedBy: ''` tells the recruiter's review screen
   // nothing has scored this yet, so they can evaluate it manually.
   try {
-    await repo.completeWithResult(interview.id, {
-      'overallScore': 0,
-      'summary': '',
-      'recommendation': '',
-      'strengths': const <String>[],
-      'improvements': const <String>[],
-      'evaluatedBy': '',
-    });
+    // No score key at all — not 0, which would rank this candidate last on
+    // the round leaderboard before scoring has even been attempted.
+    await repo.completeWithoutScore(interview.id);
   } catch (_) {
     // Placeholder write failed (e.g. offline) — fall through and still try
     // the real scoring attempt below.
@@ -149,26 +144,20 @@ Future<void> _scoreAndStore({
     // sees what happened and can evaluate manually or regenerate.
     if (combined.length < 30) {
       try {
-        await repo.completeWithResult(interview.id, {
-          'overallScore': 0,
-          'summary': '',
-          'recommendation': '',
-          'strengths': const <String>[],
-          'improvements': const <String>[],
-          'evaluatedBy': '',
-          'evaluationError':
-              'No usable spoken answers were captured (only '
+        await repo.completeWithoutScore(
+          interview.id,
+          error: 'No usable spoken answers were captured (only '
               '${combined.length} character(s) of speech). The microphone may '
               'have been muted or blocked, or the candidate did not answer.',
-          'responsesApproximate': true,
-          'responses': [
+          responsesApproximate: true,
+          responses: [
             for (var idx = 0; idx < interview.questions.length; idx++)
               {
                 'question': interview.questions[idx],
                 'answer': idx < scored.length ? scored[idx] : '',
               },
           ],
-        });
+        );
       } catch (_) {
         // Offline: the placeholder already marks it completed.
       }
@@ -253,16 +242,11 @@ Future<void> _scoreAndStore({
       if (scored.isNotEmpty && _isReadinessReply(scored.first)) {
         scored.removeAt(0);
       }
-      await repo.completeWithResult(interview.id, {
-        'overallScore': 0,
-        'summary': '',
-        'recommendation': '',
-        'strengths': const <String>[],
-        'improvements': const <String>[],
-        'evaluatedBy': '',
-        'evaluationError': e.toString().replaceAll('Exception: ', ''),
-        'responsesApproximate': true,
-        'responses': [
+      await repo.completeWithoutScore(
+        interview.id,
+        error: e.toString().replaceAll('Exception: ', ''),
+        responsesApproximate: true,
+        responses: [
           for (var idx = 0;
               idx < interview.questions.length || idx < scored.length;
               idx++)
@@ -273,7 +257,7 @@ Future<void> _scoreAndStore({
               'answer': idx < scored.length ? scored[idx] : '',
             },
         ],
-      });
+      );
     } catch (_) {
       // Even the fallback write failed (offline). The placeholder from the top
       // of this function already marks the interview completed, so the

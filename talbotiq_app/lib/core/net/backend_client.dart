@@ -274,6 +274,23 @@ class BackendClient {
     }
   }
 
+  /// The response body as UTF-8, which is what the backend actually sends.
+  ///
+  /// NOT `response.body`: that decodes using the charset in the Content-Type
+  /// header and falls back to **latin-1** when there is none — and FastAPI's
+  /// JSONResponse sends a bare `application/json`, no charset. Every non-ASCII
+  /// character therefore came back mangled ("José" → "JosÃ©"), which matters most
+  /// for the text this client moves in bulk: extracted résumés, interview
+  /// summaries, anything a person typed. The asymmetry is easy to miss because
+  /// the `http` package defaults REQUEST bodies to UTF-8 — only responses guess.
+  ///
+  /// `allowMalformed` so a genuinely corrupt body degrades to replacement
+  /// characters instead of throwing inside a decode we cannot retry.
+  String _utf8Body(http.Response response) {
+    if (response.bodyBytes.isEmpty) return '';
+    return utf8.decode(response.bodyBytes, allowMalformed: true);
+  }
+
   /// Decodes a success body, or raises the backend's error envelope.
   ///
   /// The backend answers errors as `{detail, provider?, upstream_status?}` and
@@ -283,9 +300,10 @@ class BackendClient {
     final ok = response.statusCode >= 200 && response.statusCode < 300;
 
     Map<String, dynamic>? body;
-    if (response.body.isNotEmpty) {
+    final text = _utf8Body(response);
+    if (text.isNotEmpty) {
       try {
-        final decoded = jsonDecode(response.body);
+        final decoded = jsonDecode(text);
         if (decoded is Map<String, dynamic>) body = decoded;
       } catch (_) {
         // Fall through: a non-JSON body is handled below.

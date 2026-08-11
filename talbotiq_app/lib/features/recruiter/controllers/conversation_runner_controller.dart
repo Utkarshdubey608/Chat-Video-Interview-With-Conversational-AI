@@ -42,8 +42,11 @@ class ConversationRunnerController extends ChangeNotifier
 
   /// Optional hook fired once scoring completes, with the finished session and
   /// its report — used to mirror results to another store (e.g. Firestore).
-  final void Function(InterviewSession completedSession, ResultReport report)?
-      onFinished;
+  final void Function(
+    InterviewSession completedSession,
+    ResultReport report,
+    String? scoringError,
+  )? onFinished;
 
   /// Recruiter-configured whole-interview time limit, in seconds. Independent
   /// of per-question timed mode (`isTimed`/`conversationTiming`, which govern
@@ -385,7 +388,7 @@ class ConversationRunnerController extends ChangeNotifier
     if (_disposed) return;
     store.putReport(result);
     report = result;
-    onFinished?.call(completedSession, result);
+    onFinished?.call(completedSession, result, scoringError);
     stage = ConvStage.finished;
     notifyListeners();
   }
