@@ -1,15 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<!--
-  No NSCameraUsageDescription / NSMicrophoneUsageDescription here: this
-  desktop target is recruiter-only, and no recruiter-side screen captures
-  camera or microphone (the video/voice interview *taking* experience that
-  needs those is candidate-only, and the candidate UI is never shown on
-  desktop — see AuthGate/DesktopAccessDeniedPage). Add them back only if a
-  genuine recruiter-side live-room feature is built.
--->
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Talbotiq needs camera access so you can take a video interview.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Talbotiq needs microphone access so you can take a voice or video interview.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

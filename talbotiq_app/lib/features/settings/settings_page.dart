@@ -8,6 +8,7 @@ import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/guide/mimic_guide_page.dart';
 import 'package:talbotiq/features/settings/sections/appearance_section.dart';
 import 'package:talbotiq/features/settings/sections/my_recordings_section.dart';
+import 'package:talbotiq/features/settings/sections/preferences_section.dart';
 import 'package:talbotiq/features/settings/sections/service_status_section.dart';
 
 /// Settings shell: an Apple-style large title, a category navigator (sidebar rail
@@ -42,10 +43,16 @@ class _SettingsPageState extends State<SettingsPage> {
   // Categories, paired with their section widget so the two lists can never
   // drift out of index alignment.
   late final List<_Category> _items = _isRecruiter
-      ? const [
-          _Category('Appearance', Icons.palette_outlined, Color(0xFFF59E0B),
+      ? [
+          const _Category('Appearance', Icons.palette_outlined, Color(0xFFF59E0B),
               AppearanceSection()),
-          _Category('Service Status', Icons.dns_outlined, Color(0xFF0EA5E9),
+          // Font Size only has an effect on desktop (see main.dart's
+          // MediaQuery.textScaler wiring) — hidden on recruiter mobile/web
+          // rather than showing a control that would silently do nothing.
+          if (isDesktopPlatform)
+            const _Category('Preferences', Icons.tune_outlined, Color(0xFF6366F1),
+                PreferencesSection()),
+          const _Category('Service Status', Icons.dns_outlined, Color(0xFF0EA5E9),
               ServiceStatusSection()),
         ]
       : const [

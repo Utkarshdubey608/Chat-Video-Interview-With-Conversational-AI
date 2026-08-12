@@ -6,7 +6,17 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
+import 'package:talbotiq/core/utils/desktop_platform.dart';
+import 'package:talbotiq/shared/widgets/desktop_webview.dart';
+import 'package:talbotiq/shared/widgets/iframe_host_allowlist.dart';
+
 Widget buildIframe(String url) {
+  // webview_flutter (used by _MobileWebView below) has no Windows/macOS/Linux
+  // backend at all — it silently has nothing to delegate to on those
+  // platforms. flutter_inappwebview does (WebView2 on Windows, WKWebView on
+  // macOS), so desktop gets its own implementation in desktop_webview.dart
+  // rather than routing through a widget that can't actually render there.
+  if (isDesktopPlatform) return DesktopWebView(url: url);
   return _MobileWebView(url: url);
 }
 
@@ -33,20 +43,6 @@ class _MobileWebViewState extends State<_MobileWebView> {
     _init();
   }
 
-  /// Allowlist of hosts the interview WebView may navigate to: the initial
-  /// Tavus conversation URL host plus the Tavus / Daily.co video infrastructure
-  /// that a live call relies on.
-  bool _isAllowedHost(String host) {
-    if (host.isEmpty) return false;
-    final h = host.toLowerCase();
-    if (h == _initialHost) return true;
-    const suffixes = <String>['daily.co', 'tavus.io', 'tavusapi.com'];
-    for (final s in suffixes) {
-      if (h == s || h.endsWith('.$s')) return true;
-    }
-    return false;
-  }
-
   /// Gate every top-level navigation against the host allowlist. In-page
   /// about:/blob:/data: navigations used internally by the call UI are allowed;
   /// any other scheme (deep links, tel:, etc.) or off-allowlist host is blocked.
@@ -57,7 +53,7 @@ class _MobileWebViewState extends State<_MobileWebView> {
       return NavigationDecision.navigate;
     }
     if ((uri.scheme == 'http' || uri.scheme == 'https') &&
-        _isAllowedHost(uri.host)) {
+        isAllowedIframeHost(_initialHost, uri.host)) {
       return NavigationDecision.navigate;
     }
     debugPrint('Blocked WebView navigation to $url');

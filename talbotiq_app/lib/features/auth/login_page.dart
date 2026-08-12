@@ -29,9 +29,12 @@ class _LoginPageState extends State<LoginPage> {
   final _nameController = TextEditingController();
 
   bool _isSignUp = false;
-  // Talbotiq Desktop is recruiter-only (see AuthGate/DesktopAccessDeniedPage):
-  // signing up as a candidate here would only dead-end at the access-denied
-  // screen, so desktop defaults to — and only offers — a recruiter account.
+  // Desktop sign-up is recruiter-first by design: a candidate already has an
+  // account by the time they'd sign in from desktop (recruiters invite them
+  // via mobile/web), so the desktop sign-up form defaults to — and only
+  // offers — a recruiter account here. This is about onboarding, not access:
+  // an existing candidate account can sign IN (below) and reach the full
+  // candidate desktop experience via AuthGate → CandidateShell.
   AppRole _role = isDesktopPlatform ? AppRole.recruiter : AppRole.candidate;
   bool _loading = false;
   String? _error;
