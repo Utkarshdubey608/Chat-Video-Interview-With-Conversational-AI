@@ -15,6 +15,14 @@
 // Two separate sends, never one: the shortlist mail and the not-advancing mail go
 // to disjoint groups with different templates, and each is confirmed on its own.
 // Nothing is sent by merely opening this screen.
+//
+// Publishing is what actually MOVES the pipeline. "Publish & advance" records
+// each candidate's outcome and, by default, adds the shortlist to the next round
+// in one action. Those were two separate steps and the second was easy to forget:
+// a candidate was told they were moving forward and then nothing appeared,
+// because assigning them was a different screen the recruiter had to remember to
+// visit. Advancing is still a toggle — the next round may not be ready — but it
+// is on by default, because "moving forward" with nobody moved is a lie.
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -86,6 +94,21 @@ class _RoundNotifyPageState extends State<RoundNotifyPage> {
   /// Interview ids the recruiter is advancing.
   final Set<String> _selected = {};
 
+  /// Optional messages shown to each group on their result screen. Kept separate
+  /// because "congratulations, here is what happens next" and "thank you for
+  /// your time" are never the same sentence.
+  final _selectedNoteCtrl = TextEditingController();
+  final _rejectedNoteCtrl = TextEditingController();
+
+  /// Whether publishing also moves the shortlist into the next round.
+  ///
+  /// On by default when a next round exists, because that is what "moving
+  /// forward" means and leaving it off made the pipeline stall silently — the
+  /// candidate was told they were through and then nothing appeared. Still a
+  /// toggle: a recruiter may want to release outcomes before the next round is
+  /// designed, or advance people by hand.
+  bool _advance = true;
+
   bool _loading = true;
   bool _sending = false;
   Object? _error;
@@ -103,6 +126,13 @@ class _RoundNotifyPageState extends State<RoundNotifyPage> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _selectedNoteCtrl.dispose();
+    _rejectedNoteCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -161,6 +191,111 @@ class _RoundNotifyPageState extends State<RoundNotifyPage> {
       _ranked.where((i) => _selected.contains(i.id)).toList();
   List<Interview> get _others =>
       _ranked.where((i) => !_selected.contains(i.id)).toList();
+
+  // ── Recording the decision ────────────────────────────────────────────────
+
+  /// Writes the outcome every candidate of this round will see, and publishes.
+  ///
+  /// This screen already knows who is through and in what order, so the decision
+  /// belongs here rather than being re-made one candidate at a time. What lands
+  /// on each document is only "moving forward" / "not moving forward", their
+  /// rank, and the note below — never the score or the AI's write-up, which stay
+  /// the recruiter's.
+  ///
+  /// Separate from the emails on purpose: publishing is reversible per candidate,
+  /// email is not, and plenty of recruiters release results in the app and write
+  /// to people themselves.
+  /// Whether this publish will also move people into the next round.
+  bool get _willAdvance =>
+      _advance && widget.nextRound != null && _shortlisted.isNotEmpty;
+
+  Future<void> _publishOutcomes() async {
+    if (_sending || _ranked.isEmpty) return;
+
+    final selected = _shortlisted.length;
+    final rejected = _others.length;
+    final next = widget.nextRound;
+    final advancing = _willAdvance;
+
+    // Assigning into a round that has already closed hands the candidate an
+    // expired assignment — they would be told they are through and then find it
+    // locked. Worth saying before it happens, not after.
+    final nextClosed = advancing && next!.isClosed;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(advancing ? 'Publish and advance?' : 'Publish results?'),
+        content: Text(
+          [
+            '$selected candidate(s) will see "Moving forward" and $rejected '
+                'will see "Not moving forward", with their rank.',
+            if (advancing)
+              '$selected will also be added to "${next!.title}" and will see '
+                  'it on their interviews screen.',
+            if (nextClosed)
+              '⚠ "${next.title}" is already closed, so they will not be able '
+                  'to start it. Reopen or reschedule that round first.',
+            if (!advancing && next != null)
+              'Nobody will be added to "${next.title}" — you can do that from '
+                  'the timeline later.',
+            'Candidates never see their score, the AI summary or your notes on '
+                'them — only the outcome, the rank, and any message you add.',
+          ].join('\n\n'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(advancing ? 'Publish & advance' : 'Publish')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    setState(() => _sending = true);
+    final repo = context.read<InterviewRepository>();
+    try {
+      final published = await repo.applyRoundOutcomes(
+        ranked: _ranked,
+        selectedIds: _selected,
+        noteForSelected: _selectedNoteCtrl.text,
+        noteForRejected: _rejectedNoteCtrl.text,
+      );
+
+      // Outcomes FIRST, then the assignment. If the assignment fails the
+      // candidate has still been told the truth about this round; the reverse
+      // order would put them in a round they had not been told they had reached.
+      var advanced = 0;
+      if (advancing) {
+        advanced = await repo.assignCandidatesToRound(
+          round: next!,
+          recruiterEmail: _recruiterEmail,
+          recruiterName: _recruiterDisplayName,
+          testTitle: widget.test.title,
+          // Anyone already in the next round is skipped, so publishing twice
+          // never duplicates them.
+          candidates: {
+            for (final i in _shortlisted)
+              i.candidateEmailLower: i.candidateName,
+          },
+        );
+      }
+
+      if (!mounted) return;
+      setState(() => _sending = false);
+      _toast(advancing
+          ? 'Published to $published candidate(s); $advanced added to '
+              '"${next!.title}".'
+          : 'Published to $published candidate(s).');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      _toast('Could not publish: $e');
+    }
+  }
 
   // ── Sending ───────────────────────────────────────────────────────────────
 
@@ -427,15 +562,133 @@ class _RoundNotifyPageState extends State<RoundNotifyPage> {
 
   Widget _footer(ThemeData theme, int unscored) => Padding(
         padding: const EdgeInsets.only(top: 8),
-        child: Text(
-          _assigned >= 0
-              ? '${_ranked.length} scored of $_assigned in this round'
-              : '${_ranked.length} scored',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodySmall
-              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        child: Column(
+          children: [
+            _notesCard(theme),
+            const SizedBox(height: 12),
+            Text(
+              _assigned >= 0
+                  ? '${_ranked.length} scored of $_assigned in this round'
+                  : '${_ranked.length} scored',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
         ),
       );
+
+  /// Optional messages attached to each group's published result.
+  Widget _notesCard(ThemeData theme) => RecruiterPanel(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Message on their result screen (optional)',
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(
+              'Candidates see their outcome, their rank, and whichever of these '
+              'applies to them. They never see their score or the AI write-up.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _selectedNoteCtrl,
+              maxLines: 2,
+              enabled: !_sending,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'To those moving forward',
+                hintText: 'e.g. We will be in touch to schedule the next round.',
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _rejectedNoteCtrl,
+              maxLines: 2,
+              enabled: !_sending,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'To those not moving forward',
+                hintText: 'e.g. Thank you for your time — we hope to stay in '
+                    'touch.',
+              ),
+            ),
+            const Divider(height: 28),
+            _advanceControl(theme),
+          ],
+        ),
+      );
+
+  /// Whether publishing also puts the shortlist into the next round.
+  Widget _advanceControl(ThemeData theme) {
+    final next = widget.nextRound;
+    if (next == null) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.flag_outlined,
+              size: 15, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'This is the last round, so there is nowhere to advance anyone to.',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _advance,
+          onChanged:
+              _sending ? null : (v) => setState(() => _advance = v),
+          title: Text('Add the shortlist to "${next.title}"',
+              style: theme.textTheme.titleSmall
+                  ?.copyWith(fontWeight: FontWeight.w600)),
+          subtitle: Text(
+            _advance
+                ? '${_shortlisted.length} candidate(s) will see that round '
+                    'straight away. Anyone already in it is skipped.'
+                : 'Nobody will be added — you can do it later from the timeline.',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ),
+        // The round they are being advanced INTO is closed, so they would be
+        // told they are through and then find it locked.
+        if (_advance && next.isClosed)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_outlined,
+                    size: 15, color: theme.colorScheme.error),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '"${next.title}" is closed. Reopen or reschedule it first, '
+                    'or they will not be able to start it.',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.error),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _actions(ThemeData theme) {
     final shortlisted = _shortlisted.length;
@@ -451,6 +704,25 @@ class _RoundNotifyPageState extends State<RoundNotifyPage> {
                 padding: EdgeInsets.only(bottom: 10),
                 child: LinearProgressIndicator(minHeight: 3),
               ),
+            // First, because it is the step that actually tells candidates
+            // anything inside the app — the emails are the optional extra.
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed:
+                    (_sending || _ranked.isEmpty) ? null : _publishOutcomes,
+                icon: Icon(
+                    _willAdvance
+                        ? Icons.arrow_forward
+                        : Icons.publish_outlined,
+                    size: 18),
+                // Names both effects, because one of them assigns people work.
+                label: Text(_willAdvance
+                    ? 'Publish & advance ${_shortlisted.length} to next round'
+                    : 'Publish results to ${_ranked.length} candidate(s)'),
+              ),
+            ),
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(

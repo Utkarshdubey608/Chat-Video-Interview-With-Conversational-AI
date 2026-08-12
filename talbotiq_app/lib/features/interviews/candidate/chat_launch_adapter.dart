@@ -17,6 +17,7 @@ import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/features/recruiter/views/runner/conversation_runner_page.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 Widget buildChatRunnerPage({
@@ -145,38 +146,29 @@ Widget buildChatRunnerPage({
           {'question': g.question, 'answer': g.answer},
       ];
 
-      // A DEGRADED report is the heuristic fallback: its scores come from answer
-      // LENGTH, not content (see conversationHeuristicReport). It used to be
-      // stored as `evaluatedBy: 'ai'`, which showed the recruiter a fabricated
-      // number indistinguishable from a real evaluation and let it be published
-      // to the candidate. Store the failure instead — no score, the reason, and
-      // the raw answers so the recruiter can retry scoring in one tap.
-      if (report.degraded == true) {
+      // The SERVER scores this now, from these answers. The report the runner
+      // produced on-device is deliberately not stored: when Gemini was
+      // unreachable it is the heuristic fallback, whose scores come from answer
+      // LENGTH rather than content (see conversationHeuristicReport), and storing
+      // that as `evaluatedBy: 'ai'` put a fabricated number in front of the
+      // recruiter that was indistinguishable from a real evaluation.
+      //
+      // Fire-and-forget: the candidate is finished either way, and the recruiter
+      // sees the result when scoring lands.
+      evaluationService
+          .submit(interviewId: interview.id, responses: responses)
+          .catchError((Object e) {
+        // The submission failed, which is the one case that loses the answers —
+        // so keep them locally with the reason, for the recruiter's retry.
         repository.completeWithoutScore(
           interview.id,
-          error: scoringError?.trim().isNotEmpty == true
-              ? scoringError!.trim()
-              // No exception means the scorer was never reachable in the first
-              // place, which is a configuration problem, not a transient one.
-              : 'AI scoring was unavailable, so no score was produced.',
+          error: 'The answers could not be submitted for scoring: '
+              '${e.toString().replaceAll('Exception: ', '')}'
+              '${scoringError?.trim().isNotEmpty == true ? ' (on-device scoring also failed: ${scoringError!.trim()})' : ''}',
           responses: responses,
           integrity: integrity,
         );
-        return;
-      }
-
-      // Store an UNPUBLISHED canonical result so the recruiter can review,
-      // edit and publish it. The candidate does not see it yet.
-      repository.completeWithResult(interview.id, {
-        'overallScore': report.overallScore.round(),
-        'summary': report.summary,
-        'recommendation': report.recommendation ?? '',
-        'strengths': report.strengths ?? const <String>[],
-        'improvements': report.improvements ?? const <String>[],
-        'evaluatedBy': 'ai',
-        'detail': report.toJson(),
-        if (integrity != null) 'integrity': integrity,
-        'responses': responses,
+        return const EvaluationAck(status: 'failed', responses: 0);
       });
     },
   );

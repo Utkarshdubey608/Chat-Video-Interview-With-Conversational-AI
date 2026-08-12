@@ -197,3 +197,32 @@ class ResumeScoreResponse(BaseModel):
     model: str
 
     model_config = {"populate_by_name": True}
+
+
+# --- Interview evaluation (submitted by the candidate, scored server-side) ---
+class EvaluateRequest(BaseModel):
+    """A finished interview's question/answer pairs.
+
+    No score, no prompt and no model here on purpose: all three are resolved
+    server-side, so a submission cannot influence the number it is given.
+    Entries are re-cleaned and capped in `app.evaluation.clean_responses`; the
+    generous bound below only stops an absurd body being parsed at all.
+    """
+
+    responses: list[dict] = Field(min_length=1, max_length=200)
+
+
+class EvaluateResponse(BaseModel):
+    """Acknowledges the SUBMISSION, not a score.
+
+    `status` is "scoring" when the answers were accepted and a background task is
+    working on them, or "stored_without_score" when there was too little to score
+    and that was recorded instead. Either way the answers are safely stored, which
+    is what the candidate is waiting to hear.
+    """
+
+    interview_id: str = Field(serialization_alias="interviewId")
+    status: str
+    responses: int
+
+    model_config = {"populate_by_name": True}

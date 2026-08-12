@@ -3,9 +3,14 @@
 // Launches a real-time VOICE interview (Gemini Live) for an assigned Interview.
 //
 // Mints a short-lived session token from the backend, runs the VoiceStage, and —
-// on completion — scores the captured transcript with the same Gemini analysis
-// pipeline the video track uses, writing an UNPUBLISHED result to Firestore (the
-// recruiter reviews + publishes).
+// on completion — SUBMITS the captured answers to the backend, which scores them
+// in the background and writes an UNPUBLISHED result itself (the recruiter
+// reviews + publishes).
+//
+// The device no longer scores. It used to call Gemini here and wait: that made
+// the candidate sit through a model run, and the long generation was routinely
+// cut off by the gateway with a 504 that `ApiClient` does not retry — failing the
+// evaluation outright. See evaluation_service.dart.
 //
 // The interviewer's system instruction is NOT built here any more. It is
 // assembled server-side (backend/app/voice.py) and sealed into the token, so a
@@ -17,10 +22,9 @@ import 'package:provider/provider.dart';
 import 'package:talbotiq/core/services/gemini_live_service.dart';
 import 'package:talbotiq/core/net/backend_client.dart';
 import 'package:talbotiq/core/net/live_token.dart';
-import 'package:talbotiq/core/services/gemini_service.dart';
-import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/candidate/voice_stage.dart';
 
@@ -164,56 +168,26 @@ Future<void> _scoreAndStore({
       return;
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-    // NOTE: per-question voice attribution is APPROXIMATE on-device — the
-    // website aligns each answer to a specific planned question server-side
-    // (voiceFlow: VAD turn boundaries + token-overlap matching against the
-    // question plan); on-device we have no equivalent alignment step, and VAD
-    // can occasionally split one spoken answer across two captions, which
-    // would shift every following index by one. A previous revision mapped
-    // questionIdx=i and hit exactly that shift — but the actual cause was the
-    // candidate's leading "yes, I'm ready" caption being counted as answer #1
-    // (pushing every real answer down by one), which is now stripped ABOVE via
-    // _isReadinessReply before this list is built. With that fixed,
-    // position-based attribution is correct in the common case (one turn per
-    // question) and only degrades for the rare mid-answer VAD split — same as
-    // before. Hardcoding questionIdx=0 for every entry (as this used to do)
-    // was strictly worse: it fed the analyzer a transcript where every answer
-    // belongs to question 1 and every other question shows "no spoken answer
-    // captured", corrupting the per-question evidence behind the overall
-    // score/recommendation, not just an unused breakdown.
-    final transcript = <TranscriptEntry>[
-      for (var i = 0; i < scored.length; i++)
-        TranscriptEntry(
-          text: scored[i],
-          role: 'candidate',
-          timestamp: now + i,
-          questionIdx: i,
-        ),
-    ];
+    // NOTE: per-question voice attribution is APPROXIMATE on-device. The website
+    // aligns each answer to a planned question server-side (VAD turn boundaries
+    // plus token-overlap matching against the question plan); on-device there is
+    // no equivalent alignment step, and VAD can occasionally split one spoken
+    // answer across two captions, shifting every following index by one. The
+    // common cause of that shift — the candidate's leading "yes, I'm ready"
+    // caption being counted as answer #1 — is stripped above by
+    // _isReadinessReply, so position-based pairing is right in the ordinary case
+    // (one turn per question) and only degrades for the rare mid-answer split.
+    // `responsesApproximate` is not set here because the SERVER scores from the
+    // question/answer pairs below, and it re-derives nothing from ordering.
 
-    final sc = await geminiService.analyze(
-      candidateName: interview.candidateName ?? '',
-      jobRole: interview.title,
-      interviewDurationSeconds: interview.durationMinutes * 60,
-      transcript: transcript,
-      questions: interview.questions,
-      wpm: 0,
-      totalFillers: 0,
-    );
-
-    await repo.completeWithResult(interview.id, {
-      'overallScore': sc.overallFitScore ?? 0,
-      'summary': sc.hiringRecommendationRationale,
-      'recommendation': mapHiringRecommendationToCanonical(sc.hiringRecommendation),
-      'strengths': sc.topStrengths,
-      'improvements': sc.topConcerns,
-      'evaluatedBy': 'ai',
-      'detail': sc.toJson(),
-      // Best-effort only: paired by position, not real attribution (see the
-      // NOTE above on why voice has no reliable per-question mapping).
-      'responsesApproximate': true,
-      'responses': [
+    // Hand the answers to the server and stop. It acknowledges in milliseconds,
+    // scores in a background task and writes the result itself — so the
+    // candidate is released now instead of waiting on a model, and no HTTP
+    // connection is held open long enough for the gateway to answer 504 (which
+    // is what used to fail these outright; see evaluation_service.dart).
+    await evaluationService.submit(
+      interviewId: interview.id,
+      responses: [
         // Iterate to the LONGER of the two lengths so every planned question
         // still appears (blank answer if unanswered — matching the video/chat
         // reference's completeness) instead of silently dropping trailing
@@ -229,7 +203,7 @@ Future<void> _scoreAndStore({
             'answer': idx < scored.length ? scored[idx] : '',
           },
       ],
-    });
+    );
   } catch (e) {
     // Scoring failed (network, bad key, safety block...). Mirror the video
     // track's fallback (candidate_video_shell._maybeSubmitFallbackOnFailure):

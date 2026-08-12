@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from app import mailer, providers
 from app.config import get_settings
 from app.providers.base import ProviderNotConfigured, UpstreamError, aclose
-from app.routers import ai, emails, realtime, resume, templates
+from app.routers import ai, emails, evaluations, realtime, resume, templates
 
 logging.basicConfig(level=logging.INFO)
 
@@ -92,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(emails.router)
     app.include_router(realtime.router)
     app.include_router(resume.router)
+    app.include_router(evaluations.router)
     app.include_router(ai.router)
 
     @app.get("/health", tags=["meta"])

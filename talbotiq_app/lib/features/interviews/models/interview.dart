@@ -125,6 +125,62 @@ extension RoundKindX on RoundKind {
   }
 }
 
+/// What the CANDIDATE is told about a round they finished.
+///
+/// Deliberately separate from the score. A candidate's question is "did I get
+/// through"; the score, the AI summary, the strengths and the "areas to improve"
+/// are the recruiter's working notes and are never shown to them. This enum, an
+/// optional rank and an optional recruiter note are the entire candidate-facing
+/// result — see `candidate_result_page.dart`.
+enum RoundOutcome {
+  /// Through to the next round.
+  selected,
+
+  /// Not going forward.
+  notSelected,
+
+  /// Published, but the recruiter has not decided yet. Also what an older
+  /// result — published before outcomes existed — reads as, so a legacy
+  /// document shows "we'll be in touch" instead of leaking its raw score.
+  pending,
+}
+
+extension RoundOutcomeX on RoundOutcome {
+  String get wire {
+    switch (this) {
+      case RoundOutcome.selected:
+        return 'selected';
+      case RoundOutcome.notSelected:
+        return 'not_selected';
+      case RoundOutcome.pending:
+        return 'pending';
+    }
+  }
+
+  /// Written for the candidate, not the recruiter. No hiring vocabulary.
+  String get candidateLabel {
+    switch (this) {
+      case RoundOutcome.selected:
+        return 'Moving forward';
+      case RoundOutcome.notSelected:
+        return 'Not moving forward';
+      case RoundOutcome.pending:
+        return 'Under review';
+    }
+  }
+
+  static RoundOutcome fromWire(String? v) {
+    switch (v) {
+      case 'selected':
+        return RoundOutcome.selected;
+      case 'not_selected':
+        return RoundOutcome.notSelected;
+      default:
+        return RoundOutcome.pending;
+    }
+  }
+}
+
 /// Lifecycle of an assigned interview.
 enum InterviewStatus { assigned, inProgress, completed }
 
@@ -223,7 +279,18 @@ class Interview {
   final String? candidateName;
 
   final InterviewType type;
+
+  /// This assignment's own name. On a multi-round test that is the ROUND's name
+  /// ("Résumé screen"), not the job's.
   final String title;
+
+  /// The job the whole test is for ("Senior Flutter Engineer").
+  ///
+  /// Stored because [title] became the round name, leaving the candidate's
+  /// screen with several cards and nothing naming what they had applied for.
+  /// Empty on pre-timeline documents, where [title] IS the job — see
+  /// [displayTestTitle].
+  final String testTitle;
   final String prompt;
   final List<String> questions;
 
@@ -366,6 +433,34 @@ class Interview {
   bool get canRetryEvaluation =>
       awaitingEvaluation && storedResponses.isNotEmpty;
 
+  // ── What the candidate is told ────────────────────────────────────────────
+
+  /// The recruiter's decision on this round, once published.
+  ///
+  /// Absent — including on every result published before outcomes existed —
+  /// reads as [RoundOutcome.pending] rather than leaking the raw score.
+  RoundOutcome get outcome =>
+      RoundOutcomeX.fromWire(result?['outcome'] as String?);
+
+  /// True once a recruiter has actually decided, as opposed to defaulting.
+  bool get hasOutcome => result?['outcome'] != null;
+
+  /// Position on this round's leaderboard, stamped at publish time so it cannot
+  /// drift when someone else is scored later. Null when not shared.
+  int? get rank => (result?['rank'] as num?)?.toInt();
+
+  /// How many were ranked, for "4 of 32". Null when not shared.
+  int? get rankOf => (result?['rankOf'] as num?)?.toInt();
+
+  /// A note the recruiter wrote FOR the candidate. Distinct from `summary`,
+  /// which is the AI's internal write-up and is never shown to them.
+  String get candidateNote =>
+      (result?['candidateNote'] as String?)?.trim() ?? '';
+
+  /// The job to show the candidate. Falls back to [title] for pre-timeline
+  /// documents, where the assignment's own name IS the job.
+  String get displayTestTitle => testTitle.isNotEmpty ? testTitle : title;
+
   /// Whether this interview belongs to an explicit round. False for every
   /// pre-timeline document, which is treated as a single implicit round.
   bool get hasRound => roundId.isNotEmpty;
@@ -393,6 +488,7 @@ class Interview {
     this.candidateName,
     required this.type,
     required this.title,
+    this.testTitle = '',
     required this.prompt,
     required this.questions,
     this.adaptive = false,
@@ -455,6 +551,7 @@ class Interview {
       candidateName: d['candidateName'] as String?,
       type: InterviewTypeX.fromWire(d['type'] as String?),
       title: (d['title'] as String?) ?? 'Interview',
+      testTitle: (d['testTitle'] as String?) ?? '',
       prompt: (d['prompt'] as String?) ?? '',
       questions:
           (d['questions'] as List?)?.map((e) => e.toString()).toList() ??
@@ -503,6 +600,7 @@ class Interview {
           'candidateName': candidateName,
         'type': type.wire,
         'title': title,
+        if (testTitle.isNotEmpty) 'testTitle': testTitle,
         'prompt': prompt,
         'questions': questions,
         'adaptive': adaptive,
@@ -538,6 +636,7 @@ class Interview {
         'candidateName': candidateName,
         'type': type.wire,
         'title': title,
+        if (testTitle.isNotEmpty) 'testTitle': testTitle,
         'prompt': prompt,
         'questions': questions,
         'adaptive': adaptive,

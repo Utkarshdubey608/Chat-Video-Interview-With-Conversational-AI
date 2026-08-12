@@ -44,25 +44,42 @@ class RecruiterActionBar extends StatelessWidget {
     final theme = Theme.of(context);
     if (actions.isEmpty) return const SizedBox.shrink();
 
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 6),
+          child: Text(
+            'ACTIONS',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.1,
+            ),
+          ),
         ),
-      ),
-      // Wrap, not Row: on a narrow phone this reflows to a second line instead
-      // of clipping the last button off the edge, which is how an action becomes
-      // invisible.
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final action in actions) _ActionPill(action: action),
-        ],
-      ),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.22),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+            ),
+          ),
+          // Wrap, not Row: on a narrow phone this reflows to a second line instead
+          // of clipping the last button off the edge, which is how an action becomes
+          // invisible.
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final action in actions) _ActionPill(action: action),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

@@ -360,6 +360,79 @@ class InterviewRepository {
     });
   }
 
+  /// Records what the CANDIDATE will be told about this round.
+  ///
+  /// Written with DOTTED FIELD PATHS (`result.outcome`) rather than by replacing
+  /// the `result` map. The map holds the recruiter's evaluation — score, summary,
+  /// strengths, the raw answers — and a decision about the candidate must not
+  /// destroy any of it.
+  ///
+  /// [publish] is what actually makes it visible; setting an outcome without
+  /// publishing lets a recruiter decide the whole round first and release it in
+  /// one go.
+  Future<void> setOutcome(
+    String id, {
+    required RoundOutcome outcome,
+    int? rank,
+    int? rankOf,
+    String? note,
+    bool? publish,
+  }) {
+    return _col.doc(id).update({
+      'result.outcome': outcome.wire,
+      // null clears a rank that no longer applies — e.g. after a re-score moved
+      // everyone around — rather than leaving a stale position on screen.
+      'result.rank': rank,
+      'result.rankOf': rankOf,
+      if (note != null) 'result.candidateNote': note.trim(),
+      if (publish != null) 'resultPublished': publish,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Records outcomes for a whole round at once: [selectedIds] move forward,
+  /// everyone else in [ranked] does not.
+  ///
+  /// Ranks come from each candidate's position in [ranked] and are STAMPED here
+  /// rather than computed when the candidate looks. A rank that recomputed itself
+  /// would shift under them whenever anyone else was re-scored.
+  ///
+  /// Returns how many were written.
+  Future<int> applyRoundOutcomes({
+    required List<Interview> ranked,
+    required Set<String> selectedIds,
+    String? noteForSelected,
+    String? noteForRejected,
+    bool publish = true,
+  }) async {
+    if (ranked.isEmpty) return 0;
+
+    const chunk = 400;
+    for (var i = 0; i < ranked.length; i += chunk) {
+      final end = (i + chunk < ranked.length) ? i + chunk : ranked.length;
+      final batch = _db.batch();
+      for (var j = i; j < end; j++) {
+        final interview = ranked[j];
+        final selected = selectedIds.contains(interview.id);
+        final note = selected ? noteForSelected : noteForRejected;
+        batch.update(_col.doc(interview.id), {
+          'result.outcome': (selected
+                  ? RoundOutcome.selected
+                  : RoundOutcome.notSelected)
+              .wire,
+          'result.rank': j + 1,
+          'result.rankOf': ranked.length,
+          if (note != null && note.trim().isNotEmpty)
+            'result.candidateNote': note.trim(),
+          'resultPublished': publish,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    }
+    return ranked.length;
+  }
+
   /// Show/hide a single candidate's result.
   Future<void> setPublished(String id, bool published) {
     return _col.doc(id).update({

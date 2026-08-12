@@ -137,33 +137,75 @@ class _RoundLeaderboardPageState extends State<RoundLeaderboardPage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Leaderboard'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(20),
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              widget.round?.title ?? widget.test.title,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        titleSpacing: 0,
+        leadingWidth: 44,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 22),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: const Text(
+          'Leaderboard',
+          style: TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.8,
           ),
         ),
       ),
       body: Column(
         children: [
-          // Labelled, matching test_candidates_page — an icon-only app bar action
-          // is the thing that pattern replaced.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: RecruiterActionBar(
-              actions: [
-                RecruiterAction(
-                  label: 'All candidates',
-                  icon: Icons.people_outline,
-                  onPressed: _openAllCandidates,
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 18),
+              child: Text(
+                (widget.round?.title ?? widget.test.title).toLowerCase(),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
                 ),
-              ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: Material(
+                color: theme.colorScheme.primary.withValues(alpha: 0.08),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  side: BorderSide(
+                    color: theme.colorScheme.primary.withValues(alpha: 0.55),
+                    width: 1.2,
+                  ),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(28),
+                  onTap: _openAllCandidates,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.people_alt_outlined,
+                            size: 20, color: theme.colorScheme.primary),
+                        const SizedBox(width: 10),
+                        Text(
+                          'All candidates',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
           Expanded(child: _body(theme)),
@@ -202,12 +244,12 @@ class _RoundLeaderboardPageState extends State<RoundLeaderboardPage> {
       onRefresh: _refresh,
       child: ListView.builder(
         controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
         itemCount: _ranked.length + 1,
         itemBuilder: (context, i) {
           if (i == _ranked.length) return _footer(theme);
           return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.only(bottom: 12),
             child: _LeaderboardRow(
               interview: _ranked[i],
               rank: i + 1,
@@ -326,75 +368,52 @@ class _LeaderboardRowState extends State<_LeaderboardRow> {
     final submission = _submission;
     final score = submission?.score;
 
-    return RecruiterPanel(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      onTap: () => setState(() => _expanded = !_expanded),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.18),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(30),
+        side: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+          width: 1.2,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(30),
+        onTap: () => setState(() => _expanded = !_expanded),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
+          child: Row(
             children: [
               _rankBadge(theme),
               const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_who,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.bold)),
-                    if (_i.candidateName?.trim().isNotEmpty == true)
-                      Text(_i.candidateEmail,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant)),
-                  ],
+                child: Text(
+                  _who,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurface,
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 '${_score ?? '—'}',
                 style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
                   color: _scoreColor(theme),
                 ),
               ),
-              Icon(_expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 20, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 22,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ],
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (score != null)
-                RecruiterBadge(
-                    text: score.verdict.label, color: _scoreColor(theme)),
-              if (_i.resultPublished)
-                RecruiterBadge(
-                    text: 'Published', color: theme.colorScheme.tertiary),
-              if (score?.experienceYears != null)
-                Text('${score!.experienceYears!.toStringAsFixed(1)} yrs',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-              if (submission?.extractedAt != null)
-                Text('Submitted ${formatDateTime(submission!.extractedAt!)}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
-            ],
-          ),
-          if (_expanded) ...[
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            _detail(theme, submission),
-          ],
-        ],
+        ),
       ),
     );
   }

@@ -410,6 +410,7 @@ class InterviewRound {
       // routing actually switches on.
       type: kind.interviewType ?? InterviewType.chat,
       title: title.isNotEmpty ? title : testTitle,
+      testTitle: testTitle,
       prompt: (c['prompt'] as String?) ?? '',
       questions:
           (c['questions'] as List?)?.map((e) => e.toString()).toList() ??

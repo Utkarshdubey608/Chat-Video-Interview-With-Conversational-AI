@@ -271,7 +271,7 @@ def fetch_round_criteria(settings: Settings, interview: Interview) -> RoundCrite
     return criteria_from_map(data.get("criteria"))
 
 
-# ── The one write ─────────────────────────────────────────────────────────────
+# ── Writes ────────────────────────────────────────────────────────────────────
 
 
 def save_resume_submission(
@@ -307,4 +307,40 @@ def save_resume_submission(
         .collection(INTERVIEWS_COLLECTION)
         .document(interview_id)
         .set(payload, merge=True)
+    )
+
+
+def save_evaluation(
+    settings: Settings,
+    interview_id: str,
+    *,
+    result: dict,
+) -> None:
+    """Store an interview's evaluation on its document.
+
+    Written with the Admin SDK, which bypasses `firestore.rules` — the point being
+    that `result.overallScore` decides whether someone progresses, and rules allow
+    the candidate to write their own interview document.
+
+    `result` is REPLACED, not merged. It carries `evaluationError` explicitly (empty
+    on success), because a merge would leave a previous failure's message sitting
+    next to a fresh score and keep the recruiter's "Scoring failed" badge lit.
+
+    `resultPublished` is deliberately untouched: releasing a result to the
+    candidate stays a recruiter action.
+    """
+    from firebase_admin import firestore as admin_firestore
+
+    (
+        get_db(settings)
+        .collection(INTERVIEWS_COLLECTION)
+        .document(interview_id)
+        .set(
+            {
+                "result": result,
+                "status": "completed",
+                "updatedAt": admin_firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
     )

@@ -1,10 +1,4 @@
 // test/recruiter_action_bar_test.dart
-//
-// The labelled action bar that replaced the recruiter screens' icon-only app bar
-// actions. Testable because it has no Firebase in its path, and worth testing
-// because two of the actions it carries (publish results, delete test) are
-// irreversible — so "is it labelled", "is it disabled when unavailable" and "is
-// the destructive one distinguishable" are behavioural, not cosmetic.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +10,17 @@ Future<void> _pump(WidgetTester tester, List<RecruiterAction> actions) =>
     ));
 
 void main() {
+  testWidgets('renders the "ACTIONS" section header when actions exist', (t) async {
+    await _pump(t, [
+      RecruiterAction(
+          label: 'Leaderboard',
+          icon: Icons.leaderboard_outlined,
+          onPressed: () {}),
+    ]);
+
+    expect(find.text('ACTIONS'), findsOneWidget);
+  });
+
   testWidgets('every action shows its label, not just an icon', (t) async {
     await _pump(t, [
       RecruiterAction(
@@ -47,9 +52,6 @@ void main() {
   });
 
   testWidgets('a null onPressed leaves the action visible but inert', (t) async {
-    // Visible-but-disabled rather than hidden: a recruiter should be able to see
-    // that "Retry failed scoring" exists and is simply not available yet, instead
-    // of wondering where it went.
     await _pump(t, const [
       RecruiterAction(
           label: 'Retry failed scoring',
@@ -79,7 +81,6 @@ void main() {
     Color labelColour(String text) =>
         t.widget<Text>(find.text(text)).style!.color!;
 
-    // The delete button must not look like the button next to it.
     expect(labelColour('Delete test'),
         isNot(equals(labelColour('Publish results'))));
 
@@ -90,7 +91,9 @@ void main() {
 
   testWidgets('an empty action list renders nothing at all', (t) async {
     await _pump(t, const []);
-    // Not an empty bordered container floating above the list.
+    
+    // Neither the header nor the wrapped pills should exist
+    expect(find.text('ACTIONS'), findsNothing);
     expect(find.byType(Wrap), findsNothing);
   });
 
@@ -111,8 +114,6 @@ void main() {
         RecruiterAction(label: label, icon: Icons.circle, onPressed: () {}),
     ]);
 
-    // A Row would have thrown a RenderFlex overflow here; a Wrap lays the
-    // buttons onto more lines instead.
     expect(t.takeException(), isNull);
     expect(find.text('Delete test'), findsOneWidget);
   });

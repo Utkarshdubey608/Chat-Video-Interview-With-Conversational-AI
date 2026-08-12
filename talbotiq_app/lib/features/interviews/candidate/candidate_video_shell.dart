@@ -30,10 +30,10 @@ import 'package:provider/provider.dart';
 
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
-import 'package:talbotiq/core/services/gemini_service.dart';
 import 'package:talbotiq/features/interviews/candidate/interview/interview_page.dart';
 import 'package:talbotiq/features/interviews/candidate/results/results_page.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 class CandidateVideoShell extends StatefulWidget {
@@ -48,8 +48,10 @@ class CandidateVideoShell extends StatefulWidget {
 class _CandidateVideoShellState extends State<CandidateVideoShell> {
   bool _markedInProgress = false;
   bool _placeholderWritten = false;
+
+  /// Guards against submitting twice — the store notifies on every change, and
+  /// `/results` is reached once but rebuilt many times.
   bool _resultWritten = false;
-  bool _fallbackSubmitted = false;
   bool _popScheduled = false;
   AppStore? _store;
 
@@ -103,8 +105,7 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
       // file header) so leaving before AI analysis lands never reopens this
       // interview for a fresh "Launch".
       if (interview != null) _writePlaceholderIfNeeded(interview, repo);
-      _maybeStoreResult(interview, repo);
-      _maybeSubmitFallbackOnFailure(interview, repo);
+      _submitForEvaluation(interview, repo);
     } else if (!_popScheduled) {
       // A page navigated somewhere outside this shell (e.g. "New session").
       _popScheduled = true;
@@ -134,88 +135,67 @@ class _CandidateVideoShellState extends State<CandidateVideoShell> {
         .catchError((e) => debugPrint('completeWithoutScore(placeholder) failed: $e'));
   }
 
-  // Once the AI pipeline finishes, its InterviewResult appears in AppStore.
-  // Upgrade the placeholder above into the real AI-scored result, then hand
-  // the candidate-facing pending screen off to its final stage.
-  Future<void> _maybeStoreResult(
+  /// Hands the candidate's answers to the server, which scores them in the
+  /// background and writes the result itself.
+  ///
+  /// Replaces two methods that between them waited for an on-device Gemini run:
+  /// one wrote the scorecard when it arrived, the other wrote a failure when it
+  /// did not. Both made the candidate sit on a pending screen while a model
+  /// worked, and the run they waited on was routinely cut off by the gateway
+  /// with a 504 that `ApiClient` does not retry — so the interview failed
+  /// outright. See evaluation_service.dart.
+  ///
+  /// The candidate is released as soon as their ANSWERS are stored. Whether a
+  /// score exists yet is the recruiter's concern, not theirs.
+  Future<void> _submitForEvaluation(
       Interview? interview, InterviewRepository repo) async {
-    if (interview == null || _resultWritten) return;
-    if (!mounted) return;
-    final store = context.read<AppStore>();
-    final convId = store.currentConversation?.conversationId ?? '';
-    if (convId.isEmpty) return;
-    final matches =
-        store.interviewResults.where((r) => r.conversationId == convId);
-    if (matches.isEmpty) return;
+    if (interview == null || _resultWritten || !mounted) return;
     _resultWritten = true;
-    final InterviewResult r = matches.first;
-    final sc = r.scorecard;
+    final store = context.read<AppStore>();
 
     store.setProcessingStage(InterviewProcessingStage.sendingToRecruiter);
-    try {
-      await repo.completeWithResult(interview.id, {
-        'overallScore': r.score,
-        'summary': sc?.hiringRecommendationRationale ?? '',
-        'recommendation': mapHiringRecommendationToCanonical(sc?.hiringRecommendation),
-        'strengths': sc?.topStrengths ?? const <String>[],
-        'improvements': sc?.topConcerns ?? const <String>[],
-        'evaluatedBy': 'ai',
-        if (sc != null) 'detail': sc.toJson(),
-        // Integrity: how many times the candidate left the app mid-interview.
-        if (store.integrityLeftAppCount > 0)
-          'integrity': {'leftAppCount': store.integrityLeftAppCount},
-        'responses': _buildResponses(r.transcript, interview.questions),
-      });
-      store.setProcessingStage(InterviewProcessingStage.complete);
-    } catch (e) {
-      // The unscored placeholder from _writePlaceholderIfNeeded is already
-      // saved, so the recruiter isn't blocked — this only affects what the
-      // candidate sees. Not re-armed for retry: the AI-scored upgrade above
-      // is idempotent-in-spirit but retrying on every unrelated store
-      // notification would hammer Firestore.
-      store.setProcessingStage(
-        InterviewProcessingStage.failed,
-        error: 'Could not send your results to the recruiter: $e',
-      );
-    }
-  }
+    final responses =
+        _buildResponses(store.sessionTranscript, interview.questions);
 
-  /// If Gemini scoring fails (AppStore.processingStage reaches `failed`),
-  /// don't leave the candidate's raw responses stranded behind a blank
-  /// placeholder — submit the transcript-derived Q&A to the recruiter as an
-  /// unscored draft (unlocking their "Regenerate Results" button, gated on
-  /// `responses` being non-empty), and move the candidate-facing screen to
-  /// `submittedWithoutScoring` — a reassuring "we got it, no action needed"
-  /// state rather than a scary permanent error.
-  Future<void> _maybeSubmitFallbackOnFailure(
-      Interview? interview, InterviewRepository repo) async {
-    if (interview == null || _resultWritten || _fallbackSubmitted) return;
-    if (!mounted) return;
-    final store = context.read<AppStore>();
-    if (store.processingStage != InterviewProcessingStage.failed) return;
-
-    _fallbackSubmitted = true;
-    final geminiError = store.processingError;
     try {
-      await repo.completeWithoutScore(
-        interview.id,
-        error: geminiError,
-        responses:
-            _buildResponses(store.sessionTranscript, interview.questions),
-        integrity: store.integrityLeftAppCount > 0
-            ? {'leftAppCount': store.integrityLeftAppCount}
-            : null,
+      final ack = await evaluationService.submit(
+        interviewId: interview.id,
+        responses: responses,
       );
-      store.setProcessingStage(InterviewProcessingStage.submittedWithoutScoring);
+      if (!mounted) return;
+      // `stored_without_score` means the server kept the answers but had too
+      // little to score. From the candidate's side that is still a completed
+      // submission — the distinction is the recruiter's.
+      store.setProcessingStage(ack.isScoring
+          ? InterviewProcessingStage.complete
+          : InterviewProcessingStage.submittedWithoutScoring);
     } catch (e) {
-      // A genuine hard failure — even the raw-data fallback couldn't be
-      // saved. Not re-armed for retry, same reasoning as _maybeStoreResult's
-      // catch above: retrying on every unrelated store notification would
-      // hammer Firestore.
-      store.setProcessingStage(
-        InterviewProcessingStage.failed,
-        error: 'Could not submit your responses to the recruiter: $e',
-      );
+      if (!mounted) return;
+      // The submission itself failed, which is the one case that loses the
+      // candidate's work — so it is written locally instead, keeping the
+      // answers and the reason for the recruiter's one-tap retry.
+      try {
+        await repo.completeWithoutScore(
+          interview.id,
+          error: 'The answers could not be submitted for scoring: '
+              '${e.toString().replaceAll('Exception: ', '')}',
+          responses: responses,
+          integrity: store.integrityLeftAppCount > 0
+              ? {'leftAppCount': store.integrityLeftAppCount}
+              : null,
+        );
+        if (mounted) {
+          store.setProcessingStage(
+              InterviewProcessingStage.submittedWithoutScoring);
+        }
+      } catch (writeError) {
+        if (mounted) {
+          store.setProcessingStage(
+            InterviewProcessingStage.failed,
+            error: 'Could not send your responses to the recruiter: $writeError',
+          );
+        }
+      }
     }
   }
 

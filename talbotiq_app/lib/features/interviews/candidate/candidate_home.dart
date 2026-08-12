@@ -439,59 +439,32 @@ class _CandidateHomeState extends State<CandidateHome> {
                       'Interviews assigned to $_email will appear here.',
                 );
               }
-              // Grouped by ROUND KIND, not by `type`. A résumé round stores
-              // `type: chat` because the document requires one of the three
-              // interview tracks, so grouping by type would list a résumé
-              // upload under "Chat Interviews".
-              List<Interview> ofKind(RoundKind k) =>
-                  all.where((i) => i.effectiveRoundKind == k).toList();
-              final resume = ofKind(RoundKind.resume);
-              final video = ofKind(RoundKind.video);
-              final chat = ofKind(RoundKind.chat);
-              final voice = ofKind(RoundKind.voice);
+              // Grouped by the JOB, with each round in running order beneath it.
+              //
+              // This used to group by interview kind, which meant a candidate
+              // partway through a pipeline saw "Résumé Submissions" and "Chat
+              // Interviews" as two unrelated sections with nothing saying one
+              // followed the other — and no indication they had advanced. A
+              // person applies to a job, not to a chat interview.
+              final byTest = groupByTest(all);
               return ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: [
-                  // First: a résumé screen is normally the round that gates the
-                  // rest, so it belongs at the top of the candidate's list.
-                  if (resume.isNotEmpty) ...[
+                  for (final group in byTest) ...[
                     _Header(
-                        label: 'Résumé Submissions',
-                        icon: Icons.description_outlined),
-                    ...resume.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _submitResume(i),
-                        )),
+                        label: group.title,
+                        icon: Icons.work_outline),
+                    for (var idx = 0; idx < group.rounds.length; idx++)
+                      _AssignedCard(
+                        interview: group.rounds[idx],
+                        // Position within THIS candidate's own sequence. Not the
+                        // test's total round count: they can only see rounds they
+                        // have reached, and "Round 2 of 4" would be telling them
+                        // about stages that may never be theirs.
+                        step: group.rounds.length > 1 ? idx + 1 : null,
+                        onLaunch: () => _open(group.rounds[idx]),
+                      ),
                     const SizedBox(height: 16),
-                  ],
-                  if (video.isNotEmpty) ...[
-                    _Header(
-                        label: 'Video Interviews',
-                        icon: Icons.videocam_outlined),
-                    ...video.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchVideo(i),
-                        )),
-                    const SizedBox(height: 16),
-                  ],
-                  if (chat.isNotEmpty) ...[
-                    _Header(
-                        label: 'Chat Interviews',
-                        icon: Icons.chat_bubble_outline),
-                    ...chat.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchChat(i),
-                        )),
-                    const SizedBox(height: 16),
-                  ],
-                  if (voice.isNotEmpty) ...[
-                    _Header(
-                        label: 'Voice Interviews',
-                        icon: Icons.record_voice_over_outlined),
-                    ...voice.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchVoice(i),
-                        )),
                   ],
                 ],
               );
@@ -532,14 +505,118 @@ class _CandidateHomeState extends State<CandidateHome> {
   }
 }
 
+/// One job, and the rounds of it this candidate has reached, in running order.
+class CandidatePipeline {
+  final String testId;
+  final String title;
+
+  /// Earliest round first, so the list reads as the sequence it is.
+  final List<Interview> rounds;
+
+  const CandidatePipeline({
+    required this.testId,
+    required this.title,
+    required this.rounds,
+  });
+}
+
+/// Groups a candidate's assignments by the job they belong to.
+///
+/// Public and pure so it can be tested without Firebase — this is the ordering a
+/// candidate reads their whole application from.
+///
+/// Ties on round order fall back to `createdAt`, because a test with no timeline
+/// gives every assignment `roundOrder` 0 and would otherwise order arbitrarily.
+List<CandidatePipeline> groupByTest(List<Interview> all) {
+  final byTest = <String, List<Interview>>{};
+  for (final i in all) {
+    // A pre-timeline assignment may carry no testId; it is its own group rather
+    // than being lumped in with every other one under the empty key.
+    final key = i.testId.isNotEmpty ? i.testId : i.id;
+    byTest.putIfAbsent(key, () => []).add(i);
+  }
+
+  final groups = <CandidatePipeline>[];
+  for (final entry in byTest.entries) {
+    final rounds = [...entry.value]..sort((a, b) {
+        final byOrder =
+            a.effectiveRoundOrder.compareTo(b.effectiveRoundOrder);
+        if (byOrder != 0) return byOrder;
+        final at = a.createdAt, bt = b.createdAt;
+        if (at == null || bt == null) return 0;
+        return at.compareTo(bt);
+      });
+    groups.add(CandidatePipeline(
+      testId: entry.key,
+      title: rounds.first.displayTestTitle,
+      rounds: rounds,
+    ));
+  }
+
+  // Most recently started application first — that is the one they are working
+  // on. Groups with no timestamp yet sort last rather than jumping to the top.
+  groups.sort((a, b) {
+    final at = a.rounds.first.createdAt, bt = b.rounds.first.createdAt;
+    if (at == null && bt == null) return 0;
+    if (at == null) return 1;
+    if (bt == null) return -1;
+    return bt.compareTo(at);
+  });
+  return groups;
+}
+
 class _AssignedCard extends StatelessWidget {
   final Interview interview;
   final VoidCallback onLaunch;
-  const _AssignedCard({required this.interview, required this.onLaunch});
+
+  /// 1-based position in this candidate's own sequence, or null when the job has
+  /// only one stage and numbering it would be noise.
+  final int? step;
+
+  const _AssignedCard({
+    required this.interview,
+    required this.onLaunch,
+    this.step,
+  });
 
   /// A résumé round has no session, so several of this card's words change.
   bool get _isResume =>
       interview.effectiveRoundKind == RoundKind.resume;
+
+  /// The published outcome, in the candidate's own words.
+  ///
+  /// "Not moving forward" is deliberately neutral-coloured rather than red: it is
+  /// a decision, not an error, and red on someone's rejection is a small cruelty.
+  Widget _outcomeChip(ThemeData theme) {
+    final outcome = interview.outcome;
+    final color = switch (outcome) {
+      RoundOutcome.selected => theme.colorScheme.primary,
+      RoundOutcome.notSelected => theme.colorScheme.onSurfaceVariant,
+      RoundOutcome.pending => theme.colorScheme.secondary,
+    };
+    final icon = switch (outcome) {
+      RoundOutcome.selected => Icons.check_circle_outline,
+      RoundOutcome.notSelected => Icons.info_outline,
+      RoundOutcome.pending => Icons.hourglass_empty,
+    };
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            outcome.candidateLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: color, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildStatusBadge(
       BuildContext context, String text, Color bgColor, Color textColor) {
@@ -705,13 +782,22 @@ class _AssignedCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      interview.title,
+                      step == null
+                          ? interview.title
+                          : 'Round $step · ${interview.title}',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    // The outcome, once published — the thing that tells a
+                    // candidate whether the next card is theirs. Without it a new
+                    // round simply appeared with no explanation.
+                    if (published) ...[
+                      const SizedBox(height: 4),
+                      _outcomeChip(theme),
+                    ],
                     const SizedBox(height: 4),
                     Text(
                       'from ${interview.recruiterName?.isNotEmpty == true ? interview.recruiterName : interview.recruiterEmail}',
