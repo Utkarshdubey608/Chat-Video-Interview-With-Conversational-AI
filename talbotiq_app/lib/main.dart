@@ -5,12 +5,14 @@ import 'dart:ui';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/firebase_options.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
 import 'package:talbotiq/core/theme/app_theme.dart';
@@ -20,8 +22,29 @@ import 'package:talbotiq/features/app/splash_page.dart';
 /// outside the widget tree (it lives for the whole app lifetime).
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+/// Desktop (Windows/macOS/Linux) only: a phone-shaped default window helps
+/// no one. Set a sensible desktop starting size and enforce a minimum below
+/// which the sidebar-nav/analytics-dashboard layouts stop making sense.
+Future<void> _initDesktopWindow() async {
+  await windowManager.ensureInitialized();
+  const windowOptions = WindowOptions(
+    size: Size(1440, 900),
+    minimumSize: Size(1024, 700),
+    center: true,
+    title: 'Talbotiq',
+  );
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+  });
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (isDesktopPlatform) {
+    await _initDesktopWindow();
+  }
 
   // Safety net: log framework-caught errors (build/layout/paint) instead of
   // relying only on the default console dump, and — more importantly — catch
@@ -59,10 +82,8 @@ void main() async {
   final recruiterStore = RecruiterStore();
   await recruiterStore.load();
 
-  // The recruiter module reuses the app's existing Gemini key (read-only) for
-  // scoring; keep it in sync when the user edits it in Settings.
-  recruiterGeminiService.setKey(store.geminiKey);
-  store.addListener(() => recruiterGeminiService.setKey(store.geminiKey));
+  // Restore the recruiter's persisted Gemini model choice (flash/pro).
+  await recruiterGeminiService.loadModelPreference();
 
   runApp(
     MultiProvider(
@@ -71,7 +92,8 @@ void main() async {
         ChangeNotifierProvider.value(value: recruiterStore),
         Provider<AuthService>(create: (_) => AuthService()),
         Provider<InterviewRepository>(create: (_) => InterviewRepository()),
-        Provider<AppConfigService>(create: (_) => AppConfigService()),
+        // Shared so a refresh on one screen is visible on all of them.
+        ChangeNotifierProvider(create: (_) => AvatarCatalog()),
       ],
       child: const MyApp(),
     ),

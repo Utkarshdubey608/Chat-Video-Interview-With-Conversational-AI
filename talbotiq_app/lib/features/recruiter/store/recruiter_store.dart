@@ -88,42 +88,48 @@ class RecruiterStore extends ChangeNotifier {
   }
 
   // ── Templates ─────────────────────────────────────────────────────────────
-  void upsertTemplate(InterviewTemplate template) {
+  //
+  // These five methods return Future<bool> — whether the change was actually
+  // persisted to disk, not just applied in memory. notifyListeners() still
+  // fires immediately (synchronously, before the save completes) so the UI
+  // reacts instantly as before; the returned bool is for the caller to show
+  // a genuine success/failure message rather than an unconditional "Saved".
+  Future<bool> upsertTemplate(InterviewTemplate template) {
     final idx = _templates.indexWhere((t) => t.id == template.id);
     if (idx >= 0) {
       _templates[idx] = template;
     } else {
       _templates.insert(0, template);
     }
-    _saveToPrefs();
     notifyListeners();
+    return _saveToPrefs();
   }
 
-  void deleteTemplate(String id) {
+  Future<bool> deleteTemplate(String id) {
     _templates.removeWhere((t) => t.id == id);
-    _saveToPrefs();
     notifyListeners();
+    return _saveToPrefs();
   }
 
   // ── Question sets ─────────────────────────────────────────────────────────
-  void upsertQuestionSet(QuestionSet set) {
+  Future<bool> upsertQuestionSet(QuestionSet set) {
     final idx = _questionSets.indexWhere((s) => s.id == set.id);
     if (idx >= 0) {
       _questionSets[idx] = set;
     } else {
       _questionSets.insert(0, set);
     }
-    _saveToPrefs();
     notifyListeners();
+    return _saveToPrefs();
   }
 
-  void deleteQuestionSet(String id) {
+  Future<bool> deleteQuestionSet(String id) {
     _questionSets.removeWhere((s) => s.id == id);
-    _saveToPrefs();
     notifyListeners();
+    return _saveToPrefs();
   }
 
-  QuestionSet duplicateQuestionSet(String id) {
+  Future<bool> duplicateQuestionSet(String id) {
     final orig = questionSetById(id);
     final now = DateTime.now().toIso8601String();
     final copy = QuestionSet(
@@ -141,9 +147,8 @@ class RecruiterStore extends ChangeNotifier {
       updatedAt: now,
     );
     _questionSets.insert(0, copy);
-    _saveToPrefs();
     notifyListeners();
-    return copy;
+    return _saveToPrefs();
   }
 
   // ── Sessions & reports ────────────────────────────────────────────────────
@@ -246,7 +251,11 @@ class RecruiterStore extends ChangeNotifier {
     _questionSets = seed.questionSets;
   }
 
-  Future<void> _saveToPrefs() async {
+  /// Returns whether the write actually reached disk. Callers that need the
+  /// recruiter to know about a failed save (as opposed to fire-and-forget
+  /// internal saves like [setSlot0Feature]) should check this rather than
+  /// assume success.
+  Future<bool> _saveToPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final data = {
@@ -258,9 +267,12 @@ class RecruiterStore extends ChangeNotifier {
             _slot0Feature == FeatureSlot.recruiter ? 'recruiter' : 'video',
         'hasSeeded': _hasSeeded,
       };
-      await prefs.setString(_kStoreKey, jsonEncode(data));
+      // setString resolves to false on a genuine write failure — it does not
+      // always throw — so that result must be returned, not discarded.
+      return await prefs.setString(_kStoreKey, jsonEncode(data));
     } catch (e) {
       debugPrint('RecruiterStore save error: $e');
+      return false;
     }
   }
 }

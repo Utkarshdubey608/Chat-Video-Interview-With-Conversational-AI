@@ -12,7 +12,7 @@ import 'package:provider/provider.dart';
 
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/core/constants/colors.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
@@ -29,7 +29,6 @@ class PracticePage extends StatefulWidget {
 }
 
 class _PracticePageState extends State<PracticePage> {
-  final _keyController = TextEditingController();
   final _promptController = TextEditingController();
   final _replicaIdController = TextEditingController();
   final _personaIdController = TextEditingController();
@@ -47,15 +46,10 @@ class _PracticePageState extends State<PracticePage> {
   void initState() {
     super.initState();
     _promptController.text = DraftForm.defaults().conversationalContext;
-    // Prefill with any key already on the device (e.g. pulled org key); the
-    // candidate can replace it with their own.
-    final existing = context.read<AppStore>().tavusKey;
-    if (existing.isNotEmpty) _keyController.text = existing;
   }
 
   @override
   void dispose() {
-    _keyController.dispose();
     _promptController.dispose();
     _replicaIdController.dispose();
     _personaIdController.dispose();
@@ -65,28 +59,29 @@ class _PracticePageState extends State<PracticePage> {
     super.dispose();
   }
 
-  Future<void> _loadReplicas() async {
-    final key = _keyController.text.trim();
-    if (key.isEmpty) {
-      setState(() => _error = 'Enter your Tavus API key first.');
-      return;
-    }
-    tavusService.setKey(key);
+  /// Cached read — the catalog only calls Tavus once per 10-hour window.
+  Future<void> _loadReplicas() => _fetchAvatars(refresh: false);
+
+  /// Explicit user action.
+  Future<void> _refreshAvatars() => _fetchAvatars(refresh: true);
+
+  Future<void> _fetchAvatars({required bool refresh}) async {
+    final catalog = context.read<AvatarCatalog>();
     setState(() {
       _loadingReplicas = true;
       _error = null;
     });
-    try {
-      final replicas = await tavusService.listReplicas();
-      if (!mounted) return;
-      setState(() => _replicas = replicas);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = 'Could not load avatars: '
-          '${e.toString().replaceAll('Exception: ', '')}');
-    } finally {
-      if (mounted) setState(() => _loadingReplicas = false);
-    }
+    await (refresh ? catalog.refresh() : catalog.ensureLoaded());
+    if (!mounted) return;
+    setState(() {
+      _loadingReplicas = false;
+      _replicas = catalog.replicas;
+      // Cached avatars keep working after a failed refresh; only complain when
+      // the picker would otherwise be empty.
+      _error = _replicas.isEmpty && catalog.error != null
+          ? 'Could not load avatars: ${catalog.error}'
+          : null;
+    });
   }
 
   void _addQuestion() =>
@@ -122,11 +117,6 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Future<void> _launch() async {
-    final key = _keyController.text.trim();
-    if (key.isEmpty) {
-      setState(() => _error = 'Enter your Tavus API key.');
-      return;
-    }
     if (_replicaIdController.text.trim().isEmpty) {
       setState(() => _error = 'Pick or enter an avatar (replica).');
       return;
@@ -136,7 +126,6 @@ class _PracticePageState extends State<PracticePage> {
       _launching = true;
       _error = null;
     });
-    tavusService.setKey(key);
 
     final config = DraftForm.defaults().copyWith(
       conversationalContext: _promptController.text.trim(),
@@ -183,7 +172,6 @@ class _PracticePageState extends State<PracticePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _buildTavusIntegrationCard(theme),
                       _buildSessionSetupCard(theme),
                       _buildQuestionsCard(theme),
                       _buildAvatarCard(theme),
@@ -297,55 +285,7 @@ class _PracticePageState extends State<PracticePage> {
     );
   }
 
-  Widget _buildTavusIntegrationCard(ThemeData theme) {
-    return _buildFormSection(
-      context: context,
-      title: 'Tavus Integration',
-      icon: Icons.vpn_key_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primaryContainer.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: theme.colorScheme.outline.withOpacity(0.12),
-              ),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  color: theme.colorScheme.primary,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Practice mode uses your personal Tavus account and settings. Nothing here is assigned by a recruiter, stored, or scored.',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          CustomInputField(
-            label: 'Your Tavus API Key',
-            placeholder: 'Enter tavus_api_key...',
-            controller: _keyController,
-            isPassword: true,
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildSessionSetupCard(ThemeData theme) {
     return _buildFormSection(
@@ -448,10 +388,14 @@ class _PracticePageState extends State<PracticePage> {
   }
 
   Widget _buildAvatarCard(ThemeData theme) {
+    // Avatars are cached for 10 hours, so this is a REFRESH rather than the
+    // initial load — `initState` already populated the list from cache.
     Widget action = TextButton.icon(
-      onPressed: _loadingReplicas ? null : _loadReplicas,
+      onPressed: _loadingReplicas ? null : _refreshAvatars,
       icon: const Icon(Icons.refresh, size: 16),
-      label: const Text('Load Avatars'),
+      label: Text(_replicas.isEmpty
+          ? 'Load avatars'
+          : 'Refresh (${context.watch<AvatarCatalog>().ageLabel})'),
       style: TextButton.styleFrom(
         visualDensity: VisualDensity.compact,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

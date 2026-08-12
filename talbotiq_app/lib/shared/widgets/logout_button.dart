@@ -6,20 +6,24 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/core/services/avatar_catalog.dart';
+
 import 'package:talbotiq/features/auth/auth_service.dart';
 
 class LogoutButton extends StatelessWidget {
   const LogoutButton({super.key});
 
-  Future<void> _signOut(BuildContext context) async {
-    // Read providers before the first await — using `context` across an
+  /// The one sign-out implementation — call this from any other sign-out
+  /// affordance (e.g. the desktop profile menu) instead of re-deriving it.
+  static Future<void> signOut(BuildContext context) async {
+    // Read the provider before the first await — using `context` across an
     // async gap is unsafe once the widget may have been unmounted.
-    final store = context.read<AppStore>();
     final auth = context.read<AuthService>();
-    // Clear the cloud-synced API keys from local storage before signing out,
-    // so the next person to open the app on this device can't reuse them.
-    await store.clearApiKeys();
+    final avatars = context.read<AvatarCatalog>();
+    // No credential is cached on the device any more, but the avatar catalog is
+    // org data — drop it so the next account on this device does not inherit
+    // another org's avatar list.
+    await avatars.clear();
     await auth.signOut();
   }
 
@@ -28,7 +32,7 @@ class LogoutButton extends StatelessWidget {
     return IconButton(
       tooltip: 'Sign out',
       icon: const Icon(Icons.logout),
-      onPressed: () => _signOut(context),
+      onPressed: () => signOut(context),
     );
   }
 }

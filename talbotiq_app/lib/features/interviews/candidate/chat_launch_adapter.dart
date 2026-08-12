@@ -17,6 +17,7 @@ import 'package:talbotiq/features/recruiter/models/recruiter_models.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/features/recruiter/views/runner/conversation_runner_page.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 
 Widget buildChatRunnerPage({
@@ -133,26 +134,41 @@ Widget buildChatRunnerPage({
     // Recruiter-configured whole-interview limit; null = no cap.
     maxDurationSeconds:
         interview.durationMinutes > 0 ? interview.durationMinutes * 60 : null,
-    onFinished: (completedSession, report) {
-      // Store an UNPUBLISHED canonical result so the recruiter can review,
-      // edit and publish it. The candidate does not see it yet.
-      repository.completeWithResult(interview.id, {
-        'overallScore': report.overallScore.round(),
-        'summary': report.summary,
-        'recommendation': report.recommendation ?? '',
-        'strengths': report.strengths ?? const <String>[],
-        'improvements': report.improvements ?? const <String>[],
-        'evaluatedBy': 'ai',
-        'detail': report.toJson(),
-        // Mirror the same integrity signal the video track writes, so the
-        // recruiter's evaluate screen surfaces "left the app N times" for chat
-        // interviews too. Only written when it actually happened.
-        if (completedSession.tabSwitchCount > 0)
-          'integrity': {'leftAppCount': completedSession.tabSwitchCount},
-        'responses': [
-          for (final g in primaryQuestionGroups(completedSession.transcript ?? []))
-            {'question': g.question, 'answer': g.answer},
-        ],
+    onFinished: (completedSession, report, scoringError) {
+      // Mirror the same integrity signal the video track writes, so the
+      // recruiter's evaluate screen surfaces "left the app N times" for chat
+      // interviews too. Only written when it actually happened.
+      final integrity = completedSession.tabSwitchCount > 0
+          ? {'leftAppCount': completedSession.tabSwitchCount}
+          : null;
+      final responses = [
+        for (final g in primaryQuestionGroups(completedSession.transcript ?? []))
+          {'question': g.question, 'answer': g.answer},
+      ];
+
+      // The SERVER scores this now, from these answers. The report the runner
+      // produced on-device is deliberately not stored: when Gemini was
+      // unreachable it is the heuristic fallback, whose scores come from answer
+      // LENGTH rather than content (see conversationHeuristicReport), and storing
+      // that as `evaluatedBy: 'ai'` put a fabricated number in front of the
+      // recruiter that was indistinguishable from a real evaluation.
+      //
+      // Fire-and-forget: the candidate is finished either way, and the recruiter
+      // sees the result when scoring lands.
+      evaluationService
+          .submit(interviewId: interview.id, responses: responses)
+          .catchError((Object e) {
+        // The submission failed, which is the one case that loses the answers —
+        // so keep them locally with the reason, for the recruiter's retry.
+        repository.completeWithoutScore(
+          interview.id,
+          error: 'The answers could not be submitted for scoring: '
+              '${e.toString().replaceAll('Exception: ', '')}'
+              '${scoringError?.trim().isNotEmpty == true ? ' (on-device scoring also failed: ${scoringError!.trim()})' : ''}',
+          responses: responses,
+          integrity: integrity,
+        );
+        return const EvaluationAck(status: 'failed', responses: 0);
       });
     },
   );

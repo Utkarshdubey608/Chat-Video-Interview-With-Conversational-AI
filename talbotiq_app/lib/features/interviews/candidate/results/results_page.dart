@@ -8,7 +8,6 @@ import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/core/services/gemini_service.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
-import 'package:talbotiq/core/services/hume_service.dart';
 import 'package:talbotiq/core/services/deepgram_service.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/response_widgets.dart';
@@ -17,9 +16,7 @@ import 'package:talbotiq/shared/widgets/response_widgets.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_modals.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_loading_view.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/ats_assessment_card.dart';
-import 'package:talbotiq/features/interviews/candidate/results/widgets/facial_analysis_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/dimension_scores_panel.dart';
-import 'package:talbotiq/features/interviews/candidate/results/widgets/hume_emotion_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/strengths_watchpoints_panel.dart';
 import 'package:talbotiq/features/interviews/candidate/results/widgets/results_stats_widgets.dart';
 
@@ -31,7 +28,6 @@ class ResultsPage extends StatefulWidget {
 }
 
 class _ResultsPageState extends State<ResultsPage> {
-  bool _humeProcessing = false;
   bool _geminiLoading = false;
   String? _geminiError;
   ATSScorecard? _atsScorecard;
@@ -39,8 +35,6 @@ class _ResultsPageState extends State<ResultsPage> {
   bool _scheduleOpen = false;
   bool _offerOpen = false;
 
-  Timer? _humePollTimer;
-  int _pollAttempts = 0;
 
   bool _fetchingTranscript = false;
 
@@ -135,14 +129,12 @@ class _ResultsPageState extends State<ResultsPage> {
     final store = _store;
     if (store == null) return;
     store.updateTranscriptEntries(r.transcript);
-    store.setHumeResult(r.humeResult);
     store.updateMetrics(w: r.wpm, f: r.fillers);
     if (!mounted) return;
     setState(() {
       _atsScorecard = r.scorecard;
       _geminiError = null;
       _geminiLoading = false;
-      _humeProcessing = false;
       _fetchingTranscript = false;
     });
   }
@@ -150,11 +142,10 @@ class _ResultsPageState extends State<ResultsPage> {
   @override
   void dispose() {
     _store?.removeListener(_onRouteChanged);
-    _humePollTimer?.cancel();
     super.dispose();
   }
 
-  /// Initialises results page by fetching transcripts and starting Hume processing.
+  /// Initialises the results page by fetching the transcript.
   Future<void> _initResults() async {
     final store = Provider.of<AppStore>(context, listen: false);
     store.setProcessingStage(InterviewProcessingStage.fetchingTranscript);
@@ -167,7 +158,6 @@ class _ResultsPageState extends State<ResultsPage> {
     await _ensureTranscript();
     if (!mounted) return;
     store.setProcessingStage(InterviewProcessingStage.evaluating);
-    _startHumeProcess();
   }
 
   /// Builds the session transcript. Prefers Tavus's own server-side
@@ -182,18 +172,13 @@ class _ResultsPageState extends State<ResultsPage> {
     //
     // Use the key that CREATED this conversation. tavusService already holds
     // it (practice sets it straight on the service from its own form field and
-    // never writes it to AppStore), and a conversation can only be read back
-    // with the same account's key — reading it with store.tavusKey instead
-    // made Tavus reject a practice conversation as
-    // `400 Invalid conversation_id`. store.tavusKey is only the fallback, for
-    // when the service has no key (e.g. after an app relaunch).
+    // A conversation is read back through the backend, which holds the single
+    // org Tavus key — so there is no per-account key to match up any more. (This
+    // used to juggle two in-memory keys, which is what made Tavus reject a
+    // practice conversation as
+    // `400 Invalid conversation_id`.)
     final conv = store.currentConversation;
-    final tavusKey = tavusService.getKey().trim().isNotEmpty
-        ? tavusService.getKey().trim()
-        : store.tavusKey.trim();
-    if (conv != null && conv.conversationId.isNotEmpty && tavusKey.isNotEmpty) {
-      tavusService.setKey(tavusKey);
-
+    if (conv != null && conv.conversationId.isNotEmpty) {
       setState(() => _fetchingTranscript = true);
       try {
         final raw = await tavusService.fetchTranscriptWithRetry(
@@ -245,14 +230,11 @@ class _ResultsPageState extends State<ResultsPage> {
 
     // Fallback path (native only): transcribe our own locally-recorded audio.
     final bytes = store.recordingBytes;
-    debugPrint(
-      'debug[rec]: results recordingBytes=${bytes?.length ?? 0}, deepgramKey=${store.deepgramKey.isNotEmpty}',
-    );
-    if (bytes == null || bytes.isEmpty || store.deepgramKey.isEmpty) return;
+    debugPrint('debug[rec]: results recordingBytes=${bytes?.length ?? 0}');
+    if (bytes == null || bytes.isEmpty) return;
 
     setState(() => _fetchingTranscript = true);
     try {
-      deepgramService.setKey(store.deepgramKey);
       final entries = await deepgramService.transcribeFromFile(
         bytes,
         language: DeepgramService.localeFor(store.activeInterviewLanguage),
@@ -287,180 +269,9 @@ class _ResultsPageState extends State<ResultsPage> {
     }
   }
 
-  /// Triggers the background analysis of Hume audio recording.
-  void _startHumeProcess() async {
-    final store = Provider.of<AppStore>(context, listen: false);
-    final hasHumeKey = store.humeKey.isNotEmpty;
-    // Capture the conversation id up-front. The polling timer below fires long
-    // after this method returns, so relying on a force-unwrapped
-    // store.currentConversation! inside the callback risks a null crash if the
-    // session is reset meanwhile.
-    final convId = store.currentConversation?.conversationId;
-
-    if (!hasHumeKey || convId == null || convId.isEmpty) {
-      _runAtsAnalysis();
-      return;
-    }
-
-    setState(() => _humeProcessing = true);
-
-    if (store.humeResult != null) {
-      setState(() => _humeProcessing = false);
-      _runAtsAnalysis();
-      return;
-    }
-
-    if (store.humeJobId != null) {
-      _pollHumeJob(store.humeJobId!);
-      return;
-    }
-
-    _pollAttempts = 0;
-    // Cancel any poll still running from a prior interview — this page lives in
-    // a persistent IndexedStack, so dispose() won't fire between attempts.
-    _humePollTimer?.cancel();
-    _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
-      _pollAttempts++;
-      if (_pollAttempts > 15) {
-        timer.cancel();
-        if (mounted) {
-          setState(() => _humeProcessing = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Hume analysis skipped: S3 recording ready event timeout',
-              ),
-              backgroundColor: Colors.amber,
-            ),
-          );
-          _runAtsAnalysis();
-        }
-        return;
-      }
-
-      try {
-        final recordingUri = await tavusService.getConversationRecordingUri(
-          convId,
-        );
-
-        if (recordingUri != null) {
-          timer.cancel();
-          final region = store.drafts.isNotEmpty
-              ? store.drafts.first.form.recordingS3BucketRegion
-              : 'us-east-1';
-          final httpUrl = _convertS3UriToHttp(
-            recordingUri,
-            region.isNotEmpty ? region : 'us-east-1',
-          );
-
-          // Submit the Tavus recording to Hume for facial/voice analysis. The
-          // session transcript itself comes from the candidate's locally
-          // recorded .wav (see _ensureTranscript).
-          final jobId = await humeService.submitBatchJobWithUrls([httpUrl]);
-          store.setHumeJobId(jobId);
-          store.setHumeJobStatus('QUEUED');
-
-          _pollHumeJob(jobId);
-        }
-      } catch (e) {
-        debugPrint('Tavus recording poll error: $e');
-      }
-    });
-  }
-
-  /// Converts standard S3 URI format to direct HTTP link.
-  String _convertS3UriToHttp(String s3Uri, String region) {
-    if (!s3Uri.startsWith('s3://')) return s3Uri;
-    final clean = s3Uri.replaceFirst('s3://', '');
-    final parts = clean.split('/');
-    final bucket = parts[0];
-    final key = parts.sublist(1).join('/');
-    return 'https://$bucket.s3.$region.amazonaws.com/$key';
-  }
-
-  /// Periodically checks Hume batch job status until completion or failure.
-  void _pollHumeJob(String jobId) {
-    final store = Provider.of<AppStore>(context, listen: false);
-    _pollAttempts = 0;
-
-    // Cancel any poll still running from a prior interview (see _startHumeProcess).
-    _humePollTimer?.cancel();
-    _humePollTimer = Timer.periodic(const Duration(seconds: 4), (timer) async {
-      _pollAttempts++;
-      if (_pollAttempts > 45) {
-        timer.cancel();
-        if (mounted) {
-          setState(() => _humeProcessing = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Hume analysis job polling timeout'),
-              backgroundColor: Colors.red,
-            ),
-          );
-          _runAtsAnalysis();
-        }
-        return;
-      }
-
-      try {
-        final job = await humeService.pollBatchJob(jobId);
-        store.setHumeJobStatus(job['status']);
-
-        if (job['status'] == 'COMPLETED') {
-          timer.cancel();
-          final preds = await humeService.fetchBatchPredictions(jobId);
-          final questions = store.questions.where((q) => q.isNotEmpty).toList();
-          final result = humeService.buildSessionResult(
-            jobId,
-            preds,
-            store.questionTimestamps,
-            questions,
-          );
-
-          store.setHumeResult(result);
-          if (mounted) {
-            setState(() => _humeProcessing = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Hume voice analysis completed!'),
-                backgroundColor: Theme.of(context).colorScheme.primary,
-              ),
-            );
-            _runAtsAnalysis();
-          }
-        } else if (job['status'] == 'FAILED') {
-          timer.cancel();
-          if (mounted) {
-            setState(() => _humeProcessing = false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Hume analysis job failed'),
-                backgroundColor: Colors.red,
-              ),
-            );
-            _runAtsAnalysis();
-          }
-        }
-      } catch (e) {
-        debugPrint('Hume job poll error: $e');
-      }
-    });
-  }
-
-  /// Runs final ATS assessment synthesis using Gemini service.
+  /// Runs the Gemini ATS analysis over the captured transcript.
   Future<void> _runAtsAnalysis() async {
     final store = Provider.of<AppStore>(context, listen: false);
-
-    if (store.geminiKey.isEmpty) {
-      const msg =
-          'Failed: Google Gemini API key is missing. Go to Settings and add your key.';
-      setState(() {
-        _geminiError = msg;
-        _geminiLoading = false;
-      });
-      store.setProcessingStage(InterviewProcessingStage.failed, error: msg);
-      return;
-    }
 
     if (store.sessionTranscript.isEmpty) {
       const msg =
@@ -479,25 +290,6 @@ class _ResultsPageState extends State<ResultsPage> {
     });
 
     try {
-      // Use the pre-call facefit capture when present; otherwise a neutral
-      // placeholder (facefit skipped / camera unavailable).
-      final summary = store.facialSummary ??
-          FacialSessionSummary(
-            totalFrames: 0,
-            usableFrames: 0,
-            usableFramePercent: 0.0,
-            perQuestion: [],
-            sessionDominantEmotions: [],
-            sessionAvgAttention: 0.0,
-            sessionAvgSmile: 0.0,
-            overallLookingAwayPercent: 0.0,
-            dataQuality: 'insufficient',
-            dataQualityNote: 'Facefit was not captured',
-            integrityFlags: [],
-            engagementFlags: [],
-            concernFlags: [],
-          );
-
       final scorecard = await geminiService.analyze(
         candidateName:
             (store.currentConversation?.conversationName ?? 'Candidate')
@@ -508,10 +300,8 @@ class _ResultsPageState extends State<ResultsPage> {
             : 120,
         transcript: store.sessionTranscript,
         questions: store.questions,
-        humeResult: store.humeResult,
         wpm: store.wpm,
         totalFillers: store.fillers,
-        facialSummary: summary,
         transcriptSource: _transcriptSource,
       );
 
@@ -525,9 +315,7 @@ class _ResultsPageState extends State<ResultsPage> {
       // deleted later and is never regenerated on navigation. This must run
       // regardless of mounted — an assigned interview's shell reads the result
       // out of the store, so we cannot skip it if the page was disposed.
-      final score = store.humeResult?.compositeScore ??
-          scorecard.overallFitScore ??
-          0;
+      final score = scorecard.overallFitScore ?? 0;
       // For an assigned interview, CandidateVideoShell._maybeStoreResult picks
       // this up (it reacts to interviewResults gaining a matching entry) and
       // carries the stage the rest of the way to sendingToRecruiter/complete.
@@ -544,7 +332,6 @@ class _ResultsPageState extends State<ResultsPage> {
           fillers: store.fillers,
           transcript: List<TranscriptEntry>.from(store.sessionTranscript),
           scorecard: scorecard,
-          humeResult: store.humeResult,
           isPractice: store.activeInterviewIsPractice,
         ),
       );
@@ -735,23 +522,17 @@ class _ResultsPageState extends State<ResultsPage> {
     );
   }
 
-  /// Checks if Hume voice analysis job is running.
-  bool _hProcessingAndPending(AppStore store) {
-    return _humeProcessing && store.humeJobId != null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final store = Provider.of<AppStore>(context);
 
     // Unified progressive loading screen for background tasks
-    final showLoader = _fetchingTranscript || _humeProcessing || _geminiLoading;
+    final showLoader = _fetchingTranscript || _geminiLoading;
 
     if (showLoader) {
       return ResultsLoadingView(
         fetchingTranscript: _fetchingTranscript,
-        humeProcessing: _humeProcessing,
         geminiLoading: _geminiLoading,
         sessionTranscript: store.sessionTranscript,
         atsScorecard: _atsScorecard,
@@ -759,9 +540,7 @@ class _ResultsPageState extends State<ResultsPage> {
       );
     }
 
-    final bool noCurrentResult = store.sessionTranscript.isEmpty &&
-        store.humeResult == null &&
-        !_humeProcessing;
+    final bool noCurrentResult = store.sessionTranscript.isEmpty;
 
     if (noCurrentResult) {
       // Past attempts are no longer listed here — the Practice History tab is
@@ -781,9 +560,8 @@ class _ResultsPageState extends State<ResultsPage> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(
-                  store.tavusKey.isEmpty
-                      ? 'Add a Tavus API key in Settings so the transcript can be retrieved.'
-                      : 'The transcript could not be retrieved. Make sure transcription was enabled for the session.',
+                  'The transcript could not be retrieved. Make sure '
+                  'transcription was enabled for the session.',
                   style: theme.textTheme.bodyMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -799,13 +577,10 @@ class _ResultsPageState extends State<ResultsPage> {
       );
     }
 
-    final humeResult = store.humeResult;
-    // Unified score resolver: prefer Hume's composite, otherwise the Gemini ATS
-    // fit score. When neither is available we surface N/A instead of a
-    // fabricated 72, so this headline matches the persisted / candidate-visible
-    // score.
-    final int? resolvedScore =
-        humeResult?.compositeScore ?? _atsScorecard?.overallFitScore;
+    // Score resolver: the Gemini ATS fit score, or N/A when unavailable — never
+    // a fabricated 72, so this headline matches the persisted /
+    // candidate-visible score.
+    final int? resolvedScore = _atsScorecard?.overallFitScore;
     final int overallScore = resolvedScore ?? 0;
     final String verdict =
         resolvedScore != null ? _getScoreVerdict(resolvedScore) : 'Awaiting score';
@@ -958,49 +733,6 @@ class _ResultsPageState extends State<ResultsPage> {
                           ),
                     const SizedBox(height: 24),
 
-                    if (_hProcessingAndPending(store)) ...[
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 20),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.secondary.withValues(alpha: 0.08),
-                          border: Border.all(
-                            color: theme.colorScheme.secondary.withValues(
-                              alpha: 0.24,
-                            ),
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation(
-                                  theme.colorScheme.secondary,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                'HUME AI · Analysing prosody — emotion results will appear shortly. Job: ${store.humeJobId}',
-                                style: TextStyle(
-                                  color: theme.colorScheme.secondary,
-                                  fontSize: 12,
-                                  fontFamily: 'Courier',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
 
                     GridPaperResult(
                       children: [
@@ -1112,15 +844,6 @@ class _ResultsPageState extends State<ResultsPage> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Hume AI Emotional Intelligence Report Dashboard
-                    HumeEmotionPanel(
-                      humeResult: humeResult,
-                      humeKey: store.humeKey,
-                      humeJobId: store.humeJobId,
-                      isMobile: isMobile,
-                    ),
-                    const SizedBox(height: 24),
-
                     // Strengths / Watch points tags
                     StrengthsWatchpointsPanel(
                       strengths: strengths,
@@ -1129,7 +852,6 @@ class _ResultsPageState extends State<ResultsPage> {
                     const SizedBox(height: 24),
 
                     AtsAssessmentCard(
-                      geminiKey: store.geminiKey,
                       geminiError: _geminiError,
                       geminiLoading: _geminiLoading,
                       atsScorecard: _atsScorecard,
@@ -1141,14 +863,11 @@ class _ResultsPageState extends State<ResultsPage> {
                     _buildTranscriptCard(context, store),
                     const SizedBox(height: 24),
 
-                    FacialAnalysisPanel(summary: store.facialSummary),
-                    const SizedBox(height: 24),
-
                     _buildRecruiterActions(
                       context,
                       overallScore,
                       verdict,
-                      store.humeJobId,
+                      null,
                     ),
                     const SizedBox(height: 40),
                   ],

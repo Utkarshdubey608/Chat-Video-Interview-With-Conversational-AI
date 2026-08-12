@@ -166,4 +166,9 @@ class DeepLinkService {
     if (trimmed == null || trimmed.isEmpty) return null;
     return DeepLinkTarget(interviewId: trimmed);
   }
+
+  /// The link that opens a specific interview — what candidate invite emails
+  /// carry. Round-trips through [parse], so the two stay in step.
+  static String interviewLink(String interviewId) =>
+      '$customScheme://interview/${interviewId.trim()}';
 }

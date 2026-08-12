@@ -5,9 +5,6 @@ rules_version = '2';
 // Model:
 //   users/{uid}          — one doc per account, holds { email, role, name }
 //   interviews/{id}      — a recruiter-created interview assigned to a candidate
-//   app_config/global    — shared org API keys (recruiter-managed)
-//   recruiter_keys/{id}  — a recruiter's own API keys (also used by their candidates at launch)
-//   candidate_keys/{uid} — a candidate's own API keys (owner-only)
 //
 // Deploy with: firebase deploy --only firestore:rules
 
@@ -30,6 +27,19 @@ service cloud.firestore {
     // The auth token's email, normalized for candidate-assignment matching.
     function myEmailLower() {
       return request.auth.token.email.lower();
+    }
+
+    // True when an update leaves `field` exactly as it was, INCLUDING the case
+    // where it is absent on both sides.
+    //
+    // The absence check is not decoration: `roundId` is written only for tests
+    // that use a timeline, so it is missing from every interview created before
+    // rounds existed. Comparing a missing key directly would fail the rule and
+    // lock those candidates out of interviews they are legitimately assigned.
+    function unchanged(field) {
+      return (field in resource.data) == (field in request.resource.data)
+             && (!(field in resource.data)
+                 || resource.data[field] == request.resource.data[field]);
     }
 
     // users: a user may read/write only their own profile doc.
@@ -56,6 +66,26 @@ service cloud.firestore {
                      && request.resource.data.recruiterId == request.auth.uid;
       allow delete: if isRecruiter()
                      && resource.data.recruiterId == request.auth.uid;
+
+      // rounds: the test's custom timeline — one document per stage, each with
+      // its own open/close window (see interview_round.dart).
+      //
+      // Recruiter-only, exactly like the parent test. A candidate never reads
+      // these: everything their device needs (the round's kind, its order, and
+      // its window) is COPIED onto their own interview document at assignment
+      // time, so the timeline stays private to the recruiter who designed it.
+      //
+      // Authorisation is on the round's OWN recruiterId rather than a get() of
+      // the parent test: a get() inside a rule is a billed read, and this rule
+      // runs once per round document returned by the timeline query.
+      match /rounds/{roundId} {
+        allow read: if isRecruiter()
+                       && resource.data.recruiterId == request.auth.uid;
+        allow create, update: if isRecruiter()
+                       && request.resource.data.recruiterId == request.auth.uid;
+        allow delete: if isRecruiter()
+                       && resource.data.recruiterId == request.auth.uid;
+      }
     }
 
     // interviews:
@@ -81,39 +111,35 @@ service cloud.firestore {
                         && request.resource.data.resultPublished
                            == resource.data.resultPublished
                         // Candidate must not re-assign the interview to another
-                        // recruiter/candidate or move it between tests.
+                        // recruiter/candidate, or move it between tests/rounds.
                         && request.resource.data.recruiterId
                            == resource.data.recruiterId
                         && request.resource.data.candidateEmailLower
                            == resource.data.candidateEmailLower
-                        && request.resource.data.testId == resource.data.testId);
+                        && request.resource.data.testId == resource.data.testId
+                        && unchanged('roundId')
+                        // The access window and attempt cap are the ONLY things
+                        // stopping a candidate taking a closed round, and
+                        // "end round now" works by stamping expiresAt onto this
+                        // document. A candidate who could rewrite these fields
+                        // could re-open a round the recruiter had ended, so they
+                        // are recruiter-only. (attemptsUsed is NOT here — the
+                        // client increments it on launch.)
+                        && unchanged('availableFrom')
+                        && unchanged('expiresAt')
+                        && unchanged('maxAttempts')
+                        // `resume` (the extracted text and its AI score) is
+                        // written ONLY by the backend, with the Admin SDK, which
+                        // bypasses these rules. A résumé score decides whether
+                        // someone progresses, so the candidate being scored must
+                        // not be able to write it. `result` cannot be locked the
+                        // same way — a candidate legitimately writes it when they
+                        // finish an interview round — which is exactly why the
+                        // résumé path was moved server-side instead.
+                        && unchanged('resume'));
 
       allow delete: if isRecruiter()
                      && resource.data.recruiterId == request.auth.uid;
-    }
-
-    // recruiter_keys/{recruiterId}: each recruiter's API keys. Only that
-    // recruiter may write.
-    //
-    // TRANSITIONAL: reads are currently allowed for any signed-in user because
-    // the candidate device reads them at launch to create the conversation /
-    // score client-side. This is app-side hiding, NOT secrecy.
-    //
-    // TARGET STATE (after deploying functions/ and setting USE_SECURE_BACKEND):
-    // the proxy performs those calls server-side, so change the read rule to
-    // owner-only:
-    //     allow read: if isSignedIn() && request.auth.uid == recruiterId;
-    // See core/security/recruiter_credentials_repository.dart and functions/.
-    match /recruiter_keys/{recruiterId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && request.auth.uid == recruiterId;
-    }
-
-    // candidate_keys/{uid}: a candidate's own personal API key backup (used for
-    // self-serve practice, not read by anyone else's interview launch), so it's
-    // owner-only for both read and write — unlike recruiter_keys above.
-    match /candidate_keys/{uid} {
-      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
   }
 }

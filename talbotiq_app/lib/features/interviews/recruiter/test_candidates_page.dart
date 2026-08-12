@@ -26,14 +26,25 @@ import 'package:provider/provider.dart';
 import 'package:talbotiq/core/utils/date_format.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/models/interview_round.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_retry_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/recruiter/create_interview_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/evaluate_interview_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/round_leaderboard_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/round_timeline_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/widgets/recruiter_action_bar.dart';
 
 class TestCandidatesPage extends StatefulWidget {
   final TestSummary test;
-  const TestCandidatesPage({super.key, required this.test});
+
+  /// When set, this screen shows only the candidates of that ROUND. Null shows
+  /// every candidate of the test across all rounds — which is also what a test
+  /// with no timeline has, since its assignments carry no roundId.
+  final InterviewRound? round;
+
+  const TestCandidatesPage({super.key, required this.test, this.round});
 
   @override
   State<TestCandidatesPage> createState() => _TestCandidatesPageState();
@@ -55,8 +66,16 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
   int _total = -1;
   int _completed = -1;
 
+  /// A bulk re-score is in flight; `_retryProgress` is "3 of 12" for the overlay.
+  bool _retrying = false;
+  String _retryProgress = '';
+
   String get _uid => FirebaseAuth.instance.currentUser?.uid ?? '';
   String get _testId => widget.test.testId;
+
+  /// Null when unscoped — every query below passes it straight through, and a
+  /// null roundId means "all rounds".
+  String? get _roundId => widget.round?.id;
 
   @override
   void initState() {
@@ -104,11 +123,12 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
 
   Future<void> _loadCounts() async {
     final repo = context.read<InterviewRepository>();
-    final total =
-        await repo.countForRecruiter(recruiterId: _uid, testId: _testId);
+    final total = await repo.countForRecruiter(
+        recruiterId: _uid, testId: _testId, roundId: _roundId);
     final done = await repo.countForRecruiter(
         recruiterId: _uid,
         testId: _testId,
+        roundId: _roundId,
         status: InterviewStatus.completed);
     if (!mounted) return;
     setState(() {
@@ -124,6 +144,7 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
       final page = await context.read<InterviewRepository>().fetchRecruiterPage(
             recruiterId: _uid,
             testId: _testId,
+            roundId: _roundId,
             startAfter: _cursor,
             emailPrefix: _looksLikeEmailPrefix(_query) ? _query : null,
           );
@@ -194,6 +215,89 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
     }
   }
 
+  /// Re-runs AI scoring for every candidate here whose evaluation failed.
+  ///
+  /// One action for the whole test (or round), rather than opening each failed
+  /// candidate's review screen and pressing regenerate. The retryable set is
+  /// fetched on press rather than counted on every page load — it needs a read of
+  /// the completed assignments, which is not worth paying for a badge nobody may
+  /// look at.
+  Future<void> _retryFailedScoring() async {
+    if (_retrying) return;
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    setState(() => _retrying = true);
+    try {
+      final pending = await repo.fetchRetryableEvaluations(
+        recruiterId: _uid,
+        testId: _testId,
+        roundId: _roundId,
+      );
+      if (!mounted) return;
+
+      if (pending.isEmpty) {
+        setState(() => _retrying = false);
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Nothing needs re-scoring — no failed evaluations here.'),
+        ));
+        return;
+      }
+
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Re-score ${pending.length} candidate(s)?'),
+          content: Text(
+            '${pending.length} candidate(s) completed but have no score because '
+            'AI evaluation failed. Their stored answers will be scored again.\n\n'
+            'Candidates who already have a score — from the AI or from you — are '
+            'not touched.',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Re-score')),
+          ],
+        ),
+      );
+      if (ok != true) {
+        if (mounted) setState(() => _retrying = false);
+        return;
+      }
+
+      final service = EvaluationRetryService(repository: repo);
+      final report = await service.retryEach(
+        pending,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _retryProgress = '$done of $total');
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _retrying = false;
+        _retryProgress = '';
+      });
+      await _refresh();
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(report.summary),
+        duration: const Duration(seconds: 6),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _retrying = false;
+        _retryProgress = '';
+      });
+      messenger
+          .showSnackBar(SnackBar(content: Text('Could not re-score: $e')));
+    }
+  }
+
   /// Deletes the whole test and every candidate's data for it.
   ///
   /// Irreversible and bulk, so it requires typing DELETE rather than a single
@@ -202,58 +306,14 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
-    final countLabel =
-        _total >= 0 ? '$_total candidate(s)' : 'every candidate';
 
-    final ctrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return StatefulBuilder(
-          builder: (ctx, setLocal) => AlertDialog(
-            title: const Text('Delete entire test?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'This permanently deletes "${widget.test.title}" and the '
-                  'assignments, answers and AI reports of $countLabel who took '
-                  'it. This cannot be undone.',
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                Text('Type DELETE to confirm',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: ctrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(isDense: true),
-                  onChanged: (_) => setLocal(() {}),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: ctrl.text.trim().toUpperCase() == 'DELETE'
-                    ? () => Navigator.pop(ctx, true)
-                    : null,
-                child: Text('Delete test',
-                    style: TextStyle(color: theme.colorScheme.error)),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (ctx) => _DeleteTestDialog(
+        title: widget.test.title,
+        countLabel: _total >= 0 ? '$_total candidate(s)' : 'every candidate',
+      ),
     );
-    ctrl.dispose();
     if (ok != true) return;
 
     try {
@@ -271,42 +331,65 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final round = widget.round;
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: Text(widget.test.title),
-        actions: [
-          if (_completed > 0)
-            IconButton(
-              tooltip: 'End test & publish results',
-              icon: const Icon(Icons.publish_outlined),
-              onPressed: _publishAll,
-            ),
-          PopupMenuButton<String>(
-            tooltip: 'Test actions',
-            onSelected: (v) {
-              if (v == 'delete') _confirmDeleteTest();
-            },
-            itemBuilder: (ctx) => [
-              PopupMenuItem(
-                value: 'delete',
-                child: Row(
+        title: Text(round?.title ?? widget.test.title),
+        // Scoped to a round, name the test underneath so it is clear which
+        // pipeline these candidates belong to.
+        bottom: round == null
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(20),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    '${widget.test.title} · ${round.kind.label}',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+        // No action icons here on purpose — every one of them is a labelled
+        // button in `_actionBar` below. An unlabelled icon row made a recruiter
+        // guess which of five glyphs published results and which deleted the
+        // test, and two of them are irreversible.
+      ),
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              _header(theme),
+              Expanded(child: _body(theme)),
+            ],
+          ),
+          // Blocking, because re-scoring writes results and a recruiter tapping
+          // publish or delete mid-run would be acting on numbers that are still
+          // changing under them.
+          if (_retrying)
+            ColoredBox(
+              color: const Color(0xCC000000),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.delete_forever_outlined,
-                        size: 18, color: Theme.of(ctx).colorScheme.error),
-                    const SizedBox(width: 10),
-                    const Text('Delete entire test'),
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 18),
+                    Text(
+                      _retryProgress.isEmpty
+                          ? 'Checking for failed evaluations…'
+                          : 'Re-scoring $_retryProgress…',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _header(theme),
-          Expanded(child: _body(theme)),
+            ),
         ],
       ),
     );
@@ -325,6 +408,8 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _actionBar(theme),
+          const SizedBox(height: 12),
           TextField(
             controller: _searchCtrl,
             onChanged: _onSearchChanged,
@@ -351,6 +436,60 @@ class _TestCandidatesPageState extends State<TestCandidatesPage> {
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         ],
       ),
+    );
+  }
+
+  /// Every action for this test, as labelled buttons.
+  ///
+  /// Ordering is by frequency, not prominence: the two navigations are used
+  /// constantly, publishing occasionally, deleting almost never. The destructive
+  /// one is last so it is never the button next to the one you meant.
+  Widget _actionBar(ThemeData theme) {
+    final round = widget.round;
+    final hasCompleted = _completed > 0;
+
+    return RecruiterActionBar(
+      actions: [
+        RecruiterAction(
+          label: 'Leaderboard',
+          icon: Icons.leaderboard_outlined,
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            // Passing `round` through means a single-round test — which has no
+            // roundId on its documents — still ranks, across the whole test.
+            builder: (_) =>
+                RoundLeaderboardPage(test: widget.test, round: round),
+          )),
+        ),
+        // Hidden when already scoped to a round — the timeline is where this
+        // screen was opened from, so offering it again just loops.
+        if (round == null)
+          RecruiterAction(
+            label: 'Rounds & schedule',
+            icon: Icons.timeline_outlined,
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => RoundTimelinePage(test: widget.test),
+            )),
+          ),
+        // Both of these only mean anything once somebody has finished.
+        if (hasCompleted)
+          RecruiterAction(
+            label: 'Retry failed scoring',
+            icon: Icons.autorenew,
+            onPressed: _retrying ? null : _retryFailedScoring,
+          ),
+        if (hasCompleted)
+          RecruiterAction(
+            label: 'Publish results',
+            icon: Icons.publish_outlined,
+            onPressed: _publishAll,
+          ),
+        RecruiterAction(
+          label: 'Delete test',
+          icon: Icons.delete_forever_outlined,
+          onPressed: _confirmDeleteTest,
+          destructive: true,
+        ),
+      ],
     );
   }
 
@@ -487,55 +626,36 @@ class _InterviewCard extends StatelessWidget {
     );
   }
 
-  // Compact summary of this test's pinned key overrides, with a direct
-  // view/edit action — separate from the full "Edit" form so recruiters don't
-  // have to open the whole interview editor just to check/change a key.
-  Widget _buildKeyRow(BuildContext context, Interview i) {
-    final theme = Theme.of(context);
-    String mask(String key) {
-      if (key.isEmpty) return 'Using account default';
-      return key.length > 4
-          ? '••••${key.substring(key.length - 4)}'
-          : '•' * key.length;
-    }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Test API Key',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w500,
-                  )),
-              const SizedBox(height: 4),
-              Text(
-                'Tavus: ${mask(i.keyOverrides['tavusKey'] ?? '')}   ·   '
-                'Gemini: ${mask(i.keyOverrides['geminiKey'] ?? '')}',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.onSurface),
-              ),
+  /// The small pill on the right of a candidate row: score, or why there isn't
+  /// one. One builder so a failure and a score can never be styled as though they
+  /// were the same kind of thing.
+  Widget _pill(ThemeData theme, String text, Color color, {IconData? icon}) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+          borderRadius: BorderRadius.circular(100),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 11, color: color),
+              const SizedBox(width: 4),
             ],
-          ),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
         ),
-        IconButton(
-          icon: const Icon(Icons.key_outlined, size: 20),
-          tooltip: 'View / edit this test\'s key',
-          onPressed: () => _showKeyDialog(context, i),
-        ),
-      ],
-    );
-  }
-
-  void _showKeyDialog(BuildContext context, Interview i) {
-    showDialog(
-      context: context,
-      builder: (_) => _TestKeyDialog(interview: i),
-    );
-  }
+      );
 
   Widget _buildDetailBadge(
       BuildContext context, String text, Color bgColor, Color textColor) {
@@ -636,23 +756,24 @@ class _InterviewCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _StatusChip(status: interview.status),
-                  if (score != null) ...[
+                  // A failed evaluation is called out as a FAILURE rather than
+                  // shown as a score or left blank. It used to arrive here as a
+                  // heuristic number labelled like a real AI result.
+                  if (interview.evaluationFailed) ...[
                     const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(100), // Pill shape!
-                      ),
-                      child: Text(
-                        'Score: $score',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
+                    _pill(
+                      theme,
+                      'Scoring failed',
+                      theme.colorScheme.error,
+                      icon: Icons.error_outline,
                     ),
+                  ] else if (interview.awaitingEvaluation) ...[
+                    const SizedBox(height: 6),
+                    _pill(theme, 'Not scored', theme.colorScheme.onSurfaceVariant),
+                  ] else if (score != null) ...[
+                    const SizedBox(height: 6),
+                    _pill(theme, 'Score: $score',
+                        theme.colorScheme.onSurfaceVariant),
                   ],
                 ],
               ),
@@ -760,8 +881,6 @@ class _InterviewCard extends StatelessWidget {
                                   : 'Draft — not published'),
                   if (i.result != null && i.result!['overallScore'] != null)
                     _kv(sheetContext, 'Overall Score', '${i.result!['overallScore']}/100'),
-                  const Divider(height: 24),
-                  _buildKeyRow(sheetContext, i),
                   const Divider(height: 24),
                   Text('Prompt', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
@@ -977,129 +1096,6 @@ class _InterviewCard extends StatelessWidget {
   }
 }
 
-/// View/edit dialog for a single test's pinned API key overrides. A dedicated
-/// StatefulWidget (rather than manually-managed TextEditingControllers +
-/// StatefulBuilder) so Flutter's own widget lifecycle disposes the
-/// controllers exactly when this dialog's Element is actually removed —
-/// disposing them by hand right after `showDialog` returns raced with the
-/// dialog's closing animation / the underlying Firestore stream rebuilding
-/// the interview list, causing "TextEditingController used after being
-/// disposed" crashes.
-class _TestKeyDialog extends StatefulWidget {
-  final Interview interview;
-  const _TestKeyDialog({required this.interview});
-
-  @override
-  State<_TestKeyDialog> createState() => _TestKeyDialogState();
-}
-
-class _TestKeyDialogState extends State<_TestKeyDialog> {
-  late final TextEditingController _tavusCtrl;
-  late final TextEditingController _geminiCtrl;
-  late final TextEditingController _humeCtrl;
-  late final TextEditingController _deepgramCtrl;
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final ov = widget.interview.keyOverrides;
-    _tavusCtrl = TextEditingController(text: ov['tavusKey'] ?? '');
-    _geminiCtrl = TextEditingController(text: ov['geminiKey'] ?? '');
-    _humeCtrl = TextEditingController(text: ov['humeKey'] ?? '');
-    _deepgramCtrl = TextEditingController(text: ov['deepgramKey'] ?? '');
-  }
-
-  @override
-  void dispose() {
-    _tavusCtrl.dispose();
-    _geminiCtrl.dispose();
-    _humeCtrl.dispose();
-    _deepgramCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    if (_saving) return;
-    setState(() => _saving = true);
-    final repo = context.read<InterviewRepository>();
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
-    final updated = {
-      'tavusKey': _tavusCtrl.text.trim(),
-      'geminiKey': _geminiCtrl.text.trim(),
-      'humeKey': _humeCtrl.text.trim(),
-      'deepgramKey': _deepgramCtrl.text.trim(),
-    }..removeWhere((_, v) => v.isEmpty);
-    try {
-      await repo.updateKeyOverrides(widget.interview.id, updated);
-      navigator.pop();
-      messenger
-          .showSnackBar(const SnackBar(content: Text('Test key updated.')));
-    } catch (e) {
-      if (mounted) setState(() => _saving = false);
-      messenger
-          .showSnackBar(SnackBar(content: Text('Failed to update key: $e')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Test API Key'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Pinned when this test was created/edited. Leave a field '
-              'blank to fall back to your account\'s default key at launch.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _tavusCtrl,
-              decoration: const InputDecoration(labelText: 'Tavus API Key'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _geminiCtrl,
-              decoration: const InputDecoration(labelText: 'Gemini API Key'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _humeCtrl,
-              decoration: const InputDecoration(labelText: 'Hume API Key'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _deepgramCtrl,
-              decoration: const InputDecoration(labelText: 'Deepgram API Key'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: _saving ? null : _save,
-          child: _saving
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Save'),
-        ),
-      ],
-    );
-  }
-}
-
 class _StatusChip extends StatelessWidget {
   final InterviewStatus status;
   const _StatusChip({required this.status});
@@ -1130,6 +1126,101 @@ class _StatusChip extends StatelessWidget {
         style: TextStyle(
             fontSize: 11, fontWeight: FontWeight.w600, color: bg),
       ),
+    );
+  }
+}
+
+/// Type-to-confirm dialog for deleting an entire test.
+///
+/// A StatefulWidget rather than a `StatefulBuilder` + local controller so the
+/// TextEditingController's lifetime matches the dialog's. The previous version
+/// called `ctrl.dispose()` on the line after `showDialog` returned — which is
+/// BEFORE the dialog's exit transition finishes, so the still-mounted TextField
+/// was left holding a disposed controller. That surfaced as a framework
+/// assertion (`_dependents.isEmpty`) rather than anything that pointed here.
+///
+/// The content also scrolls: `autofocus: true` raises the keyboard immediately,
+/// and an AlertDialog does not scroll its content by default, so on a phone the
+/// column had nowhere to go.
+class _DeleteTestDialog extends StatefulWidget {
+  const _DeleteTestDialog({required this.title, required this.countLabel});
+
+  final String title;
+  final String countLabel;
+
+  @override
+  State<_DeleteTestDialog> createState() => _DeleteTestDialogState();
+}
+
+class _DeleteTestDialogState extends State<_DeleteTestDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Rebuilds to enable/disable the destructive action as they type.
+    _controller.addListener(_onChanged);
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool get _confirmed => _controller.text.trim().toUpperCase() == 'DELETE';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Delete entire test?'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This permanently deletes "${widget.title}" and the assignments, '
+              'answers and AI reports of ${widget.countLabel} who took it. '
+              'This cannot be undone.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Type DELETE to confirm',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              decoration: const InputDecoration(isDense: true),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) {
+                if (_confirmed) Navigator.pop(context, true);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _confirmed ? () => Navigator.pop(context, true) : null,
+          child: Text(
+            'Delete test',
+            style: TextStyle(color: theme.colorScheme.error),
+          ),
+        ),
+      ],
     );
   }
 }

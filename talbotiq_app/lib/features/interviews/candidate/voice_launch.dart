@@ -1,22 +1,30 @@
 // lib/features/interviews/candidate/voice_launch.dart
 //
 // Launches a real-time VOICE interview (Gemini Live) for an assigned Interview.
-// Applies the recruiter's org Gemini key in-memory, builds the interviewer
-// system instruction from the interview's questions/prompt/language, runs the
-// VoiceStage, and — on completion — scores the captured transcript with the same
-// Gemini analysis pipeline the video track uses, writing an UNPUBLISHED result
-// to Firestore (the recruiter reviews + publishes).
+//
+// Mints a short-lived session token from the backend, runs the VoiceStage, and —
+// on completion — SUBMITS the captured answers to the backend, which scores them
+// in the background and writes an UNPUBLISHED result itself (the recruiter
+// reviews + publishes).
+//
+// The device no longer scores. It used to call Gemini here and wait: that made
+// the candidate sit through a model run, and the long generation was routinely
+// cut off by the gateway with a 504 that `ApiClient` does not retry — failing the
+// evaluation outright. See evaluation_service.dart.
+//
+// The interviewer's system instruction is NOT built here any more. It is
+// assembled server-side (backend/app/voice.py) and sealed into the token, so a
+// tampered client cannot rewrite the interview it is taking.
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/services/gemini_live_service.dart';
-import 'package:talbotiq/core/services/gemini_service.dart';
-import 'package:talbotiq/shared/models/app_models.dart';
+import 'package:talbotiq/core/net/backend_client.dart';
+import 'package:talbotiq/core/net/live_token.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
-import 'package:talbotiq/features/recruiter/voice/voice_catalog.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
+import 'package:talbotiq/features/interviews/services/evaluation_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/candidate/voice_stage.dart';
 
@@ -26,31 +34,26 @@ Future<void> launchVoiceInterview({
 }) async {
   final store = context.read<AppStore>();
   final repo = context.read<InterviewRepository>();
-  final appConfig = context.read<AppConfigService>();
 
-  // Apply the org keys in-memory (Gemini key drives both the Live call and the
-  // post-interview scoring). Never persisted to the candidate's Settings.
-  await appConfig.applyForRecruiter(interview.recruiterId, store,
-      overrides: interview.keyOverrides);
-  if (!context.mounted) return;
-
-  final geminiKey = store.geminiKey.trim();
-  if (geminiKey.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text(
-          'Voice interview isn’t available yet — the recruiter has not configured a Gemini key.'),
-    ));
-    await store.reloadApiKeysFromPrefs();
+  // Minted immediately before connecting: the grant's connect window is short,
+  // and the whole session config (model, voice, interviewer instruction) is
+  // sealed inside it server-side.
+  final LiveTokenGrant grant;
+  try {
+    grant = await backendClient.mintLiveToken(interviewId: interview.id);
+  } on BackendException catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(e.message)));
     return;
   }
+  if (!context.mounted) return;
 
   await Navigator.of(context).push(
     MaterialPageRoute(
       builder: (_) => VoiceStage(
-        apiKey: geminiKey,
-        systemInstruction: _buildVoiceSystemInstruction(interview),
+        grant: grant,
         companyName: interview.recruiterName ?? 'TalbotIQ',
-        voiceName: interview.voiceName,
         // Recruiter-configured limit; null (none set) keeps the service default.
         maxDuration: interview.durationMinutes > 0
             ? Duration(minutes: interview.durationMinutes)
@@ -80,45 +83,6 @@ Future<void> launchVoiceInterview({
   repo
       .incrementAttempt(interview.id)
       .catchError((e) => debugPrint('incrementAttempt failed: $e'));
-  await store.reloadApiKeysFromPrefs();
-}
-
-String _buildVoiceSystemInstruction(Interview interview) {
-  final questions = interview.questions;
-  final b = StringBuffer();
-  // Adopt the recruiter-chosen interviewer persona style, if any.
-  final persona = interview.voicePersonaId == null
-      ? null
-      : VoiceCatalog.personaById(interview.voicePersonaId!);
-  if (persona != null) {
-    b.writeln(persona.stylePrompt);
-  }
-  b
-    ..writeln(
-        'You are a professional AI voice interviewer for the role: "${interview.title}".')
-    ..writeln('Conduct the interview entirely in ${interview.language}.')
-    ..writeln(
-        'Greet the candidate warmly, briefly confirm they are ready, then ask ONLY the '
-        'planned questions below, one at a time, in order, with short natural acknowledgments '
-        'between answers. Never reveal upcoming questions, never say question numbers, and do '
-        'not add questions beyond the plan. After the final question, thank the candidate warmly and end.')
-    ..writeln(
-        'PACING — this is a live spoken conversation, so keep it snappy: at most '
-        'one or two short sentences per turn. Acknowledge the answer in a few '
-        'words, then ask the next question straight away. Do not summarise or '
-        'repeat back what the candidate said, do not preface questions with '
-        'long framing, and never monologue — long replies leave the candidate '
-        'sitting in silence and make the conversation feel one-sided.');
-  if (interview.prompt.trim().isNotEmpty) {
-    b.writeln('\nInterviewer guidance: ${interview.prompt.trim()}');
-  }
-  if (questions.isNotEmpty) {
-    b.writeln('\nPlanned questions (ask in this order):');
-    for (var i = 0; i < questions.length; i++) {
-      b.writeln('${i + 1}. ${questions[i]}');
-    }
-  }
-  return b.toString();
 }
 
 /// True if [text] looks like the candidate's opening readiness acknowledgment
@@ -155,14 +119,9 @@ Future<void> _scoreAndStore({
   // the first one. `evaluatedBy: ''` tells the recruiter's review screen
   // nothing has scored this yet, so they can evaluate it manually.
   try {
-    await repo.completeWithResult(interview.id, {
-      'overallScore': 0,
-      'summary': '',
-      'recommendation': '',
-      'strengths': const <String>[],
-      'improvements': const <String>[],
-      'evaluatedBy': '',
-    });
+    // No score key at all — not 0, which would rank this candidate last on
+    // the round leaderboard before scoring has even been attempted.
+    await repo.completeWithoutScore(interview.id);
   } catch (_) {
     // Placeholder write failed (e.g. offline) — fall through and still try
     // the real scoring attempt below.
@@ -189,87 +148,62 @@ Future<void> _scoreAndStore({
     // sees what happened and can evaluate manually or regenerate.
     if (combined.length < 30) {
       try {
-        await repo.completeWithResult(interview.id, {
-          'overallScore': 0,
-          'summary': '',
-          'recommendation': '',
-          'strengths': const <String>[],
-          'improvements': const <String>[],
-          'evaluatedBy': '',
-          'evaluationError':
-              'No usable spoken answers were captured (only '
+        await repo.completeWithoutScore(
+          interview.id,
+          error: 'No usable spoken answers were captured (only '
               '${combined.length} character(s) of speech). The microphone may '
               'have been muted or blocked, or the candidate did not answer.',
-          'responsesApproximate': true,
-          'responses': [
+          responsesApproximate: true,
+          responses: [
             for (var idx = 0; idx < interview.questions.length; idx++)
               {
                 'question': interview.questions[idx],
                 'answer': idx < scored.length ? scored[idx] : '',
               },
           ],
-        });
+        );
       } catch (_) {
         // Offline: the placeholder already marks it completed.
       }
       return;
     }
 
-    geminiService.setKey(store.geminiKey);
-    final now = DateTime.now().millisecondsSinceEpoch;
     // NOTE: per-question voice attribution is APPROXIMATE on-device. The website
-    // aligns each answer to a specific planned question server-side (voiceFlow:
-    // VAD turn boundaries + token-overlap matching against the question plan).
-    // On-device we have no reliable per-caption→question map — VAD can split one
-    // spoken answer across several captions and blur across question boundaries —
-    // so we deliberately do NOT fabricate a false ordinal map (the old
-    // questionIdx=i mapping mis-attributed every answer once the readiness reply
-    // was counted). Instead we assign a stable, non-misleading index (0) and let
-    // the analyzer score the HOLISTIC transcript, which is sound for the overall
-    // fit score even without honest per-question attribution.
-    final transcript = <TranscriptEntry>[
-      for (var i = 0; i < scored.length; i++)
-        TranscriptEntry(
-          text: scored[i],
-          role: 'candidate',
-          timestamp: now + i,
-          questionIdx: 0,
-        ),
-    ];
+    // aligns each answer to a planned question server-side (VAD turn boundaries
+    // plus token-overlap matching against the question plan); on-device there is
+    // no equivalent alignment step, and VAD can occasionally split one spoken
+    // answer across two captions, shifting every following index by one. The
+    // common cause of that shift — the candidate's leading "yes, I'm ready"
+    // caption being counted as answer #1 — is stripped above by
+    // _isReadinessReply, so position-based pairing is right in the ordinary case
+    // (one turn per question) and only degrades for the rare mid-answer split.
+    // `responsesApproximate` is not set here because the SERVER scores from the
+    // question/answer pairs below, and it re-derives nothing from ordering.
 
-    final sc = await geminiService.analyze(
-      candidateName: interview.candidateName ?? '',
-      jobRole: interview.title,
-      interviewDurationSeconds: interview.durationMinutes * 60,
-      transcript: transcript,
-      questions: interview.questions,
-      humeResult: null,
-      wpm: 0,
-      totalFillers: 0,
-      facialSummary: null,
-    );
-
-    await repo.completeWithResult(interview.id, {
-      'overallScore': sc.overallFitScore ?? 0,
-      'summary': sc.hiringRecommendationRationale,
-      'recommendation': mapHiringRecommendationToCanonical(sc.hiringRecommendation),
-      'strengths': sc.topStrengths,
-      'improvements': sc.topConcerns,
-      'evaluatedBy': 'ai',
-      'detail': sc.toJson(),
-      // Best-effort only: paired by position, not real attribution (see the
-      // NOTE above on why voice has no reliable per-question mapping).
-      'responsesApproximate': true,
-      'responses': [
-        for (var idx = 0; idx < scored.length; idx++)
+    // Hand the answers to the server and stop. It acknowledges in milliseconds,
+    // scores in a background task and writes the result itself — so the
+    // candidate is released now instead of waiting on a model, and no HTTP
+    // connection is held open long enough for the gateway to answer 504 (which
+    // is what used to fail these outright; see evaluation_service.dart).
+    await evaluationService.submit(
+      interviewId: interview.id,
+      responses: [
+        // Iterate to the LONGER of the two lengths so every planned question
+        // still appears (blank answer if unanswered — matching the video/chat
+        // reference's completeness) instead of silently dropping trailing
+        // unanswered questions, while any answer beyond the plan is still
+        // preserved as an "Additional response".
+        for (var idx = 0;
+            idx < interview.questions.length || idx < scored.length;
+            idx++)
           {
             'question': idx < interview.questions.length
                 ? interview.questions[idx]
                 : 'Additional response',
-            'answer': scored[idx],
+            'answer': idx < scored.length ? scored[idx] : '',
           },
       ],
-    });
+    );
   } catch (e) {
     // Scoring failed (network, bad key, safety block...). Mirror the video
     // track's fallback (candidate_video_shell._maybeSubmitFallbackOnFailure):
@@ -282,25 +216,22 @@ Future<void> _scoreAndStore({
       if (scored.isNotEmpty && _isReadinessReply(scored.first)) {
         scored.removeAt(0);
       }
-      await repo.completeWithResult(interview.id, {
-        'overallScore': 0,
-        'summary': '',
-        'recommendation': '',
-        'strengths': const <String>[],
-        'improvements': const <String>[],
-        'evaluatedBy': '',
-        'evaluationError': e.toString().replaceAll('Exception: ', ''),
-        'responsesApproximate': true,
-        'responses': [
-          for (var idx = 0; idx < scored.length; idx++)
+      await repo.completeWithoutScore(
+        interview.id,
+        error: e.toString().replaceAll('Exception: ', ''),
+        responsesApproximate: true,
+        responses: [
+          for (var idx = 0;
+              idx < interview.questions.length || idx < scored.length;
+              idx++)
             {
               'question': idx < interview.questions.length
                   ? interview.questions[idx]
                   : 'Additional response',
-              'answer': scored[idx],
+              'answer': idx < scored.length ? scored[idx] : '',
             },
         ],
-      });
+      );
     } catch (_) {
       // Even the fallback write failed (offline). The placeholder from the top
       // of this function already marks the interview completed, so the

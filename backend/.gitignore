@@ -5,3 +5,8 @@ venv/
 .env
 *.db
 .pytest_cache/
+*-debug.log
+# Firebase service-account keys — never commit these.
+serviceAccount.json
+*serviceAccount*.json
+

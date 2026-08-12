@@ -1,0 +1,79 @@
+rules_version = '2';
+
+// ── TalbotIQ Firestore security rules ──────────────────────────────────────
+// These MIRROR the rules deployed on the shared Firebase project `talbotiq-9cc4e`
+// (the same project the Flutter app uses). Keep them in sync — the web app and the
+// Flutter app are two clients on ONE backend.
+//
+// What the WEB app uses Firestore for: ONLY the `users/{uid}` role document
+// (written at sign-up, read live to route recruiter vs candidate). Its interview
+// DATA lives in the Express + JSON store, served through the authenticated /api,
+// NOT in Firestore. The `interviews` / `recruiter_keys` collections below are used
+// by the Flutter app; they are included so this file stays a faithful copy of the
+// deployed rules.
+//
+// ⚠️ Do NOT deploy a "deny all" ruleset to talbotiq-9cc4e — it would break BOTH
+// clients' role reads (and the Flutter app's data). Deploy with:
+//   firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The signed-in user's role, read from their users doc.
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isRecruiter() {
+      return isSignedIn() && myRole() == 'recruiter';
+    }
+
+    // The auth token's email, normalized for candidate-assignment matching.
+    function myEmailLower() {
+      return request.auth.token.email.lower();
+    }
+
+    // users: a user may read/write only their own profile doc. (Role lives here.)
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create, update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // interviews (Flutter app):
+    //   - recruiters manage the interviews they created
+    //   - candidates may read + update (status/result) interviews assigned to
+    //     their email; they cannot create or delete, nor flip resultPublished
+    match /interviews/{id} {
+      allow read: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid
+                  || (isSignedIn()
+                     && resource.data.candidateEmailLower == myEmailLower());
+
+      allow create: if isRecruiter()
+                     && request.resource.data.recruiterId == request.auth.uid;
+
+      allow update: if (isRecruiter()
+                        && resource.data.recruiterId == request.auth.uid)
+                    || (isSignedIn()
+                        && resource.data.candidateEmailLower == myEmailLower()
+                        && request.resource.data.resultPublished
+                           == resource.data.resultPublished);
+
+      allow delete: if isRecruiter()
+                     && resource.data.recruiterId == request.auth.uid;
+    }
+
+    // recruiter_keys/{recruiterId}: each recruiter's API keys (Flutter app). Any
+    // signed-in user may read (the candidate device needs them at launch); only
+    // that recruiter may write. App-side hiding, not cryptographic secrecy.
+    match /recruiter_keys/{recruiterId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == recruiterId;
+    }
+  }
+}

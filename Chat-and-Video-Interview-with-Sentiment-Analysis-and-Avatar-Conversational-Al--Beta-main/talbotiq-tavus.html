@@ -1,0 +1,1857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TalbotIQ - AI Avatar Interview Platform</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* ── TalbotIQ Light Theme (Figma-matched) ── */
+  --bg:          #f0f4f0;
+  --surface:     #ffffff;
+  --text:        #0d1a0f;
+  --text-soft:   #4a6050;
+  --text-muted:  #7a907a;
+
+  --green:       #1e7a50;
+  --green-light: #28a865;
+  --green-pale:  #e8f5ee;
+  --green-dark:  #145c3a;
+
+  --gold:        #e8a020;
+  --gold-light:  #fdf3e0;
+  --gold-dark:   #b87818;
+
+  --red:         #dc3545;
+  --red-pale:    #fdecea;
+
+  --border:      #d8e8d8;
+  --border-soft: #eaf2ea;
+  --card:        #ffffff;
+  --card-alt:    #f8fbf8;
+
+  --shadow-sm:   0 1px 3px rgba(20,92,58,0.08), 0 1px 2px rgba(20,92,58,0.04);
+  --shadow-md:   0 4px 16px rgba(20,92,58,0.10), 0 2px 6px rgba(20,92,58,0.06);
+  --shadow-lg:   0 8px 32px rgba(20,92,58,0.12);
+
+  /* legacy aliases so existing colour refs still resolve */
+  --black:       #f0f4f0;
+  --white:       #0d1a0f;
+  --gray:        #7a907a;
+
+  --font-head: 'Plus Jakarta Sans', 'Syne', sans-serif;
+  --font-body: 'Plus Jakarta Sans', 'DM Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); min-height: 100vh; overflow-x: hidden; }
+body::before { display: none; }
+/* NAV */
+nav { display:flex; align-items:center; justify-content:space-between; padding:14px 40px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--surface); box-shadow:var(--shadow-sm); z-index:100; }
+.logo { display:flex; align-items:center; text-decoration:none; cursor:pointer; }
+.nav-tabs { display:flex; gap:2px; background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:3px; }
+.nav-tab { padding:7px 18px; border-radius:8px; font-size:0.82rem; font-weight:500; cursor:pointer; border:none; background:transparent; color:var(--text-muted); transition:all 0.2s; font-family:var(--font-body); }
+.nav-tab:hover { color:var(--text); background:var(--border-soft); }
+.nav-tab.active { background:var(--green); color:#fff; font-weight:700; }
+.nav-right { display:flex; align-items:center; gap:14px; }
+.badge-live { display:flex; align-items:center; gap:6px; font-size:0.72rem; font-weight:600; letter-spacing:0.08em; color:var(--green); text-transform:uppercase; background:var(--green-pale); padding:5px 12px; border-radius:20px; border:1px solid rgba(30,122,80,0.2); }
+.badge-live::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 0 3px rgba(30,122,80,0.2); animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{box-shadow:0 0 0 3px rgba(30,122,80,0.2)} 50%{box-shadow:0 0 0 6px rgba(30,122,80,0.08)} }
+.avatar-initial { width:34px; height:34px; border-radius:50%; background:var(--green); display:flex; align-items:center; justify-content:center; font-family:var(--font-head); font-weight:800; font-size:0.78rem; color:#fff; }
+/* PAGES */
+.page { display:none; }
+.page.active { display:block; }
+/* SETUP */
+.setup-wrap { max-width:860px; margin:60px auto; padding:0 24px 80px; }
+.setup-header { margin-bottom:48px; }
+.kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--green-dark);
+  background: var(--green-pale);
+  border: 1px solid rgba(30,122,80,0.2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  margin-bottom: 18px;
+}
+.setup-header h1 {
+  font-family: 'Plus Jakarta Sans', var(--font-head), sans-serif;
+  font-size: clamp(2.4rem, 4.5vw, 3.6rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.setup-header h1 .h1-sub {
+  display: block;
+  font-size: 0.52em;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  color: var(--text-soft);
+  margin-bottom: 2px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+.setup-header p { margin-top:18px; color:var(--text-soft); font-size:1rem; line-height:1.65; max-width:520px; }
+.form-section { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px 32px; margin-bottom:20px; box-shadow:var(--shadow-sm); }
+.section-title { font-family:var(--font-head); font-size:0.72rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--green-dark); margin-bottom:22px; display:flex; align-items:center; gap:8px; }
+.section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.form-grid.full { grid-template-columns:1fr; }
+.field { display:flex; flex-direction:column; gap:7px; }
+label { font-size:0.78rem; font-weight:600; color:var(--text-soft); letter-spacing:0.01em; }
+input, textarea, select { background:var(--bg); border:1.5px solid var(--border); border-radius:8px; padding:10px 14px; color:var(--text); font-family:var(--font-body); font-size:0.88rem; outline:none; transition:border-color 0.2s, box-shadow 0.2s; width:100%; }
+input:focus, textarea:focus, select:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(30,122,80,0.1); }
+input::placeholder, textarea::placeholder { color:var(--text-muted); }
+select option { background:var(--surface); color:var(--text); }
+textarea { resize:vertical; min-height:90px; }
+.api-field-wrap { position:relative; }
+.api-field-wrap input { font-family:monospace; font-size:0.82rem; padding-right:44px; letter-spacing:0.04em; }
+.api-eye { position:absolute; right:12px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--gray); background:none; border:none; display:flex; align-items:center; }
+.api-eye:hover { color:var(--white); }
+.replica-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:4px; }
+.replica-card { border:2px solid var(--border); border-radius:10px; padding:14px; cursor:pointer; transition:all 0.2s; text-align:center; background:var(--surface); }
+.replica-card:hover { border-color:var(--green); background:var(--green-pale); }
+.replica-card.selected { border-color:var(--green); background:var(--green-pale); box-shadow:0 0 0 3px rgba(30,122,80,0.1); }
+.replica-avatar { width:44px; height:44px; border-radius:50%; margin:0 auto 8px; display:flex; align-items:center; justify-content:center; }
+.replica-name { font-size:0.78rem; font-weight:600; color:var(--text); margin-bottom:2px; }
+.replica-desc { font-size:0.68rem; color:var(--text-muted); }
+.questions-list { display:flex; flex-direction:column; gap:10px; }
+.question-item { display:flex; align-items:flex-start; gap:10px; }
+.q-num { width:26px; height:26px; border-radius:6px; background:var(--green); color:#fff; font-weight:800; font-size:0.72rem; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:8px; }
+.q-del { width:26px; height:26px; border-radius:6px; background:transparent; border:1.5px solid var(--border); color:var(--text-muted); cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:8px; transition:all 0.2s; font-size:1.1rem; line-height:1; }
+.q-del:hover { background:var(--red); border-color:var(--red); color:#fff; }
+.btn-add-q { width:100%; padding:9px; background:transparent; border:1.5px dashed var(--border); border-radius:8px; color:var(--text-muted); font-size:0.82rem; cursor:pointer; transition:all 0.2s; font-family:var(--font-body); margin-top:8px; }
+.btn-add-q:hover { border-color:var(--green); color:var(--green); background:var(--green-pale); }
+.toggle-row { display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border); }
+.toggle-row:last-child { border-bottom:none; }
+.toggle-label { font-size:0.85rem; color:var(--text); font-weight:500; }
+.toggle-desc { font-size:0.72rem; color:var(--text-muted); margin-top:2px; }
+.toggle { width:42px; height:24px; border-radius:12px; background:#cdd8cd; position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0; }
+.toggle.on { background:var(--green); }
+.toggle::after { content:''; width:18px; height:18px; border-radius:50%; background:#fff; position:absolute; top:3px; left:3px; transition:left 0.2s; }
+.toggle.on::after { left:21px; }
+.color-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+.color-swatch { width:32px; height:32px; border-radius:8px; cursor:pointer; border:2px solid transparent; transition:border-color 0.2s,transform 0.15s; }
+.color-swatch:hover { transform:scale(1.1); }
+.color-swatch.active { border-color:var(--white); }
+.color-input-wrap { display:flex; gap:8px; align-items:center; }
+.color-input-wrap input[type="color"] { width:32px; height:32px; padding:2px; border-radius:8px; cursor:pointer; }
+.color-hex { font-size:0.78rem; color:var(--gray); font-family:monospace; background:#1a1a1a; border:1px solid var(--border); border-radius:6px; padding:4px 10px; width:90px; }
+.cta-row { display:flex; gap:12px; margin-top:28px; }
+.btn-primary { padding:12px 32px; background:var(--green-dark); color:#fff; font-family:var(--font-head); font-weight:700; font-size:0.9rem; border:none; border-radius:10px; cursor:pointer; letter-spacing:0.02em; transition:all 0.2s; display:flex; align-items:center; gap:8px; }
+.btn-primary:hover { background:var(--green); transform:translateY(-1px); box-shadow:0 6px 24px rgba(30,122,80,0.3); }
+.btn-primary:active { transform:translateY(0); }
+.btn-primary:disabled { opacity:0.5; cursor:not-allowed; transform:none; box-shadow:none; }
+.btn-secondary { padding:12px 24px; background:var(--surface); color:var(--text); font-family:var(--font-body); font-weight:500; font-size:0.88rem; border:1.5px solid var(--border); border-radius:10px; cursor:pointer; transition:all 0.2s; }
+.btn-secondary:hover { border-color:var(--green); color:var(--green); background:var(--green-pale); }
+/* INTERVIEW */
+.interview-layout { display:grid; grid-template-columns:1fr 340px; height:calc(100vh - 61px); }
+.avatar-panel { position:relative; background:#080808; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
+.avatar-bg { position:absolute; inset:0; background:radial-gradient(ellipse at 50% 60%,rgba(42,122,75,0.18) 0%,transparent 65%),radial-gradient(ellipse at 80% 20%,rgba(240,192,64,0.08) 0%,transparent 50%); }
+.avatar-stage { position:relative; z-index:2; text-align:center; }
+.avatar-video-wrap { width:280px; height:360px; border-radius:0 0 14px 14px; background:#111; border:1px solid var(--border); border-top:none; overflow:hidden; position:relative; margin:0 auto 20px; box-shadow:0 0 0 1px rgba(240,192,64,0.1),0 40px 80px rgba(0,0,0,0.6); }
+.avatar-placeholder { width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:linear-gradient(160deg,#111 0%,#0d1a12 100%); }
+.avatar-face { width:90px; height:90px; border-radius:50%; background:linear-gradient(135deg,var(--green) 0%,#1a5c35 100%); display:flex; align-items:center; justify-content:center; border:3px solid rgba(61,179,107,0.4); box-shadow:0 0 30px rgba(42,122,75,0.4); animation:breathe 3s ease-in-out infinite; color:rgba(255,255,255,0.9); }
+@keyframes breathe { 0%,100%{transform:scale(1);box-shadow:0 0 30px rgba(42,122,75,0.4)} 50%{transform:scale(1.03);box-shadow:0 0 50px rgba(42,122,75,0.6)} }
+.avatar-name-tag { font-family:var(--font-head); font-size:1.1rem; font-weight:700; color:var(--white); }
+.avatar-speaking-indicator { display:flex; gap:4px; align-items:flex-end; height:20px; }
+.bar { width:4px; background:var(--green-light); border-radius:2px; animation:wave 1s ease-in-out infinite; }
+.bar:nth-child(1){height:8px;animation-delay:0s} .bar:nth-child(2){height:16px;animation-delay:0.15s} .bar:nth-child(3){height:12px;animation-delay:0.3s} .bar:nth-child(4){height:20px;animation-delay:0.1s} .bar:nth-child(5){height:8px;animation-delay:0.25s}
+@keyframes wave { 0%,100%{transform:scaleY(0.5);opacity:0.6} 50%{transform:scaleY(1);opacity:1} }
+.question-overlay { position:absolute; bottom:0; left:0; right:0; background:linear-gradient(to top,rgba(0,0,0,0.9) 0%,transparent 100%); padding:60px 30px 28px; z-index:3; }
+.q-label { font-size:0.68rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); margin-bottom:8px; }
+.q-text { font-size:1rem; line-height:1.5; color:var(--white); font-weight:300; }
+.progress-bar-wrap { position:absolute; top:0; left:0; right:0; height:3px; background:var(--border); z-index:10; }
+.progress-bar-fill { height:100%; background:linear-gradient(90deg,var(--green),var(--gold)); transition:width 0.6s ease; }
+.avatar-controls { display:flex; gap:10px; align-items:center; justify-content:center; margin-top:8px; position:relative; z-index:4; }
+.ctrl-btn { width:46px; height:46px; border-radius:50%; background:rgba(255,255,255,0.08); border:1px solid var(--border); color:var(--white); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s; backdrop-filter:blur(6px); }
+.ctrl-btn:hover { background:rgba(255,255,255,0.15); border-color:var(--gray); }
+.ctrl-btn.rec-btn { width:56px; height:56px; }
+.ctrl-btn.rec-btn.recording { background:var(--red); border-color:var(--red); animation:recPulse 1.5s ease-in-out infinite; }
+.ctrl-btn.end-btn { background:rgba(232,67,67,0.15); border-color:rgba(232,67,67,0.4); }
+.ctrl-btn.end-btn:hover { background:rgba(232,67,67,0.3); }
+.ctrl-btn.muted { background:rgba(232,67,67,0.2); border-color:rgba(232,67,67,0.5); color:#e84343; }
+/* Video top-bar (above iframe, outside its bounds) */
+.video-topbar {
+  width:280px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 8px 0 12px;
+  margin-bottom:0;
+  background:rgba(0,0,0,0.75);
+  border:1px solid var(--border);
+  border-bottom:none;
+  border-radius:14px 14px 0 0;
+  height:36px;
+  backdrop-filter:blur(10px);
+  position:relative;
+  z-index:5;
+}
+.video-topbar-title {
+  font-size:0.7rem;
+  color:var(--gray);
+  font-weight:500;
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.live-dot {
+  width:6px; height:6px;
+  border-radius:50%;
+  background:var(--green-light);
+  animation:pulse 2s infinite;
+}
+.video-topbar-fs {
+  display:flex;
+  align-items:center;
+  gap:5px;
+  background:rgba(255,255,255,0.07);
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:6px;
+  padding:4px 10px;
+  color:var(--white);
+  font-size:0.7rem;
+  font-weight:600;
+  font-family:var(--font-body);
+  cursor:pointer;
+  transition:all 0.18s;
+  letter-spacing:0.02em;
+}
+.video-topbar-fs:hover { background:rgba(240,192,64,0.15); border-color:rgba(240,192,64,0.4); color:var(--gold); }
+/* Floating fullscreen pill — always visible, top-right of panel */
+.fs-float-btn {
+  position:absolute;
+  top:16px; right:16px;
+  z-index:20;
+  display:flex; align-items:center; gap:7px;
+  padding:9px 16px;
+  background:rgba(0,0,0,0.78);
+  border:1.5px solid rgba(240,192,64,0.55);
+  border-radius:50px;
+  color:var(--gold);
+  font-family:var(--font-head);
+  font-size:0.78rem;
+  font-weight:700;
+  letter-spacing:0.04em;
+  cursor:pointer;
+  backdrop-filter:blur(10px);
+  transition:all 0.18s;
+  box-shadow:0 4px 20px rgba(0,0,0,0.5);
+}
+.fs-float-btn:hover { background:rgba(240,192,64,0.18); border-color:var(--gold); transform:scale(1.04); }
+.avatar-panel.fs-active .fs-float-btn { display:none !important; }
+/* Hide topbar in fullscreen (already full) */
+.avatar-panel.fs-active .video-topbar { display:none !important; }
+@keyframes recPulse { 0%,100%{box-shadow:0 0 0 0 rgba(232,67,67,0.5)} 50%{box-shadow:0 0 0 10px rgba(232,67,67,0)} }
+/* SIDEBAR */
+.sidebar { border-left:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; background:var(--surface); }
+.sidebar-tabs { display:flex; border-bottom:1px solid var(--border); background:var(--bg); }
+.sidebar-tab { flex:1; padding:12px; text-align:center; font-size:0.72rem; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer; border:none; background:transparent; color:var(--text-muted); transition:all 0.2s; font-family:var(--font-body); border-bottom:2px solid transparent; }
+.sidebar-tab:hover { color:var(--text); }
+.sidebar-tab.active { color:var(--green); border-bottom-color:var(--green); background:var(--surface); }
+.sidebar-content { flex:1; overflow-y:auto; padding:20px; }
+.sidebar-content::-webkit-scrollbar { width:4px; }
+.sidebar-content::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+.sidebar-panel { display:none; }
+.sidebar-panel.active { display:block; }
+.q-list-item { display:flex; gap:10px; padding:12px; border-radius:10px; cursor:pointer; transition:background 0.2s; margin-bottom:6px; border:1px solid transparent; }
+.q-list-item:hover { background:var(--bg); }
+.q-list-item.active-q { background:var(--green-pale); border-color:rgba(30,122,80,0.25); }
+.q-list-item.done { opacity:0.55; }
+.q-num-sm { width:22px; height:22px; border-radius:6px; background:var(--border); font-size:0.68rem; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:var(--text-muted); }
+.q-list-item.active-q .q-num-sm { background:var(--green); color:#fff; }
+.q-list-item.done .q-num-sm { background:var(--green-light); color:#fff; font-size:0.6rem; }
+.q-text-sm { font-size:0.78rem; line-height:1.45; color:var(--text); }
+.metric-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-bottom:10px; box-shadow:var(--shadow-sm); }
+.metric-label { font-size:0.68rem; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px; }
+.metric-val { font-family:var(--font-head); font-size:1.8rem; font-weight:800; line-height:1; margin-bottom:8px; }
+.metric-bar { height:4px; border-radius:2px; background:var(--border); overflow:hidden; }
+.metric-bar-fill { height:100%; border-radius:2px; transition:width 1s ease; }
+.metric-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.emotion-tags { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+.emotion-tag { padding:4px 10px; border-radius:6px; font-size:0.7rem; font-weight:600; background:var(--green-pale); color:var(--green-dark); border:1px solid rgba(30,122,80,0.25); }
+.emotion-tag.warn { background:var(--gold-light); color:var(--gold-dark); border-color:rgba(232,160,32,0.3); }
+.emotion-tag.alert { background:var(--red-pale); color:var(--red); border-color:rgba(220,53,69,0.3); }
+.transcript-bubble { padding:12px 14px; border-radius:10px; margin-bottom:10px; font-size:0.82rem; line-height:1.55; }
+.bubble-ai { background:var(--green-pale); border:1px solid rgba(30,122,80,0.2); border-radius:10px 10px 10px 2px; }
+.bubble-candidate { background:var(--bg); border:1px solid var(--border); border-radius:10px 10px 2px 10px; }
+.bubble-meta { font-size:0.65rem; color:var(--text-muted); margin-bottom:4px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase; }
+/* RESULTS */
+.results-wrap { max-width:1000px; margin:40px auto; padding:0 24px 60px; }
+.results-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:36px; }
+.results-header h2 { font-family:var(--font-head); font-size:2rem; font-weight:800; color:var(--text); }
+.score-card { box-shadow: var(--shadow-sm); }
+.score-hero { display:grid; grid-template-columns:260px 1fr; gap:20px; margin-bottom:20px; }
+.score-card { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.score-ring { width:110px; height:110px; position:relative; margin-bottom:16px; }
+.score-ring svg { transform:rotate(-90deg); }
+.score-ring-bg { stroke:var(--border); fill:none; }
+.score-ring-fill { stroke:var(--green); fill:none; stroke-linecap:round; transition:stroke-dashoffset 1.5s ease; }
+.score-num { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:var(--font-head); font-size:2rem; font-weight:800; color:var(--text); }
+.score-num small { font-size:0.65rem; color:var(--text-muted); font-weight:400; font-family:var(--font-body); margin-top:-4px; }
+.score-label { font-size:0.72rem; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); }
+.score-verdict { margin-top:10px; padding:6px 14px; border-radius:20px; background:var(--green-pale); border:1px solid rgba(30,122,80,0.3); color:var(--green-dark); font-size:0.72rem; font-weight:700; }
+.ai-summary-box { margin-top:14px; padding:12px; background:var(--green-pale); border:1px solid rgba(30,122,80,0.2); border-radius:10px; width:100%; }
+.ai-summary-lbl { font-size:0.62rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--green-dark); margin-bottom:5px; }
+.ai-summary-txt { font-size:0.76rem; color:var(--text-soft); line-height:1.55; }
+.dimension-grid { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; box-shadow:var(--shadow-sm); }
+.dim-row { display:flex; align-items:center; gap:14px; margin-bottom:14px; }
+.dim-row:last-child { margin-bottom:0; }
+.dim-name { font-size:0.82rem; font-weight:500; width:120px; flex-shrink:0; }
+.dim-bar-wrap { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+.dim-bar-inner { height:100%; border-radius:3px; transition:width 1.2s ease; }
+.dim-score { font-family:var(--font-head); font-size:0.88rem; font-weight:700; width:32px; text-align:right; }
+.raw-signals { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:20px; }
+.signal-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px 20px; position:relative; box-shadow:var(--shadow-sm); }
+.signal-badge { position:absolute; top:10px; right:10px; font-size:0.6rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; padding:2px 7px; border-radius:4px; }
+.signal-badge.warn { background:var(--gold-light); color:var(--gold-dark); border:1px solid rgba(232,160,32,0.3); }
+.signal-badge.alert { background:var(--red-pale); color:var(--red); border:1px solid rgba(220,53,69,0.3); }
+.signal-icon { color:var(--text-muted); margin-bottom:8px; }
+.signal-val { font-family:var(--font-head); font-size:2rem; font-weight:800; line-height:1; margin-bottom:4px; color:var(--text); }
+.signal-lbl { font-size:0.72rem; color:var(--text-muted); }
+.results-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:20px; }
+.result-card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px; box-shadow:var(--shadow-sm); }
+.result-card h4 { font-family:var(--font-head); font-size:0.78rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--green-dark); margin-bottom:16px; display:flex; align-items:center; gap:6px; }
+.tag-list { display:flex; flex-wrap:wrap; gap:8px; }
+.tag { padding:5px 12px; border-radius:8px; font-size:0.74rem; font-weight:500; }
+.tag-green { background:var(--green-pale); color:var(--green-dark); border:1px solid rgba(30,122,80,0.25); }
+.tag-yellow { background:var(--gold-light); color:var(--gold-dark); border:1px solid rgba(232,160,32,0.3); }
+/* AI Observation */
+.ai-obs { background:var(--gold-light); border:1px solid rgba(232,160,32,0.3); border-radius:14px; padding:20px 24px; margin-top:20px; }
+.ai-obs-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.ai-obs-icon { width:28px; height:28px; border-radius:50%; background:rgba(232,160,32,0.2); border:1px solid rgba(232,160,32,0.4); display:flex; align-items:center; justify-content:center; color:var(--gold-dark); flex-shrink:0; }
+.ai-obs-title { font-family:var(--font-head); font-size:0.88rem; font-weight:700; color:var(--text); }
+.ai-obs-q { background:rgba(232,160,32,0.1); border:1px solid rgba(232,160,32,0.2); border-radius:8px; padding:10px 14px; font-size:0.82rem; color:var(--text); font-style:italic; margin-bottom:12px; }
+.ai-obs-points { list-style:none; display:flex; flex-direction:column; gap:6px; }
+.ai-obs-points li { font-size:0.78rem; color:var(--text-soft); display:flex; align-items:center; gap:8px; }
+.ai-obs-points li::before { content:''; width:6px; height:6px; border-radius:50%; background:var(--gold); flex-shrink:0; }
+/* Timeline */
+.timeline-wrap { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px 28px; margin-top:20px; box-shadow:var(--shadow-sm); }
+.timeline-hd { font-family:var(--font-head); font-size:0.78rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--green-dark); margin-bottom:28px; display:flex; align-items:center; gap:8px; }
+.timeline-hd::after { content:''; flex:1; height:1px; background:var(--border); }
+.timeline { display:flex; align-items:flex-start; position:relative; }
+.timeline::before { content:''; position:absolute; top:22px; left:23px; right:23px; height:2px; background:var(--border); z-index:0; }
+.tl-item { flex:1; display:flex; flex-direction:column; align-items:center; text-align:center; position:relative; z-index:1; padding:0 6px; }
+.tl-node { width:46px; height:46px; border-radius:50%; border:2px solid var(--green-light); background:var(--surface); display:flex; align-items:center; justify-content:center; font-family:var(--font-head); font-weight:700; font-size:0.78rem; color:var(--green); margin-bottom:10px; }
+.tl-node.warn { border-color:var(--gold); color:var(--gold-dark); }
+.tl-node.neutral { border-color:var(--text-muted); color:var(--text-muted); }
+.tl-node.excellent { border-color:var(--green-light); background:var(--green-pale); }
+.tl-badge { font-size:0.62rem; font-weight:700; padding:2px 7px; border-radius:4px; margin-bottom:5px; white-space:nowrap; }
+.tl-badge.good { background:rgba(61,179,107,0.15); color:var(--green-light); border:1px solid rgba(61,179,107,0.3); }
+.tl-badge.warn { background:rgba(240,192,64,0.15); color:var(--gold); border:1px solid rgba(240,192,64,0.3); }
+.tl-badge.neutral { background:rgba(138,138,138,0.12); color:var(--gray); border:1px solid rgba(138,138,138,0.25); }
+.tl-badge.excellent { background:rgba(61,179,107,0.15); color:var(--green-light); border:1px solid rgba(61,179,107,0.3); }
+.tl-desc { font-size:0.68rem; color:var(--gray); line-height:1.35; }
+/* AI Rec */
+.ai-rec-block { background:var(--green-dark); border:1px solid rgba(20,92,58,0.3); border-radius:14px; padding:22px 24px; margin-top:20px; }
+.ai-rec-top { display:flex; align-items:flex-start; gap:16px; margin-bottom:18px; }
+.rec-icon { width:42px; height:42px; border-radius:50%; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; color:white; flex-shrink:0; border:1px solid rgba(255,255,255,0.2); }
+.rec-body { flex:1; }
+.rec-label { font-size:0.68rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.6); margin-bottom:4px; }
+.rec-title { font-family:var(--font-head); font-size:1.1rem; font-weight:800; margin-bottom:8px; color:#fff; }
+.rec-text { font-size:0.83rem; color:rgba(255,255,255,0.7); line-height:1.55; }
+.rec-score { font-family:var(--font-head); font-size:1.8rem; font-weight:800; color:#fff; flex-shrink:0; text-align:right; }
+.rec-score small { display:block; font-size:0.65rem; font-family:var(--font-body); color:rgba(255,255,255,0.5); font-weight:400; }
+.hiring-bar { border-top:1px solid rgba(255,255,255,0.15); padding-top:14px; }
+.hb-head { display:flex; justify-content:space-between; margin-bottom:6px; }
+.hb-lbl { font-size:0.72rem; color:rgba(255,255,255,0.6); }
+.hb-val { font-size:0.72rem; color:#fff; font-weight:600; }
+.hb-track { height:6px; background:rgba(255,255,255,0.15); border-radius:3px; overflow:hidden; }
+.hb-fill { height:100%; background:linear-gradient(90deg,var(--green-light),#6be8a0); border-radius:3px; transition:width 1.2s ease; }
+.hb-range { display:flex; justify-content:space-between; font-size:0.58rem; color:rgba(255,255,255,0.3); margin-top:3px; }
+/* Recruiter Actions */
+.rec-actions { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:24px 28px; margin-top:20px; box-shadow:var(--shadow-sm); }
+.rec-actions-hd { font-family:var(--font-head); font-size:0.78rem; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--green-dark); margin-bottom:16px; display:flex; align-items:center; gap:8px; }
+.rec-actions-hd::after { content:''; flex:1; height:1px; background:var(--border); }
+.action-row { display:flex; gap:10px; flex-wrap:wrap; }
+.btn-ghost { padding:10px 18px; background:var(--surface); border:1.5px solid var(--border); border-radius:8px; color:var(--text); font-size:0.82rem; cursor:pointer; transition:all 0.2s; font-family:var(--font-body); display:flex; align-items:center; gap:6px; }
+.btn-ghost:hover { border-color:var(--green); color:var(--green); background:var(--green-pale); }
+/* SETTINGS */
+.settings-wrap { max-width:720px; margin:50px auto; padding:0 24px 60px; }
+.settings-wrap h2 { font-family:var(--font-head); font-size:1.8rem; font-weight:800; margin-bottom:8px; color:var(--text); }
+.settings-wrap .subtitle { color:var(--text-soft); margin-bottom:36px; font-size:0.88rem; }
+/* MODAL */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:500; display:flex; align-items:center; justify-content:center; opacity:0; pointer-events:none; transition:opacity 0.25s; }
+.modal-overlay.show { opacity:1; pointer-events:all; }
+.modal { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:32px; max-width:480px; width:90%; max-height:90vh; overflow-y:auto; transform:translateY(20px); transition:transform 0.25s; box-shadow:var(--shadow-lg); }
+.modal-overlay.show .modal { transform:translateY(0); }
+.modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+.modal-title { font-family:var(--font-head); font-size:1.1rem; font-weight:800; color:var(--text); }
+.modal-close { width:32px; height:32px; border-radius:8px; background:transparent; border:1.5px solid var(--border); color:var(--text-muted); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:1.3rem; line-height:1; transition:all 0.2s; }
+.modal-close:hover { background:var(--red-pale); border-color:var(--red); color:var(--red); }
+.modal-body { margin-bottom:24px; }
+.modal-text { font-size:0.85rem; color:var(--text-soft); line-height:1.6; margin-bottom:16px; }
+.modal-footer { display:flex; gap:10px; justify-content:flex-end; }
+.offer-text { background:var(--bg); border:1.5px solid var(--border); border-radius:8px; padding:16px; font-size:0.82rem; color:var(--text); line-height:1.6; white-space:pre-wrap; font-family:monospace; }
+/* LOADING */
+#loading-overlay { position:fixed; inset:0; background:var(--surface); z-index:1000; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; transition:opacity 0.5s; }
+#loading-overlay.hidden { opacity:0; pointer-events:none; }
+.loading-logo { font-family:var(--font-head); font-size:2rem; font-weight:800; color:var(--text); }
+.loading-logo span { color:var(--green); }
+.loading-spinner { width:40px; height:40px; border:3px solid var(--border); border-top-color:var(--green); border-radius:50%; animation:spin 0.8s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+.loading-text { color:var(--text-muted); font-size:0.82rem; }
+/* TOAST */
+#toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--surface); border:1.5px solid var(--border); border-radius:10px; padding:12px 20px; font-size:0.82rem; z-index:9000; transition:transform 0.3s ease; display:flex; align-items:center; gap:8px; white-space:nowrap; max-width:90vw; color:var(--text); box-shadow:var(--shadow-md); }
+#toast.show { transform:translateX(-50%) translateY(0); }
+#toast.success { border-color:rgba(30,122,80,0.4); color:var(--green-dark); background:var(--green-pale); }
+#toast.error { border-color:rgba(220,53,69,0.4); color:var(--red); background:var(--red-pale); }
+/* ── FULLSCREEN — Zoom/Teams style ── */
+/* Step 1: panel covers whole screen */
+.avatar-panel.fs-active {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+  background: #000 !important;
+  display: block !important;
+}
+/* Step 2: video iframe fills screen top→ above controls bar */
+.avatar-panel.fs-active .avatar-video-wrap {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 72px !important;
+  width: 100vw !important;
+  height: calc(100vh - 72px) !important;
+  border-radius: 0 !important;
+  border: none !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  z-index: 1 !important;
+}
+/* Step 3: controls bar pinned at very bottom */
+.avatar-panel.fs-active .avatar-controls {
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 72px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 20px !important;
+  background: rgba(5,5,5,0.92) !important;
+  backdrop-filter: blur(16px) !important;
+  border-top: 1px solid rgba(255,255,255,0.08) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  z-index: 3 !important;
+}
+/* Step 4: question overlay just above controls bar */
+.avatar-panel.fs-active .question-overlay {
+  position: fixed !important;
+  bottom: 72px !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 2 !important;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%) !important;
+}
+/* Step 5: progress bar at top */
+.avatar-panel.fs-active .progress-bar-wrap {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 4 !important;
+}
+/* Hide everything else in fullscreen */
+.avatar-panel.fs-active .avatar-bg,
+.avatar-panel.fs-active .video-topbar,
+.avatar-panel.fs-active .avatar-placeholder,
+.avatar-panel.fs-active .avatar-name-tag,
+.avatar-panel.fs-active .avatar-speaking-indicator { display: none !important; }
+/* Exit × button top-right */
+.fs-exit-btn {
+  position: fixed;
+  top: 14px; right: 14px;
+  z-index: 10000;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.75);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+  transition: background 0.2s;
+}
+.fs-exit-btn:hover { background: rgba(232,67,67,0.7); border-color: #e84343; }
+.fs-exit-btn.visible { display: flex; }
+@media(max-width:768px){
+  .interview-layout{grid-template-columns:1fr;grid-template-rows:1fr auto}
+  .sidebar{height:300px;border-left:none;border-top:1px solid var(--border)}
+  .form-grid{grid-template-columns:1fr}
+  .replica-grid{grid-template-columns:1fr 1fr}
+  .score-hero{grid-template-columns:1fr}
+  .results-grid{grid-template-columns:1fr}
+  .raw-signals{grid-template-columns:1fr 1fr}
+  nav{padding:14px 16px}
+  .nav-tabs{display:none}
+  .timeline{overflow-x:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- Fullscreen exit button -->
+<button id="fs-exit-btn" class="fs-exit-btn" onclick="exitFs()" title="Exit fullscreen (Esc)">&times;</button>
+
+<!-- Loading -->
+<div id="loading-overlay">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+    <svg width="52" height="52" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6,58 L24,14 L42,22 L24,66 Z" fill="#2d6e3e"/>
+      <path d="M30,10 L56,10 L56,38 L30,38 Z" fill="#e8c840" transform="rotate(-8 43 24)"/>
+      <path d="M28,20 L46,14 L50,40 L32,46 Z" fill="#4ab85a"/>
+    </svg>
+    <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:1.8rem;letter-spacing:-0.02em;color:#2a2a2a">TALBOT<span style="color:#1a7a5a">IQ</span></span>
+  </div>
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Initialising AI Interview Platform...</div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Launch / Display Name Modal -->
+<div class="modal-overlay" id="modal-launch">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <div class="modal-title">Ready to Start?</div>
+      <button class="modal-close" onclick="closeModal('modal-launch')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-text" style="margin-bottom:20px">Enter your display name as it should appear in the interview session.</p>
+      <div class="field">
+        <label>Your Display Name</label>
+        <input type="text" id="launch-display-name" placeholder="e.g. Arjun Kumar" autocomplete="name"
+          onkeydown="if(event.key==='Enter') confirmLaunch()"
+          style="font-size:1rem;padding:12px 14px">
+      </div>
+      <div class="field" style="margin-top:14px">
+        <label>Job Title / Role Applied For</label>
+        <input type="text" id="launch-job-title" placeholder="e.g. Senior Backend Engineer"
+          onkeydown="if(event.key==='Enter') confirmLaunch()"
+          style="font-size:0.9rem">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" style="padding:10px 20px;font-size:0.85rem" onclick="closeModal('modal-launch')">Cancel</button>
+      <button class="btn-primary" style="padding:12px 28px;font-size:0.9rem" onclick="confirmLaunch()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        Start Interview
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule Modal -->
+<div class="modal-overlay" id="modal-schedule">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Schedule Technical Interview</div>
+      <button class="modal-close" onclick="closeModal('modal-schedule')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-text">Schedule the next round for <strong id="schedule-name">this candidate</strong>.</p>
+      <div class="form-grid" style="margin-bottom:16px">
+        <div class="field"><label>Interview Date</label><input type="date" id="schedule-date"></div>
+        <div class="field"><label>Time</label><input type="time" id="schedule-time" value="10:00"></div>
+      </div>
+      <div class="form-grid full" style="margin-bottom:16px">
+        <div class="field"><label>Interviewer Name</label><input type="text" id="schedule-interviewer" placeholder="e.g. Priya Sharma"></div>
+      </div>
+      <div class="form-grid full">
+        <div class="field"><label>Notes</label><textarea id="schedule-notes" rows="3" placeholder="Any specific areas to probe..."></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" style="padding:10px 20px;font-size:0.85rem" onclick="closeModal('modal-schedule')">Cancel</button>
+      <button class="btn-primary" style="padding:10px 24px;font-size:0.85rem" onclick="confirmSchedule()">Confirm Schedule</button>
+    </div>
+  </div>
+</div>
+
+<!-- Offer Rec Modal -->
+<div class="modal-overlay" id="modal-offer">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">AI Offer Recommendation</div>
+      <button class="modal-close" onclick="closeModal('modal-offer')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-text">Generated recommendation based on interview performance and market benchmarks.</p>
+      <div class="offer-text" id="offer-text"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" style="padding:10px 20px;font-size:0.85rem" onclick="closeModal('modal-offer')">Close</button>
+      <button class="btn-primary" style="padding:10px 24px;font-size:0.85rem" onclick="copyOffer()">Copy to Clipboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- NAV -->
+<nav>
+  <div class="logo" onclick="showPage('setup')">
+    <!-- TalbotIQ logo mark — 3 overlapping rhombuses: dark green, bright green, yellow -->
+    <svg width="38" height="38" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Large dark green piece (bottom-left) -->
+      <path d="M6,58 L24,14 L42,22 L24,66 Z" fill="#2d6e3e"/>
+      <!-- Yellow/gold piece (top-right) -->
+      <path d="M30,10 L56,10 L56,38 L30,38 Z" rx="2" fill="#e8c840" transform="rotate(-8 43 24)"/>
+      <!-- Bright green overlap piece (centre) -->
+      <path d="M28,20 L46,14 L50,40 L32,46 Z" fill="#4ab85a"/>
+    </svg>
+    <span style="font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:1.15rem;letter-spacing:-0.01em;color:#4a4a4a">TALBOT<span style="color:#1a7a5a">IQ</span></span>
+  </div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showPage('setup')">Setup</button>
+    <button class="nav-tab" onclick="showPage('interview')">Interview</button>
+    <button class="nav-tab" onclick="showPage('results')">Results</button>
+    <button class="nav-tab" onclick="showPage('settings')">Settings</button>
+  </div>
+  <div class="nav-right">
+    <div class="badge-live" id="live-badge" style="display:none">AI Analysis Active</div>
+    <div class="avatar-initial">SN</div>
+  </div>
+</nav>
+
+<!-- ===== SETUP PAGE ===== -->
+<div class="page active" id="page-setup">
+<div class="setup-wrap">
+  <div class="setup-header">
+    <div class="kicker">AI Avatar Screening</div>
+    <h1><span class="h1-sub">Configure Your</span>Interview Session</h1>
+    <p>Set up your AI avatar, questions, and analysis preferences. Everything is customisable &mdash; from the avatar persona to scoring thresholds.</p>
+  </div>
+
+  <!-- API Config -->
+  <div class="form-section">
+    <div class="section-title">Tavus API Configuration</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Tavus API Key</label>
+        <div class="api-field-wrap">
+          <input type="password" id="tavus-api-key" placeholder="ta_xxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+          <button class="api-eye" onclick="toggleField('tavus-api-key',this)" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Replica ID <span style="color:var(--gray);font-weight:400;font-size:0.72rem">(from Tavus dashboard &rarr; Replicas)</span></label>
+        <input type="text" id="replica-id" placeholder="r_xxxxxxxxxxxxxxxx">
+        <span style="font-size:0.7rem;color:var(--gray);margin-top:2px">Find this in your Tavus dashboard under Replicas or Personas</span>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+      <button class="btn-secondary" onclick="testTavusConnection()" style="font-size:0.8rem;padding:8px 18px">&#9889; Test Connection</button>
+      <span id="conn-status" style="font-size:0.78rem;color:var(--gray)"></span>
+    </div>
+  </div>
+
+  <!-- Avatar Persona -->
+  <div class="form-section">
+    <div class="section-title">Avatar Persona</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Interviewer Name</label>
+        <input type="text" id="avatar-name" value="Alex" placeholder="e.g. Alex">
+      </div>
+      <div class="field">
+        <label>Role</label>
+        <input type="text" id="avatar-role" value="Senior Talent Specialist" placeholder="e.g. Senior Recruiter">
+      </div>
+    </div>
+    <div class="form-grid full" style="margin-top:14px">
+      <div class="field">
+        <label>System Prompt / Persona Description</label>
+        <textarea id="avatar-prompt" rows="3">You are Alex, a Senior Talent Specialist at TalbotIQ. You are professional, warm, and encouraging. Ask each question clearly, wait for the candidate's full response, then proceed to the next question. Keep a conversational tone.</textarea>
+      </div>
+    </div>
+    <div style="margin-top:18px">
+      <label style="display:block;margin-bottom:10px">Select Avatar Style</label>
+      <div class="replica-grid">
+        <div class="replica-card selected" onclick="selectReplica(this,'professional')">
+          <div class="replica-avatar" style="background:linear-gradient(135deg,#2a7a4b,#1a5c35)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="replica-name">Professional</div>
+          <div class="replica-desc">Formal, corporate tone</div>
+        </div>
+        <div class="replica-card" onclick="selectReplica(this,'friendly')">
+          <div class="replica-avatar" style="background:linear-gradient(135deg,#c49a1a,#8a6a00)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+          </div>
+          <div class="replica-name">Friendly</div>
+          <div class="replica-desc">Warm, approachable</div>
+        </div>
+        <div class="replica-card" onclick="selectReplica(this,'technical')">
+          <div class="replica-avatar" style="background:linear-gradient(135deg,#2a5c8a,#1a3c6a)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <div class="replica-name">Technical</div>
+          <div class="replica-desc">Deep-dive, analytical</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Job Context -->
+  <div class="form-section">
+    <div class="section-title">Job Context</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Job Title</label>
+        <input type="text" id="job-title" value="Senior Backend Engineer" placeholder="e.g. Senior Backend Engineer">
+      </div>
+      <div class="field">
+        <label>Department</label>
+        <input type="text" id="job-dept" value="Engineering" placeholder="e.g. Engineering">
+      </div>
+    </div>
+    <div class="form-grid full" style="margin-top:14px">
+      <div class="field">
+        <label>Candidate Name</label>
+        <input type="text" id="candidate-name" placeholder="Candidate's full name">
+      </div>
+    </div>
+  </div>
+
+  <!-- Questions -->
+  <div class="form-section">
+    <div class="section-title">Interview Questions</div>
+    <div class="questions-list" id="questions-list"></div>
+    <button class="btn-add-q" onclick="addQuestion()">+ Add Question</button>
+  </div>
+
+  <!-- AI Analysis -->
+  <div class="form-section">
+    <div class="section-title">AI Analysis Settings</div>
+    <div class="toggle-row">
+      <div><div class="toggle-label">Sentiment Analysis (Hume AI)</div><div class="toggle-desc">Voice prosody, confidence &amp; anxiety scoring per response</div></div>
+      <div class="toggle on" id="t-sentiment" onclick="toggleSwitch(this)"></div>
+    </div>
+    <div class="toggle-row">
+      <div><div class="toggle-label">Facial Analysis (AWS Rekognition)</div><div class="toggle-desc">Emotion detection: CALM, HAPPY, CONFUSED, FEAR</div></div>
+      <div class="toggle on" id="t-facial" onclick="toggleSwitch(this)"></div>
+    </div>
+    <div class="toggle-row">
+      <div><div class="toggle-label">Transcription &amp; Pace (Deepgram Nova-2)</div><div class="toggle-desc">WPM, filler words, pauses, vocabulary analysis</div></div>
+      <div class="toggle on" id="t-transcription" onclick="toggleSwitch(this)"></div>
+    </div>
+    <div class="toggle-row">
+      <div><div class="toggle-label">Adaptive Follow-ups</div><div class="toggle-desc">Avatar dynamically follows up based on response quality</div></div>
+      <div class="toggle" id="t-adaptive" onclick="toggleSwitch(this)"></div>
+    </div>
+    <div class="toggle-row">
+      <div><div class="toggle-label">Bias Audit Mode</div><div class="toggle-desc">Flag demographic variance in scoring</div></div>
+      <div class="toggle" id="t-bias" onclick="toggleSwitch(this)"></div>
+    </div>
+    <div style="margin-top:20px">
+      <div class="form-grid">
+        <div class="field"><label>Minimum Pass Score (0-100)</label><input type="number" id="pass-score" value="65" min="0" max="100"></div>
+        <div class="field"><label>Max Interview Duration (minutes)</label><input type="number" id="max-duration" value="15" min="5" max="60"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Branding -->
+  <div class="form-section">
+    <div class="section-title">Branding &amp; Customisation</div>
+    <div class="form-grid">
+      <div class="field"><label>Company Name</label><input type="text" id="company-name" value="TalbotIQ"></div>
+      <div class="field"><label>Welcome Message</label><input type="text" id="welcome-msg" value="Welcome to your AI Interview"></div>
+    </div>
+    <div style="margin-top:16px">
+      <label style="display:block;margin-bottom:10px">Brand Primary Color</label>
+      <div class="color-row">
+        <div class="color-swatch active" style="background:#f0c040" onclick="selectColor(this,'#f0c040')"></div>
+        <div class="color-swatch" style="background:#2a7a4b" onclick="selectColor(this,'#2a7a4b')"></div>
+        <div class="color-swatch" style="background:#4f46e5" onclick="selectColor(this,'#4f46e5')"></div>
+        <div class="color-swatch" style="background:#e84343" onclick="selectColor(this,'#e84343')"></div>
+        <div class="color-swatch" style="background:#06b6d4" onclick="selectColor(this,'#06b6d4')"></div>
+        <div class="color-input-wrap">
+          <input type="color" id="brand-color-picker" value="#f0c040" oninput="onColorPick(this)">
+          <input type="text" class="color-hex" id="brand-color-hex" value="#f0c040" maxlength="7" onchange="onColorHex(this)">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cta-row">
+    <button class="btn-primary" onclick="openLaunchModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+      Launch Interview Session
+    </button>
+    <button class="btn-secondary" onclick="saveDraft()">Save Draft</button>
+  </div>
+</div>
+</div>
+
+<!-- ===== INTERVIEW PAGE ===== -->
+<div class="page" id="page-interview">
+<div class="interview-layout">
+  <div class="avatar-panel">
+    <div class="avatar-bg"></div>
+    <div class="progress-bar-wrap"><div class="progress-bar-fill" id="progress-fill" style="width:20%"></div></div>
+
+    <!-- Floating Full Screen button — top-right corner of video panel -->
+    <button class="fs-float-btn" onclick="enterFs()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+      Full Screen
+    </button>
+
+    <div class="avatar-stage">
+      <div class="video-topbar" id="video-topbar">
+        <span class="video-topbar-title">
+          <span class="live-dot"></span>
+          TalbotIQ Interview
+        </span>
+        <button class="video-topbar-fs" onclick="enterFs()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          Full Screen
+        </button>
+      </div>
+      <div class="avatar-video-wrap" id="avatar-video-wrap">
+        <div class="avatar-placeholder" id="avatar-placeholder">
+          <div class="avatar-face" id="avatar-face">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          </div>
+          <div class="avatar-name-tag" id="avatar-display-name">Alex</div>
+          <div class="avatar-speaking-indicator">
+            <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          </div>
+        </div>
+      </div>
+      <div class="avatar-controls">
+        <button class="ctrl-btn" id="mic-btn" onclick="toggleMute(this)" title="Toggle microphone">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </button>
+        <button class="ctrl-btn rec-btn" id="rec-btn" onclick="toggleRecord()" title="Record response">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+        </button>
+        <button class="ctrl-btn" onclick="skipQuestion()" title="Skip question">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,4 15,12 5,20"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+        </button>
+        <button class="ctrl-btn end-btn" onclick="endInterview()" title="End interview">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        </button>
+        <button class="ctrl-btn" id="fs-btn" onclick="toggleFullscreen()" title="Fullscreen">
+          <svg id="fs-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="question-overlay">
+      <div class="q-label">Question <span id="q-current-num">1</span> of <span id="q-total">5</span></div>
+      <div class="q-text" id="current-question-text">Tell me about yourself and your experience with backend engineering.</div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" onclick="switchSideTab(this,'questions')">Questions</button>
+      <button class="sidebar-tab" onclick="switchSideTab(this,'sentiment')">Live AI</button>
+      <button class="sidebar-tab" onclick="switchSideTab(this,'transcript')">Transcript</button>
+    </div>
+    <div class="sidebar-content">
+      <div class="sidebar-panel active" id="side-questions"><div id="q-sidebar-list"></div></div>
+      <div class="sidebar-panel" id="side-sentiment">
+        <div class="metric-row">
+          <div class="metric-card">
+            <div class="metric-label">Confidence</div>
+            <div class="metric-val" id="m-confidence" style="color:var(--gold)">72%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="mb-confidence" style="width:72%;background:var(--gold)"></div></div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Anxiety</div>
+            <div class="metric-val" id="m-anxiety" style="color:#e84343">8%</div>
+            <div class="metric-bar"><div class="metric-bar-fill" id="mb-anxiety" style="width:8%;background:#e84343"></div></div>
+          </div>
+        </div>
+        <div class="metric-row" style="margin-top:0">
+          <div class="metric-card"><div class="metric-label">WPM</div><div class="metric-val" id="m-wpm" style="color:var(--green-light)">134</div></div>
+          <div class="metric-card"><div class="metric-label">Fillers</div><div class="metric-val" id="m-fillers" style="color:var(--gray)">3</div></div>
+        </div>
+        <div class="metric-card" style="margin-top:0">
+          <div class="metric-label">Face Engagement</div>
+          <div class="metric-val" id="m-engagement" style="color:var(--green-light)">81%</div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-engagement" style="width:81%;background:var(--green-light)"></div></div>
+        </div>
+        <div class="emotion-tags" id="emotion-tags">
+          <span class="emotion-tag">Calm</span>
+          <span class="emotion-tag">Engaged</span>
+        </div>
+      </div>
+      <div class="sidebar-panel" id="side-transcript">
+        <div id="transcript-list">
+          <div class="transcript-bubble bubble-ai">
+            <div class="bubble-meta">Alex &middot; AI Interviewer</div>
+            Thank you for joining us today! Let's get started. Could you tell me a little about yourself?
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===== RESULTS PAGE ===== -->
+<div class="page" id="page-results">
+<div class="results-wrap">
+  <div class="results-header">
+    <div>
+      <div style="font-size:0.72rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px">Interview Complete</div>
+      <h2 id="results-candidate-name">Arjun Kumar &mdash; Senior Backend Engineer</h2>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:0.72rem;color:var(--gray)">Session ID</div>
+      <div style="font-family:monospace;font-size:0.82rem;color:var(--white)" id="session-id">TIQ-2024-0892</div>
+      <div style="font-size:0.68rem;color:var(--gray);margin-top:2px" id="session-time"></div>
+    </div>
+  </div>
+
+  <div class="score-hero">
+    <div class="score-card">
+      <div class="score-ring">
+        <svg viewBox="0 0 110 110" width="110" height="110">
+          <circle class="score-ring-bg" cx="55" cy="55" r="48" stroke-width="8"/>
+          <circle class="score-ring-fill" id="score-ring-fill" cx="55" cy="55" r="48" stroke-width="8" stroke-dasharray="301.6" stroke-dashoffset="75"/>
+        </svg>
+        <div class="score-num" id="overall-score-num">78<small>/100</small></div>
+      </div>
+      <div class="score-label">Overall Score</div>
+      <div class="score-verdict" id="score-verdict">Good Candidate</div>
+      <div class="ai-summary-box">
+        <div class="ai-summary-lbl">&#9733; AI Summary</div>
+        <div class="ai-summary-txt" id="ai-summary-txt">Strong communicator with good technical articulation. Minor confidence fluctuation under pressure. Vocabulary and engagement exceed benchmark expectations.</div>
+      </div>
+    </div>
+    <div class="dimension-grid">
+      <div style="font-family:var(--font-head);font-size:0.72rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--gold);margin-bottom:18px">Dimension Scores</div>
+      <div id="dimension-bars"></div>
+      <div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:var(--gray)"><span style="width:8px;height:8px;border-radius:50%;background:var(--green-light);display:inline-block"></span>85+ Excellent</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:var(--gray)"><span style="width:8px;height:8px;border-radius:50%;background:#888;display:inline-block"></span>75-84 Good</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.68rem;color:var(--gray)"><span style="width:8px;height:8px;border-radius:50%;background:var(--gold);display:inline-block"></span>65-74 Moderate</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Raw Signals -->
+  <div class="raw-signals">
+    <div class="signal-card">
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
+      <div class="signal-val" style="color:var(--green-light)">134</div>
+      <div class="signal-lbl">Words / min</div>
+    </div>
+    <div class="signal-card">
+      <div class="signal-badge warn">WARN</div>
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+      <div class="signal-val" style="color:var(--gold)">12</div>
+      <div class="signal-lbl">Filler words</div>
+    </div>
+    <div class="signal-card">
+      <div class="signal-badge alert">ALERT</div>
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg></div>
+      <div class="signal-val" style="color:#e84343">2.1s</div>
+      <div class="signal-lbl">Longest pause</div>
+    </div>
+    <div class="signal-card">
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11,5 2,12 11,19"/><polygon points="22,5 13,12 22,19"/></svg></div>
+      <div class="signal-val" style="color:var(--gold)">72%</div>
+      <div class="signal-lbl">Confident tone</div>
+    </div>
+    <div class="signal-card">
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg></div>
+      <div class="signal-val" style="color:var(--green-light)">8%</div>
+      <div class="signal-lbl">Anxiety level</div>
+    </div>
+    <div class="signal-card">
+      <div class="signal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></svg></div>
+      <div class="signal-val" style="color:var(--green-light)">81%</div>
+      <div class="signal-lbl">Face engagement</div>
+    </div>
+  </div>
+
+  <!-- Strengths / Watch -->
+  <div class="results-grid">
+    <div class="result-card">
+      <h4>&#10003; Strengths</h4>
+      <div class="tag-list" id="strengths-list">
+        <span class="tag tag-green">Clear sentence structure</span>
+        <span class="tag tag-green">Strong vocabulary range</span>
+        <span class="tag tag-green">Good eye contact</span>
+        <span class="tag tag-green">Technical clarity</span>
+        <span class="tag tag-green">Positive communication</span>
+      </div>
+    </div>
+    <div class="result-card">
+      <h4>&#9888; Watch Points</h4>
+      <div class="tag-list" id="watchpoints-list">
+        <span class="tag tag-yellow">Confidence dip at Q3</span>
+        <span class="tag tag-yellow">Filler words detected</span>
+        <span class="tag tag-yellow">Minor hesitation</span>
+        <span class="tag tag-yellow">Stress indicators</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Observation -->
+  <div class="ai-obs">
+    <div class="ai-obs-head">
+      <div class="ai-obs-icon">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </div>
+      <div class="ai-obs-title">AI Observation &mdash; Flagged Question</div>
+    </div>
+    <div class="ai-obs-q" id="flagged-question">"How do you handle database query optimisation under load?"</div>
+    <ul class="ai-obs-points">
+      <li>Confidence dropped during response.</li>
+      <li>Voice hesitation detected.</li>
+      <li>Pause duration increased by 1.4 seconds.</li>
+    </ul>
+  </div>
+
+  <!-- Interview Timeline -->
+  <div class="timeline-wrap">
+    <div class="timeline-hd">Interview Timeline</div>
+    <div class="timeline" id="interview-timeline"></div>
+  </div>
+
+  <!-- AI Recommendation -->
+  <div class="ai-rec-block">
+    <div class="ai-rec-top">
+      <div class="rec-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><polyline points="23,6 13.5,15.5 8.5,10.5 1,18"/><polyline points="17,6 23,6 23,12"/></svg>
+      </div>
+      <div class="rec-body">
+        <div class="rec-label">AI Recommendation</div>
+        <div class="rec-title" id="rec-title">Proceed to Technical Round</div>
+        <div class="rec-text" id="rec-text">Candidate demonstrates strong communication skills, excellent engagement, and advanced vocabulary. Confidence fluctuates slightly during high-pressure questions but remains within acceptable range. Technical understanding appears strong and candidate is suitable for further evaluation.</div>
+      </div>
+      <div class="rec-score">87%<small>Hiring Rec.</small></div>
+    </div>
+    <div class="hiring-bar">
+      <div class="hb-head"><span class="hb-lbl">Hiring Recommendation Confidence</span><span class="hb-val">87%</span></div>
+      <div class="hb-track"><div class="hb-fill" id="hb-fill" style="width:87%"></div></div>
+      <div class="hb-range"><span>0%</span><span>50%</span><span>100%</span></div>
+    </div>
+  </div>
+
+  <!-- Recruiter Actions -->
+  <div class="rec-actions">
+    <div class="rec-actions-hd">Recruiter Actions</div>
+    <div class="action-row">
+      <button class="btn-primary" style="padding:10px 20px;font-size:0.85rem" onclick="openSchedule()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Schedule Technical Interview
+      </button>
+      <button class="btn-ghost" onclick="downloadReport()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download AI Report
+      </button>
+      <button class="btn-ghost" onclick="shareProfile()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        Share Candidate Profile
+      </button>
+      <button class="btn-ghost" onclick="generateOfferRec()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
+        Generate Offer Rec.
+      </button>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ===== SETTINGS PAGE ===== -->
+<div class="page" id="page-settings">
+<div class="settings-wrap">
+  <h2>Platform Settings</h2>
+  <p class="subtitle">Configure global API keys, multi-tenant options, and platform defaults.</p>
+
+  <div class="form-section">
+    <div class="section-title">API Keys</div>
+    <div class="form-grid full">
+      <div class="field">
+        <label>Tavus API Key (Global)</label>
+        <div class="api-field-wrap">
+          <input type="password" id="settings-tavus-key" placeholder="ta_xxxxxxxxxxxxxxxxxxxxxxxx">
+          <button class="api-eye" onclick="toggleField('settings-tavus-key',this)" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>Deepgram API Key</label>
+        <div class="api-field-wrap">
+          <input type="password" id="settings-deepgram-key" placeholder="Token xxxxxxxxxxxxxxxx">
+          <button class="api-eye" onclick="toggleField('settings-deepgram-key',this)" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>Hume AI API Key</label>
+        <div class="api-field-wrap">
+          <input type="password" id="settings-hume-key" placeholder="hume_xxxxxxxx">
+          <button class="api-eye" onclick="toggleField('settings-hume-key',this)" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>AWS Access Key (Rekognition)</label>
+        <div class="api-field-wrap">
+          <input type="password" id="settings-aws-key" placeholder="AKIA...">
+          <button class="api-eye" onclick="toggleField('settings-aws-key',this)" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <div class="section-title">Multi-Tenant Config</div>
+    <div class="form-grid">
+      <div class="field"><label>Client / Tenant Name</label><input type="text" id="tenant-name" value="TalbotIQ Demo"></div>
+      <div class="field"><label>Scoring Threshold Override</label><input type="number" id="tenant-threshold" value="65" min="0" max="100"></div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="toggle-row">
+        <div><div class="toggle-label">White-label Mode</div><div class="toggle-desc">Hide TalbotIQ branding for client-facing screens</div></div>
+        <div class="toggle" onclick="toggleSwitch(this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">GDPR Data Purge (Auto)</div><div class="toggle-desc">Auto-delete video &amp; biometric data after 30 days</div></div>
+        <div class="toggle on" onclick="toggleSwitch(this)"></div>
+      </div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Multi-Language Avatar</div><div class="toggle-desc">Enable multilingual question delivery via Tavus</div></div>
+        <div class="toggle" onclick="toggleSwitch(this)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cta-row">
+    <button class="btn-primary" onclick="saveSettings()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+      Save Settings
+    </button>
+  </div>
+</div>
+</div>
+
+<script>
+// ===== STATE =====
+const state = {
+  apiKey: '',
+  replicaId: '',
+  candidateName: '',
+  jobTitle: '',
+  questions: [
+    "Tell me about yourself and your experience with backend engineering.",
+    "Describe a challenging distributed systems problem you've solved.",
+    "How do you handle database query optimisation under load?",
+    "Walk me through your approach to system design for high-traffic APIs.",
+    "Where do you see yourself growing in the next 2-3 years?"
+  ],
+  currentQ: 0,
+  isRecording: false,
+  isMuted: false,
+  interviewActive: false,
+  tavusConversationId: null,
+  tavusConversationUrl: null,
+  metrics: { confidence: 72, anxiety: 8, wpm: 134, fillers: 3, engagement: 81 },
+  transcript: [],
+  dimensions: [
+    { name: 'Communication', score: 84 },
+    { name: 'Confidence',    score: 71 },
+    { name: 'Engagement',    score: 80 },
+    { name: 'Vocabulary',    score: 88 },
+    { name: 'Problem Solving', score: 82 },
+    { name: 'Leadership',   score: 76 }
+  ],
+  questionResults: [
+    { label: 'Strong Response', desc: 'Articulated distributed systems design clearly', type: 'good' },
+    { label: 'Strong Response', desc: 'Excellent problem decomposition on REST API design', type: 'good' },
+    { label: 'Confidence Drop', desc: 'Hesitation on DB optimisation — flagged by AI', type: 'warn' },
+    { label: 'Recovered Well', desc: 'Strong recovery on system scalability discussion', type: 'neutral' },
+    { label: 'Excellent Closing', desc: 'Confident, structured, impactful closing statement', type: 'excellent' }
+  ],
+  metricInterval: null,
+  computedOverall: 78
+};
+
+// ===== INIT =====
+window.addEventListener('load', () => {
+  loadFromStorage();
+  renderQuestions();
+  renderQSidebar();
+  renderDimensionBars();
+  renderTimeline();
+  document.getElementById('session-time').textContent = new Date().toLocaleString();
+  setTimeout(() => {
+    document.getElementById('loading-overlay').classList.add('hidden');
+  }, 1200);
+});
+
+// ===== STORAGE =====
+function saveToStorage() {
+  localStorage.setItem('tiq_api_key', document.getElementById('tavus-api-key').value);
+  localStorage.setItem('tiq_replica_id', document.getElementById('replica-id').value);
+}
+
+function loadFromStorage() {
+  const key = localStorage.getItem('tiq_api_key') || '';
+  const rid = localStorage.getItem('tiq_replica_id') || '';
+  if (key) document.getElementById('tavus-api-key').value = key;
+  if (rid) document.getElementById('replica-id').value = rid;
+  // Sync to settings
+  if (key) document.getElementById('settings-tavus-key').value = key;
+}
+
+// ===== NAVIGATION =====
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-tab').forEach(t => {
+    if (t.textContent.toLowerCase() === name) t.classList.add('active');
+  });
+}
+
+// ===== SETUP HELPERS =====
+function toggleField(id, btn) {
+  const f = document.getElementById(id);
+  f.type = f.type === 'password' ? 'text' : 'password';
+}
+
+function toggleSwitch(el) { el.classList.toggle('on'); }
+
+function selectReplica(card) {
+  document.querySelectorAll('.replica-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+}
+
+function selectColor(swatch, hex) {
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  swatch.classList.add('active');
+  document.getElementById('brand-color-picker').value = hex;
+  document.getElementById('brand-color-hex').value = hex;
+  document.documentElement.style.setProperty('--gold', hex);
+}
+
+function onColorPick(input) {
+  document.getElementById('brand-color-hex').value = input.value;
+  document.documentElement.style.setProperty('--gold', input.value);
+}
+
+function onColorHex(input) {
+  if (/^#[0-9a-fA-F]{6}$/.test(input.value)) {
+    document.getElementById('brand-color-picker').value = input.value;
+    document.documentElement.style.setProperty('--gold', input.value);
+  }
+}
+
+// ===== QUESTIONS BUILDER =====
+function renderQuestions() {
+  const list = document.getElementById('questions-list');
+  list.innerHTML = state.questions.map((q, i) => `
+    <div class="question-item">
+      <div class="q-num">${i+1}</div>
+      <input type="text" value="${q.replace(/"/g,'&quot;')}" onchange="state.questions[${i}]=this.value;renderQSidebar()" style="flex:1">
+      <button class="q-del" onclick="removeQuestion(${i})" title="Remove">&times;</button>
+    </div>`).join('');
+}
+
+function addQuestion() {
+  state.questions.push('');
+  renderQuestions();
+  renderQSidebar();
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.question-item input');
+    if (inputs.length) inputs[inputs.length-1].focus();
+  }, 50);
+}
+
+function removeQuestion(i) {
+  if (state.questions.length <= 1) { showToast('Need at least one question', 'error'); return; }
+  state.questions.splice(i, 1);
+  renderQuestions();
+  renderQSidebar();
+}
+
+function renderQSidebar() {
+  const list = document.getElementById('q-sidebar-list');
+  if (!list) return;
+  list.innerHTML = state.questions.map((q, i) => {
+    const cls = i === state.currentQ ? 'active-q' : (i < state.currentQ ? 'done' : '');
+    const num = i < state.currentQ ? '&#10003;' : (i+1);
+    return `<div class="q-list-item ${cls}" onclick="jumpToQuestion(${i})">
+      <div class="q-num-sm">${num}</div>
+      <div class="q-text-sm">${q || '(empty)'}</div>
+    </div>`;
+  }).join('');
+}
+
+function jumpToQuestion(i) {
+  state.currentQ = i;
+  updateInterviewUI();
+}
+
+// ===== TAVUS CONNECTION TEST =====
+async function testTavusConnection() {
+  const key = document.getElementById('tavus-api-key').value.trim();
+  if (!key) { showToast('Enter a Tavus API key first', 'error'); return; }
+  saveToStorage();
+  const status = document.getElementById('conn-status');
+  status.textContent = 'Testing...';
+  status.style.color = 'var(--gray)';
+  try {
+    // Fetch replicas and personas in parallel
+    const [repRes, perRes] = await Promise.all([
+      fetch('https://tavusapi.com/v2/replicas',  { headers: { 'x-api-key': key } }),
+      fetch('https://tavusapi.com/v2/personas',  { headers: { 'x-api-key': key } }).catch(() => null)
+    ]);
+
+    if (!repRes.ok) {
+      const err = await repRes.json().catch(() => ({}));
+      status.textContent = 'Connection failed';
+      status.style.color = '#e84343';
+      showToast(err.message || 'Invalid API key', 'error');
+      return;
+    }
+
+    const repData = await repRes.json();
+    const replicas = repData.data || [];
+    const perData  = perRes && perRes.ok ? await perRes.json() : { data: [] };
+    const personas = perData.data || [];
+    const total    = replicas.length + personas.length;
+
+    status.textContent = `Connected — ${replicas.length} replica(s), ${personas.length} persona(s) found`;
+    status.style.color = 'var(--green-light)';
+
+    // Populate the replica-id field dropdown with available IDs
+    populateReplicaDropdown(replicas, personas);
+
+    showToast(`Connected! ${total} avatar(s) available`, 'success');
+  } catch(e) {
+    status.textContent = 'Network error';
+    status.style.color = '#e84343';
+    showToast('Network error — check API key', 'error');
+  }
+}
+
+function populateReplicaDropdown(replicas, personas) {
+  const input = document.getElementById('replica-id');
+  const wrap  = input.parentElement;
+
+  // Remove any old picker
+  const old = document.getElementById('replica-picker');
+  if (old) old.remove();
+
+  const items = [
+    ...replicas.map(r => ({ id: r.replica_id, name: r.replica_name || r.replica_id, type: 'Replica' })),
+    ...personas.map(p => ({ id: p.persona_id, name: p.persona_name || p.persona_id, type: 'Persona' }))
+  ];
+  if (!items.length) return;
+
+  const sel = document.createElement('select');
+  sel.id = 'replica-picker';
+  sel.style.cssText = 'margin-top:8px;width:100%;background:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--white);font-family:var(--font-body);font-size:0.85rem;outline:none;cursor:pointer';
+  sel.innerHTML = '<option value="">-- Select an avatar --</option>' +
+    items.map(it => `<option value="${it.id}">[${it.type}] ${it.name} (${it.id})</option>`).join('');
+  sel.onchange = () => {
+    if (sel.value) {
+      input.value = sel.value;
+      localStorage.setItem('tiq_replica_id', sel.value);
+    }
+  };
+  // Auto-select first item
+  if (items.length) {
+    input.value = items[0].id;
+    sel.value = items[0].id;
+    localStorage.setItem('tiq_replica_id', items[0].id);
+  }
+  wrap.appendChild(sel);
+}
+
+// ===== LAUNCH MODAL =====
+function openLaunchModal() {
+  if (!state.questions.filter(Boolean).length) { showToast('Add at least one question first', 'error'); return; }
+  // Pre-fill from existing fields
+  const existingName = document.getElementById('candidate-name').value.trim();
+  const existingJob  = document.getElementById('job-title').value.trim();
+  document.getElementById('launch-display-name').value = existingName;
+  document.getElementById('launch-job-title').value    = existingJob;
+  openModal('modal-launch');
+  setTimeout(() => document.getElementById('launch-display-name').focus(), 100);
+}
+
+function confirmLaunch() {
+  const name = document.getElementById('launch-display-name').value.trim();
+  const job  = document.getElementById('launch-job-title').value.trim();
+  if (!name) {
+    document.getElementById('launch-display-name').focus();
+    document.getElementById('launch-display-name').style.borderColor = '#e84343';
+    showToast('Please enter your display name', 'error');
+    return;
+  }
+  document.getElementById('launch-display-name').style.borderColor = '';
+  // Push values into the form fields so startInterview() picks them up
+  document.getElementById('candidate-name').value = name;
+  if (job) document.getElementById('job-title').value = job;
+  closeModal('modal-launch');
+  startInterview();
+}
+
+// ===== START INTERVIEW =====
+async function startInterview() {
+  const key = document.getElementById('tavus-api-key').value.trim();
+  const replicaId = document.getElementById('replica-id').value.trim();
+  const candidateName = document.getElementById('candidate-name').value.trim() || 'Candidate';
+  const avatarName = document.getElementById('avatar-name').value.trim() || 'Alex';
+  const jobTitle = document.getElementById('job-title').value.trim() || 'the role';
+  const systemPrompt = document.getElementById('avatar-prompt').value.trim();
+
+  if (!state.questions.filter(Boolean).length) { showToast('Add at least one question', 'error'); return; }
+
+  saveToStorage();
+
+  state.candidateName = candidateName;
+  state.jobTitle = jobTitle;
+  state.currentQ = 0;
+  state.interviewActive = true;
+  state.transcript = [];
+
+  document.getElementById('avatar-display-name').textContent = avatarName;
+  document.getElementById('results-candidate-name').textContent = `${candidateName} — ${jobTitle}`;
+  document.getElementById('schedule-name').textContent = candidateName;
+
+  // Reset transcript
+  document.getElementById('transcript-list').innerHTML = `
+    <div class="transcript-bubble bubble-ai">
+      <div class="bubble-meta">${avatarName} &middot; AI Interviewer</div>
+      Hello ${candidateName}, welcome to your TalbotIQ interview. I'm excited to learn more about you today. Are you ready to begin?
+    </div>`;
+
+  updateInterviewUI();
+  showPage('interview');
+  document.getElementById('live-badge').style.display = 'flex';
+
+  if (key && replicaId) {
+    await launchTavusConversation(key, replicaId, systemPrompt, candidateName, jobTitle, avatarName);
+  } else {
+    showToast('Demo mode — enter your API key & Replica ID to connect a live avatar', '');
+    startMetricSimulation();
+  }
+}
+
+async function launchTavusConversation(apiKey, replicaId, systemPrompt, candidateName, jobTitle, avatarName) {
+  showToast('Creating Tavus conversation...', '');
+  try {
+    const contextStr = systemPrompt || `You are ${avatarName}, a Senior Talent Specialist at TalbotIQ interviewing ${candidateName} for the ${jobTitle} role. Ask the following questions one by one and wait for a complete response before proceeding:\n${state.questions.filter(Boolean).map((q,i)=>`${i+1}. ${q}`).join('\n')}`;
+
+    // Use persona_id for p_ prefix, replica_id for everything else
+    const idField = replicaId.startsWith('p_') ? 'persona_id' : 'replica_id';
+
+    const body = {
+      [idField]: replicaId,
+      conversation_name: `TalbotIQ Interview - ${candidateName}`,
+      conversational_context: contextStr,
+      custom_greeting: `Hello ${candidateName}, welcome to your TalbotIQ interview. I'm ${avatarName}, and I'll be conducting your screening today for the ${jobTitle} position. Are you ready to begin?`,
+      properties: {
+        max_call_duration: (parseInt(document.getElementById('max-duration').value) || 15) * 60,
+        participant_left_timeout: 60,
+        enable_recording: false,
+        enable_transcription: true,
+        apply_greenscreen: false
+      }
+    };
+
+    const res = await fetch('https://tavusapi.com/v2/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      state.tavusConversationId = data.conversation_id;
+      state.tavusConversationUrl = data.conversation_url;
+
+      if (data.conversation_url) {
+        const wrap = document.getElementById('avatar-video-wrap');
+        wrap.innerHTML = `<iframe
+          src="${data.conversation_url}"
+          width="100%" height="100%"
+          style="border:none;border-radius:18px"
+          allow="camera;microphone;autoplay;display-capture;fullscreen"
+          allowfullscreen></iframe>`;
+        showToast('Tavus avatar connected!', 'success');
+      } else {
+        showToast('Conversation created — waiting for URL', 'success');
+        startMetricSimulation();
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.message || `Error ${res.status}`;
+      // Show as info (not error) since demo mode is a valid fallback
+      if (msg.toLowerCase().includes('replica')) {
+        showToast('Replica ID not found — check your Tavus dashboard. Running demo.', '');
+      } else {
+        showToast(`Tavus: ${msg} — running demo`, '');
+      }
+      startMetricSimulation();
+    }
+  } catch(e) {
+    showToast('Could not reach Tavus API — running demo mode', '');
+    startMetricSimulation();
+  }
+}
+
+// ===== INTERVIEW CONTROLS =====
+function updateInterviewUI() {
+  const q = state.questions[state.currentQ] || '';
+  document.getElementById('current-question-text').textContent = q;
+  document.getElementById('q-current-num').textContent = state.currentQ + 1;
+  document.getElementById('q-total').textContent = state.questions.length;
+  const pct = ((state.currentQ + 1) / state.questions.length) * 100;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  renderQSidebar();
+}
+
+function toggleRecord() {
+  state.isRecording = !state.isRecording;
+  const btn = document.getElementById('rec-btn');
+  btn.classList.toggle('recording', state.isRecording);
+  btn.title = state.isRecording ? 'Stop recording' : 'Record response';
+
+  if (!state.isRecording) {
+    // Simulate response
+    const responses = [
+      "I have over 7 years of experience building distributed backend systems using Node.js and Python, primarily at scale for fintech applications.",
+      "We had a race condition in our distributed cache layer causing intermittent data inconsistency. I introduced a distributed lock using Redis Redlock algorithm.",
+      "I typically use query explain plans first, then add composite indexes. For complex aggregations I move them to read replicas or materialised views.",
+      "I start with capacity estimation, then choose between monolith vs microservices based on team size and traffic patterns.",
+      "I want to move into technical leadership, mentoring junior engineers while still being hands-on with architecture decisions."
+    ];
+    const resp = responses[state.currentQ] || "Thank you for that question.";
+    addTranscriptEntry('candidate', resp);
+    setTimeout(() => {
+      if (state.currentQ < state.questions.length - 1) {
+        state.currentQ++;
+        updateInterviewUI();
+        addTranscriptEntry('ai', state.questions[state.currentQ]);
+      } else {
+        endInterview();
+      }
+    }, 1500);
+  } else {
+    addTranscriptEntry('ai', state.questions[state.currentQ]);
+  }
+}
+
+function toggleMute(btn) {
+  state.isMuted = !state.isMuted;
+  btn.classList.toggle('muted', state.isMuted);
+  btn.title = state.isMuted ? 'Unmute microphone' : 'Mute microphone';
+  showToast(state.isMuted ? 'Microphone muted' : 'Microphone active', '');
+}
+
+function skipQuestion() {
+  if (state.currentQ < state.questions.length - 1) {
+    state.currentQ++;
+    updateInterviewUI();
+    showToast('Question skipped', '');
+  } else {
+    endInterview();
+  }
+}
+
+function endInterview() {
+  clearInterval(state.metricInterval);
+  state.interviewActive = false;
+  document.getElementById('live-badge').style.display = 'none';
+  document.getElementById('rec-btn').classList.remove('recording');
+  state.isRecording = false;
+  showToast('Interview complete — generating scorecard...', 'success');
+  setTimeout(() => {
+    renderResults();
+    showPage('results');
+  }, 1500);
+}
+
+function addTranscriptEntry(role, text) {
+  state.transcript.push({ role, text });
+  const list = document.getElementById('transcript-list');
+  const name = document.getElementById('avatar-display-name')?.textContent || 'Alex';
+  const cls = role === 'ai' ? 'bubble-ai' : 'bubble-candidate';
+  const meta = role === 'ai' ? `${name} &middot; AI Interviewer` : 'Candidate';
+  list.innerHTML += `<div class="transcript-bubble ${cls}"><div class="bubble-meta">${meta}</div>${text}</div>`;
+  list.scrollTop = list.scrollHeight;
+}
+
+// ===== METRIC SIMULATION =====
+function startMetricSimulation() {
+  updateMetricsUI();
+  state.metricInterval = setInterval(() => {
+    const jitter = v => Math.max(0, Math.min(100, v + (Math.random() - 0.5) * 10));
+    state.metrics.confidence = Math.round(jitter(state.metrics.confidence));
+    state.metrics.anxiety = Math.round(Math.max(0, Math.min(50, state.metrics.anxiety + (Math.random()-0.5)*6)));
+    state.metrics.wpm = Math.round(110 + Math.random() * 50);
+    state.metrics.fillers = Math.round(Math.random() * 8);
+    state.metrics.engagement = Math.round(jitter(state.metrics.engagement));
+    updateMetricsUI();
+  }, 2500);
+}
+
+function updateMetricsUI() {
+  const m = state.metrics;
+  const confColor = m.confidence > 70 ? 'var(--green-light)' : m.confidence > 50 ? 'var(--gold)' : '#e84343';
+  document.getElementById('m-confidence').textContent = m.confidence + '%';
+  document.getElementById('m-confidence').style.color = confColor;
+  document.getElementById('mb-confidence').style.width = m.confidence + '%';
+  document.getElementById('mb-confidence').style.background = confColor;
+  document.getElementById('m-anxiety').textContent = m.anxiety + '%';
+  document.getElementById('mb-anxiety').style.width = m.anxiety + '%';
+  document.getElementById('m-wpm').textContent = m.wpm;
+  document.getElementById('m-fillers').textContent = m.fillers;
+  document.getElementById('m-engagement').textContent = m.engagement + '%';
+  document.getElementById('mb-engagement').style.width = m.engagement + '%';
+
+  const tags = [];
+  if (m.confidence > 70) tags.push({ label: 'Confident', type: '' });
+  else if (m.confidence > 50) tags.push({ label: 'Moderate', type: 'warn' });
+  else tags.push({ label: 'Low Confidence', type: 'alert' });
+  if (m.anxiety < 15) tags.push({ label: 'Calm', type: '' });
+  else if (m.anxiety < 30) tags.push({ label: 'Some Anxiety', type: 'warn' });
+  else tags.push({ label: 'Anxious', type: 'alert' });
+  if (m.engagement > 70) tags.push({ label: 'Engaged', type: '' });
+  document.getElementById('emotion-tags').innerHTML = tags.map(e => `<span class="emotion-tag ${e.type}">${e.label}</span>`).join('');
+}
+
+// ===== FULLSCREEN — CSS overlay, works with Tavus iframe =====
+function toggleFullscreen() {
+  document.querySelector('.avatar-panel').classList.contains('fs-active') ? exitFs() : enterFs();
+}
+function enterFs() {
+  document.querySelector('.avatar-panel').classList.add('fs-active');
+  document.getElementById('fs-exit-btn').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+  const btn = document.getElementById('fs-btn');
+  document.getElementById('fs-icon').innerHTML = '<path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>';
+  btn.title = 'Exit fullscreen'; btn.style.background = 'rgba(240,192,64,0.18)'; btn.style.borderColor = 'rgba(240,192,64,0.5)'; btn.style.color = 'var(--gold)';
+}
+function exitFs() {
+  document.querySelector('.avatar-panel').classList.remove('fs-active');
+  document.getElementById('fs-exit-btn').classList.remove('visible');
+  document.body.style.overflow = '';
+  const btn = document.getElementById('fs-btn');
+  document.getElementById('fs-icon').innerHTML = '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>';
+  btn.title = 'Fullscreen'; btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') exitFs(); });
+
+// ===== SIDEBAR TABS =====
+function switchSideTab(btn, panel) {
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('side-' + panel).classList.add('active');
+}
+
+// ===== RESULTS =====
+function renderDimensionBars() {
+  const el = document.getElementById('dimension-bars');
+  if (!el) return;
+  el.innerHTML = state.dimensions.map(d => {
+    const color = d.score >= 85 ? 'var(--green-light)' : d.score >= 75 ? '#888' : 'var(--gold)';
+    return `<div class="dim-row">
+      <div class="dim-name">${d.name}</div>
+      <div class="dim-bar-wrap"><div class="dim-bar-inner" style="width:${d.score}%;background:${color}"></div></div>
+      <div class="dim-score" style="color:${color}">${d.score}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderTimeline() {
+  const el = document.getElementById('interview-timeline');
+  if (!el) return;
+  const items = state.questionResults.slice(0, state.questions.length);
+  el.innerHTML = items.map((r, i) => {
+    const nodeClass = r.type === 'warn' ? 'warn' : r.type === 'neutral' ? 'neutral' : r.type === 'excellent' ? 'excellent' : '';
+    const badgeClass = r.type === 'warn' ? 'warn' : r.type === 'neutral' ? 'neutral' : r.type === 'excellent' ? 'excellent' : 'good';
+    return `<div class="tl-item">
+      <div class="tl-node ${nodeClass}">Q${i+1}</div>
+      <div class="tl-badge ${badgeClass}">${r.label}</div>
+      <div class="tl-desc">${r.desc}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderResults() {
+  renderDimensionBars();
+  renderTimeline();
+  const overall = Math.round(state.dimensions.reduce((a,b) => a+b.score,0) / state.dimensions.length);
+  state.computedOverall = overall;
+  document.getElementById('overall-score-num').innerHTML = `${overall}<small>/100</small>`;
+  const offset = 301.6 - (overall/100)*301.6;
+  document.getElementById('score-ring-fill').style.strokeDashoffset = offset;
+  const verdict = overall >= 85 ? 'Excellent Candidate' : overall >= 75 ? 'Good Candidate' : overall >= 65 ? 'Potential Candidate' : 'Needs Review';
+  document.getElementById('score-verdict').textContent = verdict;
+  const sessionId = 'TIQ-' + new Date().getFullYear() + '-' + Math.floor(Math.random()*9000+1000);
+  document.getElementById('session-id').textContent = sessionId;
+  document.getElementById('session-time').textContent = new Date().toLocaleString();
+  // Update flagged question
+  if (state.questions[2]) {
+    document.getElementById('flagged-question').textContent = `"${state.questions[2]}"`;
+  }
+  // Hiring bar
+  setTimeout(() => {
+    const hbFill = document.getElementById('hb-fill');
+    if (hbFill) hbFill.style.width = '87%';
+  }, 600);
+}
+
+// ===== ACTION BUTTONS =====
+function openSchedule() {
+  document.getElementById('schedule-name').textContent = state.candidateName || 'this candidate';
+  // Set default date to tomorrow
+  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
+  document.getElementById('schedule-date').value = tomorrow.toISOString().split('T')[0];
+  openModal('modal-schedule');
+}
+
+function confirmSchedule() {
+  const date = document.getElementById('schedule-date').value;
+  const time = document.getElementById('schedule-time').value;
+  const interviewer = document.getElementById('schedule-interviewer').value;
+  if (!date || !time) { showToast('Please fill in date and time', 'error'); return; }
+  closeModal('modal-schedule');
+  showToast(`Interview scheduled for ${date} at ${time}`, 'success');
+}
+
+function downloadReport() {
+  const candidateName = document.getElementById('results-candidate-name').textContent;
+  const sessionId = document.getElementById('session-id').textContent;
+  const overall = state.computedOverall;
+  const dims = state.dimensions.map(d => `  ${d.name}: ${d.score}/100`).join('\n');
+  const reportHTML = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>TalbotIQ Report - ${candidateName}</title>
+<style>body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px;color:#1a1a1a}
+h1{color:#2a7a4b}h2{color:#333;border-bottom:2px solid #f0c040;padding-bottom:6px}
+.score{font-size:3rem;font-weight:bold;color:#2a7a4b}.meta{color:#666;font-size:0.9rem}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+td,th{padding:10px 14px;text-align:left;border:1px solid #ddd}
+th{background:#f0f0f0}.bar{height:8px;background:#eee;border-radius:4px}
+.bar-fill{height:100%;border-radius:4px;background:#2a7a4b}</style></head>
+<body>
+<h1>TalbotIQ AI Interview Report</h1>
+<p class="meta">Session ID: ${sessionId} &bull; Generated: ${new Date().toLocaleString()}</p>
+<h2>Candidate: ${candidateName}</h2>
+<p class="score">${overall}<span style="font-size:1.5rem;color:#666">/100</span></p>
+<p><strong>Verdict:</strong> ${overall>=85?'Excellent':overall>=75?'Good':overall>=65?'Potential':'Needs Review'} Candidate</p>
+<h2>Dimension Scores</h2>
+<table><tr><th>Dimension</th><th>Score</th><th>Bar</th></tr>
+${state.dimensions.map(d=>`<tr><td>${d.name}</td><td><strong>${d.score}</strong>/100</td><td><div class="bar"><div class="bar-fill" style="width:${d.score}%"></div></div></td></tr>`).join('')}
+</table>
+<h2>Raw Signal Analytics</h2>
+<table><tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Words per minute</td><td>134</td></tr>
+<tr><td>Filler words</td><td>12</td></tr>
+<tr><td>Longest pause</td><td>2.1s</td></tr>
+<tr><td>Confident tone</td><td>72%</td></tr>
+<tr><td>Anxiety level</td><td>8%</td></tr>
+<tr><td>Face engagement</td><td>81%</td></tr>
+</table>
+<h2>AI Recommendation</h2>
+<p><strong>Proceed to Technical Round</strong> (87% Hiring Confidence)</p>
+<p>Candidate demonstrates strong communication skills, excellent engagement, and advanced vocabulary. Confidence fluctuates slightly during high-pressure questions but remains within acceptable range.</p>
+<p style="margin-top:40px;color:#999;font-size:0.8rem">Generated by TalbotIQ AI Interview Platform &bull; Confidential</p>
+</body></html>`;
+  const blob = new Blob([reportHTML], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `TalbotIQ-Report-${sessionId}.html`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+  showToast('AI Report downloaded', 'success');
+}
+
+function shareProfile() {
+  const name = state.candidateName || document.getElementById('results-candidate-name').textContent;
+  const sessionId = document.getElementById('session-id').textContent;
+  const text = `TalbotIQ Candidate Profile\nCandidate: ${name}\nOverall Score: ${state.computedOverall}/100\nSession: ${sessionId}\nRecommendation: Proceed to Technical Round (87% confidence)\nGenerated: ${new Date().toLocaleString()}`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => showToast('Profile copied to clipboard', 'success')).catch(() => showToast('Copy failed', 'error'));
+  } else {
+    showToast('Clipboard not available', 'error');
+  }
+}
+
+function generateOfferRec() {
+  const name = state.candidateName || 'the candidate';
+  const job = state.jobTitle || 'the role';
+  const overall = state.computedOverall;
+  const offerText = `OFFER RECOMMENDATION — TalbotIQ AI\n${'='.repeat(45)}\n\nCandidate: ${name}\nRole: ${job}\nAI Score: ${overall}/100\nHiring Confidence: 87%\n\nRECOMMENDATION: Proceed with Offer\n\nBased on AI interview analysis, ${name} demonstrates:\n- Strong communication and technical clarity\n- Vocabulary and engagement above benchmark\n- Solid problem-solving framework\n- Confidence within acceptable range\n\nSuggested Offer Band: Mid-Senior Level\nNext Step: Technical Round, then HR screening\n\nGenerated by TalbotIQ AI — ${new Date().toLocaleString()}`;
+  document.getElementById('offer-text').textContent = offerText;
+  openModal('modal-offer');
+}
+
+function copyOffer() {
+  const text = document.getElementById('offer-text').textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => showToast('Offer rec. copied', 'success')).catch(() => showToast('Copy failed','error'));
+  }
+}
+
+// ===== MODAL =====
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('show'); });
+});
+
+// ===== SETTINGS =====
+function saveSettings() {
+  const tavusKey = document.getElementById('settings-tavus-key').value.trim();
+  if (tavusKey) {
+    document.getElementById('tavus-api-key').value = tavusKey;
+    localStorage.setItem('tiq_api_key', tavusKey);
+  }
+  showToast('Settings saved', 'success');
+}
+
+// ===== MISC =====
+function saveDraft() {
+  saveToStorage();
+  showToast('Draft saved', 'success');
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>

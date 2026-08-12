@@ -52,19 +52,16 @@ $numbered''';
     body['callback_url'] = config.callbackUrl.trim();
   }
 
-  // Conversation properties — only send the ones that differ from Tavus defaults.
+  // Only PER-INTERVIEW properties belong here. Recording destination, session
+  // timeouts and transcription are org infrastructure: the backend merges them in
+  // when it creates the conversation (see app/providers/tavus.py), so the app
+  // neither sends nor knows them.
   final Map<String, dynamic> props = {
     'max_call_duration': config.maxCallDuration,
-    'participant_left_timeout': config.participantLeftTimeout,
-    'enable_recording': config.enableRecording,
-    'enable_transcription': config.enableTranscription,
   };
 
   if (config.language != 'English') {
     props['language'] = config.language;
-  }
-  if (config.participantAbsentTimeout != 300) {
-    props['participant_absent_timeout'] = config.participantAbsentTimeout;
   }
   if (config.applyConversationOverride) {
     props['apply_conversation_override'] = true;
@@ -75,19 +72,6 @@ $numbered''';
       props['background_url'] = config.backgroundUrl.trim();
     }
   }
-  if (config.enableRecording) {
-    if (config.recordingS3BucketName.trim().isNotEmpty) {
-      props['recording_s3_bucket_name'] = config.recordingS3BucketName.trim();
-    }
-    if (config.recordingS3BucketRegion.trim().isNotEmpty) {
-      props['recording_s3_bucket_region'] =
-          config.recordingS3BucketRegion.trim();
-    }
-    if (config.awsAssumeRoleArn.trim().isNotEmpty) {
-      props['aws_assume_role_arn'] = config.awsAssumeRoleArn.trim();
-    }
-  }
-
   body['properties'] = props;
   return body;
 }

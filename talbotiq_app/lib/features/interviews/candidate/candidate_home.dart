@@ -12,17 +12,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
-import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
-import 'package:talbotiq/features/app_config/app_config_service.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
+import 'package:talbotiq/features/interviews/services/resume_service.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_result_page.dart';
 import 'package:talbotiq/features/interviews/candidate/chat_launch_adapter.dart';
-import 'package:talbotiq/features/interviews/candidate/facefit_page.dart';
 import 'package:talbotiq/features/interviews/candidate/resume_intake_page.dart';
 import 'package:talbotiq/features/interviews/candidate/system_check_page.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
@@ -68,17 +66,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       if (!mounted || interview == null) return;
       // Only auto-open an interview actually assigned to this candidate.
       if (interview.candidateEmailLower != _email.trim().toLowerCase()) return;
-      switch (interview.type) {
-        case InterviewType.video:
-          _launchVideo(interview);
-          break;
-        case InterviewType.chat:
-          _launchChat(interview);
-          break;
-        case InterviewType.voice:
-          _launchVoice(interview);
-          break;
-      }
+      _open(interview);
     } catch (_) {
       // Ignore — the interview still appears in the list for manual launch.
     }
@@ -135,13 +123,127 @@ class _CandidateHomeState extends State<CandidateHome> {
     );
   }
 
+  /// Opens whatever [interview] actually is.
+  ///
+  /// Switches on [Interview.effectiveRoundKind], NOT on `type`: a résumé round
+  /// has no interview track, so its document carries the harmless default
+  /// `type: chat`. Routing on `type` would drop a candidate into a chat
+  /// interview with no questions.
+  void _open(Interview interview) {
+    switch (interview.effectiveRoundKind) {
+      case RoundKind.resume:
+        _submitResume(interview);
+      case RoundKind.video:
+        _launchVideo(interview);
+      case RoundKind.chat:
+        _launchChat(interview);
+      case RoundKind.voice:
+        _launchVoice(interview);
+    }
+  }
+
+  /// A résumé round: collect the résumé, post it for scoring, confirm.
+  ///
+  /// There is no session to launch and nothing to reset, so this shares none of
+  /// the video/chat launch machinery. The backend owns the extraction, the score
+  /// and the Firestore write — this method only moves text and reports what
+  /// happened.
+  Future<void> _submitResume(Interview interview) async {
+    if (_launching) return;
+    if (!_guardAccess(interview)) return;
+
+    // Already submitted: offer the result rather than silently letting them
+    // overwrite a score the recruiter may have already read.
+    if (interview.resume != null &&
+        interview.status == InterviewStatus.completed) {
+      final again = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Résumé already submitted'),
+          content: const Text(
+            'You have already submitted a résumé for this round. Submitting '
+            'again replaces it and it will be scored again.',
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Leave it')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Replace')),
+          ],
+        ),
+      );
+      if (again != true || !mounted) return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (ctx) => ResumeIntakePage(
+          title: interview.title,
+          submitLabel: 'Submit résumé',
+          subtitle:
+              'Upload your résumé as a PDF, or paste the text. It is reviewed '
+              'against what this role needs, and ${interview.recruiterName ?? 'the recruiter'} '
+              'sees the result.',
+          // The intake page stays put until this completes and shows anything
+          // thrown, so a failed submit never costs the candidate their text.
+          onSubmit: (text) async {
+            await resumeService.submitForScoring(
+              interviewId: interview.id,
+              resumeText: text,
+            );
+            if (!ctx.mounted) return;
+            // Pop the intake first so the confirmation is not stacked on a
+            // screen the candidate has finished with.
+            Navigator.of(ctx).pop();
+            if (mounted) _showResumeSubmitted(interview);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Confirms a résumé submission without showing the score.
+  ///
+  /// The number is deliberately withheld: a résumé score is a recruiter's
+  /// screening tool, and `resultPublished` — which only the recruiter sets — is
+  /// what decides whether a candidate ever sees a result.
+  void _showResumeSubmitted(Interview interview) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.check_circle_outline),
+        title: const Text('Résumé submitted'),
+        content: Text(
+          'Your résumé has been sent for "${interview.title}". '
+          '${interview.recruiterName ?? 'The recruiter'} will be in touch about '
+          'the next round.',
+        ),
+        actions: [
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+        ],
+      ),
+    );
+  }
+
   bool _guardAccess(Interview interview) {
     if (interview.isAccessible) return true;
-    final msg = interview.isExpired
-        ? 'This interview has expired.'
-        : interview.isNotYetAvailable
-            ? 'This interview is not available yet.'
-            : 'You have no attempts left for this interview.';
+    // A round the recruiter ended early reads as expired here, because ending a
+    // round pulls `expiresAt` back to that moment. "Closed" is the honest word
+    // for both, and "interview" is the wrong noun for a résumé round.
+    final noun = interview.effectiveRoundKind == RoundKind.resume
+        ? 'This round'
+        : 'This interview';
+    final String msg;
+    if (interview.isExpired) {
+      msg = '$noun is closed.';
+    } else if (interview.isNotYetAvailable) {
+      msg = '$noun is not open yet.';
+    } else {
+      msg = 'You have no attempts left.';
+    }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     return false;
   }
@@ -151,7 +253,6 @@ class _CandidateHomeState extends State<CandidateHome> {
     if (!_guardAccess(interview)) return;
     final messenger = ScaffoldMessenger.of(context);
     final store = context.read<AppStore>();
-    final appConfig = context.read<AppConfigService>();
     final repo = context.read<InterviewRepository>();
 
     if (interview.avatar.replicaId.isEmpty) {
@@ -167,7 +268,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       resumeText = await Navigator.of(context).push<String>(
         MaterialPageRoute(
           builder: (ctx) => ResumeIntakePage(
-            onReady: (t) => Navigator.of(ctx).pop(t),
+            onSubmit: (t) async => Navigator.of(ctx).pop(t),
           ),
         ),
       );
@@ -191,62 +292,14 @@ class _CandidateHomeState extends State<CandidateHome> {
     // not an error — abort quietly and leave them on their interview list.
     if (ready != true) return;
 
-    // Optional pre-call facefit capture (camera was granted in the system
-    // check). Returns an 'insufficient' summary if skipped/unavailable.
-    debugPrint('[launch] opening facefit…');
-    final facial = await Navigator.of(context).push<FacialSessionSummary>(
-      MaterialPageRoute(
-        builder: (ctx) => FacefitPage(
-          onCaptured: (s) => Navigator.of(ctx).pop(s),
-        ),
-      ),
-    );
-    debugPrint('[launch] facefit returned ${facial == null ? 'null (backed out)' : 'a summary'} (mounted=$mounted)');
-    if (!mounted) return;
-    // A null result means the candidate pressed BACK out of the attention
-    // check — that is a cancellation and must abort the launch. "Skip" is a
-    // different thing: it pops an 'insufficient' summary (non-null) and
-    // legitimately continues. Without this check a back-press fell through and
-    // started the interview anyway, which is the opposite of what Back means.
-    if (facial == null) return;
-
     setState(() => _launching = true);
     // Tracks how far the launch got, so a failure can name the exact step
     // instead of a generic "could not start" (this sequence hits Firestore
     // and then Tavus over HTTP — on a flaky/offline device several distinct
     // failures all LOOK identical to the candidate: spinner, then back to
     // the dashboard).
-    var stage = 'fetching recruiter keys (Firestore)';
+    var stage = 'creating the video session';
     try {
-      _setStage('Step 1/3 — fetching recruiter keys…');
-      // Apply THIS interview's recruiter (org) keys to the in-memory services
-      // only — never persisted, never shown in the candidate's Settings. Each
-      // launch re-establishes the right org's keys, so one org's interview
-      // never uses another org's credentials.
-      final hasKey = await appConfig.applyForRecruiter(
-          interview.recruiterId, store,
-          overrides: interview.keyOverrides);
-      if (!mounted) return;
-      debugPrint('[launchVideo] 2/4 recruiter keys ok — hasTavusKey=$hasKey');
-      if (!hasKey) {
-        // Dialog, not a SnackBar: this aborts the launch and drops the
-        // candidate back to the list, which is indistinguishable from a
-        // crash if the only feedback is a toast that scrolls by. Note this
-        // is specifically the TAVUS key — chat/voice interviews only need a
-        // Gemini key, so they keep working while video silently fails here.
-        if (mounted) setState(() => _launching = false);
-        await _showLaunchError(
-          'checking the recruiter’s API keys',
-          'No Tavus API key is configured for this recruiter, so the video '
-              'avatar cannot be started.\n\n'
-              'Chat and voice interviews only need a Gemini key, which is why '
-              'those still work.\n\n'
-              'Fix: the recruiter should open Settings → API Credentials, add '
-              'their Tavus key, then tap "Save to Cloud".',
-        );
-        return;
-      }
-
       final config = store.sessionConfig.copyWith(
         conversationalContext: interview.prompt,
         replicaId: interview.avatar.replicaId,
@@ -261,7 +314,7 @@ class _CandidateHomeState extends State<CandidateHome> {
       store.setActiveInterviewLanguage(interview.language);
 
       stage = 'creating the Tavus conversation (network)';
-      _setStage('Step 2/3 — creating the video session…');
+      _setStage('Step 1/2 — creating the video session…');
       await launchVideoConversation(
         context: context,
         config: config,
@@ -269,9 +322,8 @@ class _CandidateHomeState extends State<CandidateHome> {
         candidateName: interview.candidateName ?? _localPart(_email),
         interview: interview,
         resumeText: resumeText,
-        facialSummary: facial,
       );
-      _setStage('Step 3/3 — opening the interview…');
+      _setStage('Step 2/2 — opening the interview…');
       // The attempt has started — count it. Best-effort: not awaited (so a
       // slow/failed write never delays entering the interview), so it must
       // catch its own errors — an unawaited Future's rejection would
@@ -295,14 +347,8 @@ class _CandidateHomeState extends State<CandidateHome> {
     final messenger = ScaffoldMessenger.of(context);
     final repo = context.read<InterviewRepository>();
     final recruiterStore = context.read<RecruiterStore>();
-    final store = context.read<AppStore>();
     setState(() => _launching = true);
     try {
-      // Apply the org's Gemini key (for scoring) in-memory before running.
-      await context.read<AppConfigService>().applyForRecruiter(
-          interview.recruiterId, store,
-          overrides: interview.keyOverrides);
-      if (!mounted) return;
       // Best-effort — see the video path's comment on why this must catch its
       // own errors despite being unawaited.
       repo
@@ -324,8 +370,6 @@ class _CandidateHomeState extends State<CandidateHome> {
       await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => chatPage),
       );
-      // Restore the candidate's own keys once the org session ends.
-      await store.reloadApiKeysFromPrefs();
     } catch (e) {
       messenger.showSnackBar(SnackBar(
           content: Text(
@@ -395,43 +439,32 @@ class _CandidateHomeState extends State<CandidateHome> {
                       'Interviews assigned to $_email will appear here.',
                 );
               }
-              final video =
-                  all.where((i) => i.type == InterviewType.video).toList();
-              final chat =
-                  all.where((i) => i.type == InterviewType.chat).toList();
-              final voice =
-                  all.where((i) => i.type == InterviewType.voice).toList();
+              // Grouped by the JOB, with each round in running order beneath it.
+              //
+              // This used to group by interview kind, which meant a candidate
+              // partway through a pipeline saw "Résumé Submissions" and "Chat
+              // Interviews" as two unrelated sections with nothing saying one
+              // followed the other — and no indication they had advanced. A
+              // person applies to a job, not to a chat interview.
+              final byTest = groupByTest(all);
               return ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                 children: [
-                  if (video.isNotEmpty) ...[
+                  for (final group in byTest) ...[
                     _Header(
-                        label: 'Video Interviews',
-                        icon: Icons.videocam_outlined),
-                    ...video.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchVideo(i),
-                        )),
+                        label: group.title,
+                        icon: Icons.work_outline),
+                    for (var idx = 0; idx < group.rounds.length; idx++)
+                      _AssignedCard(
+                        interview: group.rounds[idx],
+                        // Position within THIS candidate's own sequence. Not the
+                        // test's total round count: they can only see rounds they
+                        // have reached, and "Round 2 of 4" would be telling them
+                        // about stages that may never be theirs.
+                        step: group.rounds.length > 1 ? idx + 1 : null,
+                        onLaunch: () => _open(group.rounds[idx]),
+                      ),
                     const SizedBox(height: 16),
-                  ],
-                  if (chat.isNotEmpty) ...[
-                    _Header(
-                        label: 'Chat Interviews',
-                        icon: Icons.chat_bubble_outline),
-                    ...chat.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchChat(i),
-                        )),
-                    const SizedBox(height: 16),
-                  ],
-                  if (voice.isNotEmpty) ...[
-                    _Header(
-                        label: 'Voice Interviews',
-                        icon: Icons.record_voice_over_outlined),
-                    ...voice.map((i) => _AssignedCard(
-                          interview: i,
-                          onLaunch: () => _launchVoice(i),
-                        )),
                   ],
                 ],
               );
@@ -472,10 +505,118 @@ class _CandidateHomeState extends State<CandidateHome> {
   }
 }
 
+/// One job, and the rounds of it this candidate has reached, in running order.
+class CandidatePipeline {
+  final String testId;
+  final String title;
+
+  /// Earliest round first, so the list reads as the sequence it is.
+  final List<Interview> rounds;
+
+  const CandidatePipeline({
+    required this.testId,
+    required this.title,
+    required this.rounds,
+  });
+}
+
+/// Groups a candidate's assignments by the job they belong to.
+///
+/// Public and pure so it can be tested without Firebase — this is the ordering a
+/// candidate reads their whole application from.
+///
+/// Ties on round order fall back to `createdAt`, because a test with no timeline
+/// gives every assignment `roundOrder` 0 and would otherwise order arbitrarily.
+List<CandidatePipeline> groupByTest(List<Interview> all) {
+  final byTest = <String, List<Interview>>{};
+  for (final i in all) {
+    // A pre-timeline assignment may carry no testId; it is its own group rather
+    // than being lumped in with every other one under the empty key.
+    final key = i.testId.isNotEmpty ? i.testId : i.id;
+    byTest.putIfAbsent(key, () => []).add(i);
+  }
+
+  final groups = <CandidatePipeline>[];
+  for (final entry in byTest.entries) {
+    final rounds = [...entry.value]..sort((a, b) {
+        final byOrder =
+            a.effectiveRoundOrder.compareTo(b.effectiveRoundOrder);
+        if (byOrder != 0) return byOrder;
+        final at = a.createdAt, bt = b.createdAt;
+        if (at == null || bt == null) return 0;
+        return at.compareTo(bt);
+      });
+    groups.add(CandidatePipeline(
+      testId: entry.key,
+      title: rounds.first.displayTestTitle,
+      rounds: rounds,
+    ));
+  }
+
+  // Most recently started application first — that is the one they are working
+  // on. Groups with no timestamp yet sort last rather than jumping to the top.
+  groups.sort((a, b) {
+    final at = a.rounds.first.createdAt, bt = b.rounds.first.createdAt;
+    if (at == null && bt == null) return 0;
+    if (at == null) return 1;
+    if (bt == null) return -1;
+    return bt.compareTo(at);
+  });
+  return groups;
+}
+
 class _AssignedCard extends StatelessWidget {
   final Interview interview;
   final VoidCallback onLaunch;
-  const _AssignedCard({required this.interview, required this.onLaunch});
+
+  /// 1-based position in this candidate's own sequence, or null when the job has
+  /// only one stage and numbering it would be noise.
+  final int? step;
+
+  const _AssignedCard({
+    required this.interview,
+    required this.onLaunch,
+    this.step,
+  });
+
+  /// A résumé round has no session, so several of this card's words change.
+  bool get _isResume =>
+      interview.effectiveRoundKind == RoundKind.resume;
+
+  /// The published outcome, in the candidate's own words.
+  ///
+  /// "Not moving forward" is deliberately neutral-coloured rather than red: it is
+  /// a decision, not an error, and red on someone's rejection is a small cruelty.
+  Widget _outcomeChip(ThemeData theme) {
+    final outcome = interview.outcome;
+    final color = switch (outcome) {
+      RoundOutcome.selected => theme.colorScheme.primary,
+      RoundOutcome.notSelected => theme.colorScheme.onSurfaceVariant,
+      RoundOutcome.pending => theme.colorScheme.secondary,
+    };
+    final icon = switch (outcome) {
+      RoundOutcome.selected => Icons.check_circle_outline,
+      RoundOutcome.notSelected => Icons.info_outline,
+      RoundOutcome.pending => Icons.hourglass_empty,
+    };
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 13, color: color),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(
+            outcome.candidateLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: color, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildStatusBadge(
       BuildContext context, String text, Color bgColor, Color textColor) {
@@ -559,9 +700,18 @@ class _AssignedCard extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(completed ? 'Re-take' : 'Launch'),
+            // "Launch" is wrong for a résumé round: nothing starts, a file is
+            // handed over.
+            Text(_isResume
+                ? (completed ? 'Replace' : 'Upload')
+                : (completed ? 'Re-take' : 'Launch')),
             const SizedBox(width: 4),
-            Icon(completed ? Icons.refresh : Icons.play_arrow, size: 14),
+            Icon(
+              completed
+                  ? Icons.refresh
+                  : (_isResume ? Icons.upload_file : Icons.play_arrow),
+              size: 14,
+            ),
           ],
         ),
       );
@@ -578,10 +728,11 @@ class _AssignedCard extends StatelessWidget {
     final awaiting =
         interview.status == InterviewStatus.completed && !published;
 
-    final typeIcon = switch (interview.type) {
-      InterviewType.video => Icons.videocam_outlined,
-      InterviewType.voice => Icons.record_voice_over_outlined,
-      InterviewType.chat => Icons.chat_bubble_outline,
+    final typeIcon = switch (interview.effectiveRoundKind) {
+      RoundKind.resume => Icons.description_outlined,
+      RoundKind.video => Icons.videocam_outlined,
+      RoundKind.voice => Icons.record_voice_over_outlined,
+      RoundKind.chat => Icons.chat_bubble_outline,
     };
 
     return Card(
@@ -631,13 +782,22 @@ class _AssignedCard extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      interview.title,
+                      step == null
+                          ? interview.title
+                          : 'Round $step · ${interview.title}',
                       style: theme.textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                    // The outcome, once published — the thing that tells a
+                    // candidate whether the next card is theirs. Without it a new
+                    // round simply appeared with no explanation.
+                    if (published) ...[
+                      const SizedBox(height: 4),
+                      _outcomeChip(theme),
+                    ],
                     const SizedBox(height: 4),
                     Text(
                       'from ${interview.recruiterName?.isNotEmpty == true ? interview.recruiterName : interview.recruiterEmail}',

@@ -37,11 +37,11 @@ class AppColors {
   static const Color textMuted = Color(0xFF9CA3AF);        // Muted gray
   static const Color textDark = Color(0xFF111827);         // Rich light-mode text
   
-  // Hume specific branding (Restrained M3 Teal)
-  static const Color humeBase = Color(0xFF12141C);
-  static const Color humeCard = Color(0xFF1A1D29);
-  static const Color humeBorder = Color(0xFF2E3347);
-  static const Color humeText = Color(0xFFF3F4F6);
-  static const Color humeMuted = Color(0xFF9CA3AF);
-  static const Color humeTeal = Color(0xFF2DD4BF);        // Radiant premium teal
+  // Analytics panel accents (Restrained M3 Teal)
+  static const Color analyticsBase = Color(0xFF12141C);
+  static const Color analyticsCard = Color(0xFF1A1D29);
+  static const Color analyticsBorder = Color(0xFF2E3347);
+  static const Color analyticsText = Color(0xFFF3F4F6);
+  static const Color analyticsMuted = Color(0xFF9CA3AF);
+  static const Color analyticsTeal = Color(0xFF2DD4BF);        // Radiant premium teal
 }

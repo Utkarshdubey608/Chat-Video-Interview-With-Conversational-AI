@@ -17,7 +17,8 @@ import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_video_shell.dart';
 
 /// Creates the Tavus conversation from [config] + [questions], seeds the
-/// AppStore and opens the video shell. Assumes `tavusService` is already keyed.
+/// AppStore and opens the video shell. The Tavus credential lives on the
+/// backend, so there is nothing to key up first.
 Future<void> launchVideoConversation({
   required BuildContext context,
   required DraftForm config,
@@ -25,7 +26,6 @@ Future<void> launchVideoConversation({
   required String candidateName,
   Interview? interview,
   String? resumeText,
-  FacialSessionSummary? facialSummary,
 }) async {
   final store = context.read<AppStore>();
 
@@ -46,10 +46,7 @@ Future<void> launchVideoConversation({
   );
   final conv = await tavusService.createConversation(payload);
 
-  _resetHumeState(store);
-  // Set the pre-call facefit result AFTER the reset so the results pipeline
-  // can fuse it into the scorecard.
-  store.setFacialSummary(facialSummary);
+  _resetSessionState(store);
   // Carry the real role + duration so scoring isn't judged against a hardcoded
   // default (falls back to the config for self-serve practice).
   store.setActiveInterviewMeta(
@@ -76,14 +73,9 @@ Future<void> launchVideoConversation({
 }
 
 /// Mirror of setup_page's pre-launch reset so a prior session doesn't leak.
-void _resetHumeState(AppStore store) {
-  store.setHumeJobId(null);
-  store.setHumeJobStatus(null);
-  store.setHumeResult(null);
+void _resetSessionState(AppStore store) {
   store.resetQuestionTimestamps();
   store.setRecordingStartTimestamp(null);
-  store.setLiveEmotions([]);
-  store.setHumeStreamActive(false);
   store.clearSessionTranscript();
   store.updateMetrics(conf: 0, anx: 0, w: 0, f: 0, eng: 0);
   store.resetIntegrity();

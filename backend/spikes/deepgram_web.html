@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Spike 0.2 — Deepgram subprotocol auth in a real browser</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, monospace; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; }
+  .row { padding: .5rem .75rem; border-left: 3px solid #ccc; margin: .5rem 0; background: #fafafa; }
+  .ok   { border-color: #16a34a; }
+  .fail { border-color: #dc2626; }
+  .note { color: #666; }
+  button { font: inherit; padding: .4rem .8rem; }
+</style>
+
+<h1>Deepgram temporary-token auth — browser WebSocket</h1>
+
+<p class="note">
+  This is the check that actually matters for Flutter web: a browser cannot set an
+  <code>Authorization</code> header on a WebSocket, so the token has to ride in
+  <code>Sec-WebSocket-Protocol</code>. Python can set headers, so a Python pass does
+  not prove the web path — this page does.
+</p>
+
+<p><button id="run">Run tests</button></p>
+<div id="out"></div>
+
+<script>
+const out = document.getElementById('out')
+const LISTEN = 'wss://api.deepgram.com/v1/listen'
+  + '?model=nova-3&encoding=linear16&sample_rate=16000&channels=1'
+
+function log(msg, cls = '') {
+  const d = document.createElement('div')
+  d.className = 'row ' + cls
+  d.textContent = msg
+  out.appendChild(d)
+}
+
+// Quiet sine tone as PCM16 — we're testing that the socket opens, not accuracy.
+function tone(seconds = 0.1, rate = 16000, freq = 220) {
+  const n = Math.floor(rate * seconds)
+  const buf = new ArrayBuffer(n * 2)
+  const view = new DataView(buf)
+  for (let i = 0; i < n; i++) {
+    view.setInt16(i * 2, Math.round(3000 * Math.sin(2 * Math.PI * freq * i / rate)), true)
+  }
+  return buf
+}
+
+async function mint() {
+  const r = await fetch('/token')
+  if (!r.ok) throw new Error('token endpoint failed: ' + r.status)
+  return (await r.json()).access_token
+}
+
+function attempt(label, protocols) {
+  return new Promise(async (resolve) => {
+    let token
+    try { token = await mint() } catch (e) { return resolve([label, 'FAIL — ' + e.message]) }
+
+    const ws = new WebSocket(LISTEN, [protocols[0], token])
+    const timer = setTimeout(() => { try { ws.close() } catch {} ; resolve([label, 'FAIL — timeout']) }, 15000)
+
+    ws.binaryType = 'arraybuffer'
+    ws.onopen = () => {
+      // Stream briefly so we know it's a real session, not just an accepted upgrade.
+      let sent = 0
+      const iv = setInterval(() => {
+        if (ws.readyState !== WebSocket.OPEN || sent++ > 15) {
+          clearInterval(iv)
+          try { ws.send(JSON.stringify({ type: 'CloseStream' })) } catch {}
+          clearTimeout(timer)
+          resolve([label, 'OK'])
+          return
+        }
+        ws.send(tone())
+      }, 100)
+    }
+    ws.onerror = () => { clearTimeout(timer); resolve([label, 'FAIL — connection error (see devtools Network → WS)']) }
+    ws.onclose = (e) => {
+      if (e.code !== 1000 && e.code !== 1005) {
+        clearTimeout(timer)
+        resolve([label, `FAIL — closed ${e.code} ${e.reason || ''}`.trim()])
+      }
+    }
+  })
+}
+
+document.getElementById('run').onclick = async () => {
+  out.innerHTML = ''
+  const winners = []
+  for (const [label, protos] of [
+    ["['bearer', jwt]", ['bearer']],
+    ["['token', jwt]",  ['token']],
+  ]) {
+    log(`testing ${label} …`)
+    const [, result] = await attempt(label, protos)
+    out.lastChild.remove()
+    log(`${label} → ${result}`, result === 'OK' ? 'ok' : 'fail')
+    if (result === 'OK') winners.push(label)
+  }
+
+  log(
+    winners.length
+      ? `WEB PATH CONFIRMED: use subprotocols ${winners[0]} in deepgram_service.dart`
+      : 'NO FORM WORKED IN-BROWSER: Flutter web needs a relay for Deepgram (native can still go direct).',
+    winners.length ? 'ok' : 'fail'
+  )
+}
+</script>

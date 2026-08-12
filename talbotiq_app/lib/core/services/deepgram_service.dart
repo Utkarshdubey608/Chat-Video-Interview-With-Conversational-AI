@@ -1,43 +1,33 @@
 // lib/core/services/deepgram_service.dart
-import 'dart:convert';
+//
+// Post-interview transcription of a locally-recorded file, plus the pace/filler
+// analysis derived from any transcript.
+//
+// Deepgram is a FALLBACK: primary transcripts come from Tavus (verbose
+// conversation polling) for video and Gemini Live for voice. This runs only when
+// the device captured its own .wav — native platforms — and the pipeline needs a
+// transcript from it.
+//
+// The Deepgram key lives on the backend; audio is POSTed to
+// `/api/deepgram/transcribe` and the response shape is Deepgram's own, so the
+// word-level slicing below is unchanged.
+//
+// There is no live-transcription path here. The old `buildWsUrl()` was never
+// called, and `testConnection()` only existed to power a Settings button that no
+// longer exists — both are gone rather than left as dead code.
+
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:talbotiq/core/net/api_client.dart';
+
+import 'package:talbotiq/core/net/backend_client.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 
 class DeepgramService {
-  // Shared transport: request timeout + 429/5xx backoff-retry, so a stalled or
-  // throttled Deepgram host no longer hangs (or one-shot-fails) transcription.
-  final ApiClient _api = ApiClient();
+  DeepgramService({BackendClient? backend}) : _injectedBackend = backend;
 
-  String _apiKey = '';
-
-  void setKey(String key) {
-    _apiKey = key;
-  }
-
-  String getKey() => _apiKey;
-
-  // The API key trimmed — used as the Deepgram WebSocket subprotocol token.
-  String getTrimmedKey() => _apiKey.trim();
-
-  // Streaming endpoint for real-time transcription. Audio is streamed as
-  // WebM/Opus from a MediaRecorder (NOT raw PCM), so we do NOT declare
-  // encoding/sample_rate — Deepgram auto-detects the Opus container.
-  String buildWsUrl() {
-    final params = {
-      'model': 'nova-3',
-      'language': 'en-US',
-      'punctuate': 'true',
-      'smart_format': 'true',
-      'interim_results': 'true', // emit words before the silence — maximum capture
-      'utterance_end_ms': '1000', // flush after 1s of silence
-      'vad_events': 'true', // voice-activity events
-      'filler_words': 'true', // um, uh, like, you know — critical for an ATS
-    };
-    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
-    return 'wss://api.deepgram.com/v1/listen?$query';
-  }
+  /// Null in production so the shared client is resolved lazily — constructing
+  /// one at import time would touch Firebase before it is initialised.
+  final BackendClient? _injectedBackend;
+  BackendClient get _backend => _injectedBackend ?? backendClient;
 
   static final Set<String> fillerWords = {
     'um', 'uh', 'hmm', 'er', 'erm', 'ah', 'like', 'basically', 'literally',
@@ -46,14 +36,15 @@ class DeepgramService {
 
   int countFillers(String text) {
     if (text.isEmpty) return 0;
-    final words = text.toLowerCase().replaceAll(RegExp(r'[.,!?;:]'), '').split(RegExp(r'\s+'));
+    final words =
+        text.toLowerCase().replaceAll(RegExp(r'[.,!?;:]'), '').split(RegExp(r'\s+'));
     int count = 0;
-    
+
     // Count exact matches of individual filler words
     for (var w in words) {
       if (fillerWords.contains(w)) count++;
     }
-    
+
     // Also scan for double-word phrases like 'you know', 'i mean', 'kind of', 'sort of'
     final lowerText = text.toLowerCase();
     final phrases = ['you know', 'i mean', 'kind of', 'sort of'];
@@ -71,9 +62,10 @@ class DeepgramService {
   }
 
   int countWords(List<TranscriptEntry> entries) {
-    return entries
-        .where((e) => e.role == 'candidate')
-        .fold(0, (acc, e) => acc + e.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length);
+    return entries.where((e) => e.role == 'candidate').fold(
+        0,
+        (acc, e) =>
+            acc + e.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length);
   }
 
   int calcWpm(List<TranscriptEntry> entries) {
@@ -83,105 +75,6 @@ class DeepgramService {
     if (durationMs <= 0) return 0;
     final words = countWords(entries);
     return ((words / durationMs) * 60000).round();
-  }
-
-  Future<Map<String, dynamic>> testConnection() async {
-    if (_apiKey.isEmpty) {
-      return {'ok': false, 'message': 'No API key set'};
-    }
-    try {
-      // Direct call to Deepgram projects list to verify API Key
-      final response = await _api.get(
-        Uri.parse('https://api.deepgram.com/v1/projects'),
-        headers: {
-          'Authorization': 'Token $_apiKey',
-        },
-      );
-      if (response.statusCode == 200) {
-        return {'ok': true, 'message': 'Deepgram Nova-3 connected'};
-      } else if (response.statusCode == 401) {
-        return {'ok': false, 'message': 'Invalid API key (401)'};
-      } else {
-        return {'ok': false, 'message': 'HTTP ${response.statusCode}'};
-      }
-    } on ApiException catch (e) {
-      return {'ok': false, 'message': e.message};
-    } catch (e) {
-      return {'ok': false, 'message': e.toString()};
-    }
-  }
-
-  /// Transcribe an audio file available at a public URL using Deepgram's
-  /// pre-recorded endpoint. Returns a list with a single TranscriptEntry
-  /// containing the combined transcript text.
-  Future<List<TranscriptEntry>> transcribeFromUrl(
-    String audioUrl, {
-    String model = 'nova-3',
-    String language = 'en-US',
-  }) async {
-    if (_apiKey.isEmpty) throw Exception('No Deepgram API key set');
-
-    final params = {
-      'model': model,
-      'language': language,
-      'punctuate': 'true',
-      'smart_format': 'true',
-    };
-    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
-    final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
-
-    try {
-      if (kDebugMode) print('debug: Deepgram transcribeFromUrl POST $uri');
-      final body = jsonEncode({'url': audioUrl});
-      final response = await _api.post(
-        uri,
-        headers: {
-          'Authorization': 'Token $_apiKey',
-          'Content-Type': 'application/json',
-        },
-        body: body,
-      );
-
-      if (kDebugMode) {
-        print('debug: Deepgram status: ${response.statusCode}');
-        final preview = response.body.length > 1000
-            ? '${response.body.substring(0, 1000)}...'
-            : response.body;
-        print('debug: Deepgram body preview: $preview');
-      }
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        String transcript = '';
-
-        try {
-          transcript = data['results']?['channels']?[0]?['alternatives']?[0]?['transcript'] ?? '';
-        } catch (_) {
-          transcript = data['results']?.toString() ?? '';
-        }
-
-        if (transcript.isEmpty) {
-          return [];
-        }
-
-        final entry = TranscriptEntry(
-          role: 'candidate',
-          text: transcript,
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          questionIdx: 0,
-        );
-
-        return [entry];
-      } else {
-        throw Exception('Deepgram transcription failed: HTTP ${response.statusCode}');
-      }
-    } on ApiException catch (e) {
-      if (kDebugMode) print('debug: transcribeFromUrl error: ${e.message}');
-      throw Exception('Deepgram transcription failed: ${e.message}');
-    } catch (e) {
-      if (kDebugMode) print('debug: transcribeFromUrl error: $e');
-      rethrow;
-    }
   }
 
   /// Maps a full language name (as chosen on the interview, e.g. 'Spanish') to a
@@ -217,8 +110,8 @@ class DeepgramService {
     }
   }
 
-  /// Transcribe a locally-recorded audio file (e.g. the candidate's .wav) by
-  /// POSTing its raw bytes to Deepgram's pre-recorded endpoint.
+  /// Transcribe a locally-recorded audio file (e.g. the candidate's .wav) via the
+  /// backend's Deepgram proxy.
   ///
   /// When [recordingStartTimestamp] and [questionTimestamps] are provided
   /// (both epoch-ms wall-clock values — see AppStore), the response's
@@ -237,49 +130,19 @@ class DeepgramService {
     List<int> questionTimestamps = const [],
     int questionCount = 0,
   }) async {
-    if (_apiKey.isEmpty) throw Exception('No Deepgram API key set');
     if (bytes.isEmpty) return [];
 
-    final params = {
-      'model': model,
-      'language': language,
-      'punctuate': 'true',
-      'smart_format': 'true',
-    };
-    final query = params.entries.map((e) => '${e.key}=${e.value}').join('&');
-    final uri = Uri.parse('https://api.deepgram.com/v1/listen?$query');
-
     if (kDebugMode) {
-      print('debug: Deepgram transcribeFromFile POST $uri (${bytes.length} bytes)');
-    }
-    // Raw-bytes POST (Deepgram pre-recorded accepts the audio as the body with a
-    // Content-Type header) — kept identical; routed through ApiClient for the
-    // timeout + 429/5xx backoff-retry.
-    final http.Response response;
-    try {
-      response = await _api.post(
-        uri,
-        headers: {
-          'Authorization': 'Token $_apiKey',
-          'Content-Type': contentType,
-        },
-        body: bytes,
-      );
-    } on ApiException catch (e) {
-      throw Exception('Deepgram transcription failed: ${e.message}');
+      debugPrint('debug: transcribe via backend (${bytes.length} bytes)');
     }
 
-    if (kDebugMode) {
-      print('debug: Deepgram (file) status: ${response.statusCode}');
-    }
+    final data = await _backend.postBytes(
+      '/api/deepgram/transcribe',
+      bytes,
+      contentType: contentType,
+      query: {'model': model, 'language': language},
+    );
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        'Deepgram transcription failed: HTTP ${response.statusCode}',
-      );
-    }
-
-    final Map<String, dynamic> data = jsonDecode(response.body);
     final alternative =
         data['results']?['channels']?[0]?['alternatives']?[0] as Map?;
     String transcript = '';
@@ -331,16 +194,16 @@ class DeepgramService {
     // interview-active marker pushed just before question 0's own push) —
     // drop it so position i lines up with the real start of question i.
     final extra = questionTimestamps.length - questionCount;
-    final starts = extra > 0
-        ? questionTimestamps.sublist(extra)
-        : questionTimestamps;
+    final starts =
+        extra > 0 ? questionTimestamps.sublist(extra) : questionTimestamps;
     if (starts.isEmpty) return [];
 
     // Convert each question's start to seconds elapsed since the recording
     // actually began (clamped to 0 — the first question may be marked
     // fractionally before the recorder finished starting).
     final startSecs = starts
-        .map((ts) => ((ts - recordingStartTimestamp) / 1000.0).clamp(0.0, double.infinity))
+        .map((ts) =>
+            ((ts - recordingStartTimestamp) / 1000.0).clamp(0.0, double.infinity))
         .toList();
 
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -348,7 +211,8 @@ class DeepgramService {
     for (var idx = 0; idx < questionCount; idx++) {
       if (idx >= startSecs.length) break;
       final start = startSecs[idx];
-      final end = (idx + 1) < startSecs.length ? startSecs[idx + 1] : double.infinity;
+      final end =
+          (idx + 1) < startSecs.length ? startSecs[idx + 1] : double.infinity;
 
       final wordsInWindow = wordsJson.where((w) {
         final wStart = (w is Map ? w['start'] as num? : null)?.toDouble();

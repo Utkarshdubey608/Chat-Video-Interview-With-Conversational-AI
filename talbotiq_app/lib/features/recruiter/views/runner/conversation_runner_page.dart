@@ -34,8 +34,11 @@ class ConversationRunnerPage extends StatefulWidget {
   final List<FixedQuestion>? fixedQuestionsOverride;
 
   /// Optional: fired when scoring completes (e.g. to mirror results to Firestore).
-  final void Function(InterviewSession completedSession, ResultReport report)?
-      onFinished;
+  final void Function(
+    InterviewSession completedSession,
+    ResultReport report,
+    String? scoringError,
+  )? onFinished;
 
   /// Candidate mode hides the result on completion (recruiter publishes it).
   final bool candidateMode;

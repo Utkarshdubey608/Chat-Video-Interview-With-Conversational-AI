@@ -12,12 +12,9 @@
 // [recruiterGeminiService], which AppStore keeps in sync on every change, so the
 // guide is enabled exactly when the rest of the Gemini features are.
 
-import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 
-import 'package:talbotiq/core/net/api_client.dart';
-import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/core/net/backend_client.dart';
 
 /// One chat turn in the guide conversation.
 class GuideMessage {
@@ -29,18 +26,11 @@ class GuideMessage {
 }
 
 class MimicGuideService {
-  MimicGuideService({RecruiterGeminiService? keySource})
-      : _keySource = keySource ?? recruiterGeminiService;
+  MimicGuideService({BackendClient? backend}) : _injectedBackend = backend;
 
-  // Shared transport: request timeout + conservative 429/503 backoff so a
-  // stalled Gemini host can never hang the help chat indefinitely.
-  final ApiClient _api = ApiClient();
-
-  // The guide has no key of its own — it reuses the app's single Gemini key,
-  // which AppStore pushes into recruiterGeminiService on every change.
-  final RecruiterGeminiService _keySource;
-
-  final String _model = 'gemini-2.5-flash';
+  /// Null in production so the shared client resolves lazily.
+  final BackendClient? _injectedBackend;
+  BackendClient get _backend => _injectedBackend ?? backendClient;
 
   // Standard Gemini safety thresholds, matching the other services.
   static const List<Map<String, String>> _safetySettings = [
@@ -50,8 +40,9 @@ class MimicGuideService {
     {'category': 'HARM_CATEGORY_DANGEROUS_CONTENT', 'threshold': 'BLOCK_ONLY_HIGH'},
   ];
 
-  /// The guide is available exactly when a Gemini key is configured.
-  bool get enabled => _keySource.enabled;
+  /// Available whenever the backend has Gemini configured. The client holds no
+  /// key to check, and /health is the authority — so this no longer gates.
+  bool get enabled => true;
 
   static const String _systemInstruction = '''
 You are "Mimic Guide", the friendly in-app product help assistant for TalbotIQ — an AI-powered recruiting and interview platform. You help RECRUITERS learn how to use the app.
@@ -62,14 +53,14 @@ Scope of what you help with:
 - Sessions: running an interview (fixed/timed track or the adaptive conversational track), and what happens during a session.
 - Scoring: how KPI-based scoring works, what the recommendation (strong_yes / yes / maybe / no) means, and that scoring is AI-assisted and meant to support — not replace — human judgement.
 - Reports: reading a candidate's scorecard, per-question feedback, strengths/concerns, and exporting/sharing a report.
-- Settings: where to add API keys (Gemini, Tavus, Deepgram, Hume) and configure the platform.
+- Settings: session setup, recordings, webhooks, candidate emails and appearance. NOTE: API keys are NOT configurable in the app — they are set on the TalbotIQ server by an administrator, so never tell a recruiter to add or change one.
 
 Style:
 - Be concise, warm and practical. Prefer short paragraphs and numbered steps for "how do I…" questions.
 - Use plain text only — no markdown headings, tables or code fences. Simple numbered or dashed lists are fine.
 - If a question is outside TalbotIQ product help (general trivia, coding help, personal advice), gently redirect: say you are the TalbotIQ product guide and offer a relevant thing you can help with instead.
 - Never invent features. If you are unsure whether a specific capability exists, say so and suggest checking the relevant section of the app rather than guessing.
-- Never ask the user for API keys, passwords or candidate personal data.
+- Never ask the user for API keys, passwords or candidate personal data. There is no place in the app to enter an API key.
 ''';
 
   /// Send one chat turn. [history] is the full running conversation, oldest
@@ -77,11 +68,6 @@ Style:
   /// assistant's reply text. Throws [Exception] with a user-facing message on
   /// missing key / transport / empty-response errors.
   Future<String> sendMessage(List<GuideMessage> history) async {
-    final key = _keySource.getKey();
-    if (key.isEmpty) {
-      throw Exception(
-          'No Gemini API key configured. Add one in Settings → API Credentials to use the guide.');
-    }
     if (history.isEmpty) {
       throw Exception('Nothing to send.');
     }
@@ -109,35 +95,13 @@ Style:
       'safetySettings': _safetySettings,
     };
 
-    // Key travels in the x-goog-api-key header, never in the URL, so it can't
-    // leak into request logs / proxies / crash traces.
-    final url = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent');
-
-    final http.Response response;
-    try {
-      response = await _api.post(
-        url,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': key,
-        },
-        body: jsonEncode(body),
-      );
-    } on ApiException catch (e) {
-      throw Exception(_friendlyError(e.statusCode, e.message));
-    }
-
-    if (response.statusCode != 200) {
-      throw Exception(_friendlyError(response.statusCode, response.body));
-    }
-
     final Map<String, dynamic> data;
     try {
-      data = jsonDecode(response.body) as Map<String, dynamic>;
-    } catch (_) {
-      throw Exception(
-          'The guide received an unreadable response. Please try again.');
+      data = await _backend.postJson('/api/gemini/generate', body: body);
+    } on BackendException catch (e) {
+      // BackendException already carries a message written for a person; only
+      // add guide-specific phrasing where it helps.
+      throw Exception(_friendlyError(e));
     }
 
     // Empty-but-present candidates/parts (MAX_TOKENS, safety block) must not
@@ -159,18 +123,20 @@ Style:
     return text.trim();
   }
 
-  String _friendlyError(int? status, String? body) {
-    final msg = (body ?? '').toLowerCase();
-    if (status == 400 && (msg.contains('api key') || msg.contains('api_key'))) {
-      return 'Gemini rejected the API key. Check it in Settings → API Credentials (valid keys start with "AIza").';
+  /// Guide-specific phrasing for the cases worth softening.
+  ///
+  /// The old version sniffed Gemini's error text for "api key" to tell a
+  /// recruiter to fix their key in Settings. There is no key in Settings any
+  /// more — a credential problem is now the server's, and the backend already
+  /// says so in [BackendException.message], so that branch is gone.
+  String _friendlyError(BackendException e) {
+    if (e.isNotConfigured) return e.message;
+    if (e.isAuthError) return 'Your sign-in expired. Sign in again to use the guide.';
+    if (e.isRateLimited) {
+      return 'The guide is busy right now. Wait a moment and try again.';
     }
-    if (status == 429 || msg.contains('quota') || msg.contains('rate')) {
-      return 'Gemini rate limit / quota reached. Wait a moment and try again.';
-    }
-    if (msg.contains('safety') || msg.contains('blocked')) {
-      return 'The guide blocked that request for safety reasons. Try rephrasing.';
-    }
-    return 'The guide request failed (${status ?? 'no connection'}). Please try again.';
+    if (e.isTimeout) return 'The guide took too long to respond. Please try again.';
+    return 'The guide request failed. Please try again.';
   }
 }
 

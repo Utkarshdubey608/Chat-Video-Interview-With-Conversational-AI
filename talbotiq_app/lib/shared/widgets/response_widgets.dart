@@ -219,7 +219,7 @@ class SentimentArc extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final Color arcColor = theme.brightness == Brightness.dark ? AppColors.humeTeal : theme.colorScheme.secondary;
+    final Color arcColor = theme.brightness == Brightness.dark ? AppColors.analyticsTeal : theme.colorScheme.secondary;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -312,7 +312,7 @@ class EmotionRadarChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final Color chartColor = theme.brightness == Brightness.dark ? AppColors.humeTeal : theme.colorScheme.secondary;
+    final Color chartColor = theme.brightness == Brightness.dark ? AppColors.analyticsTeal : theme.colorScheme.secondary;
 
     return LayoutBuilder(
       builder: (context, constraints) {

@@ -44,6 +44,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:talbotiq/core/net/live_token.dart';
+
 /// Coarse lifecycle of a single preview. Surfaced to the UI via
 /// [VoicePreviewService.state] so it can show a spinner / stop toggle / error.
 enum VoicePreviewStatus {
@@ -137,10 +139,6 @@ class VoicePreviewService {
 
   // ---- protocol constants (mirror gemini_live_service.dart) ---------------
 
-  static const String _wsBase =
-      'wss://generativelanguage.googleapis.com/ws/'
-      'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
-
   /// Native-audio Live model (same default as GeminiLiveService.defaultModel).
   static const String defaultModel =
       'models/gemini-2.5-flash-native-audio-preview-09-2025';
@@ -196,17 +194,22 @@ class VoicePreviewService {
   /// returned PCM24k, plays it as WAV, then tears the session down. Any
   /// in-flight preview is cancelled first.
   ///
+  /// [grant] comes from `BackendClient.mintPreviewToken` and is locked to this
+  /// voice and line server-side — the setup frame below cannot change either.
+  ///
   /// Never throws for transport/engine failures — those surface on [state] as
-  /// [VoicePreviewStatus.error]. Throws only for the programmer error of an
-  /// empty [apiKey] (the UI should gate the button on a non-empty key).
+  /// [VoicePreviewStatus.error]. Throws only for the programmer error of a stale
+  /// grant (mint one immediately before playing).
   Future<void> play({
-    required String apiKey,
+    required LiveTokenGrant grant,
     required String voiceName,
     String? sampleText,
   }) async {
     if (_disposed) return;
-    if (apiKey.trim().isEmpty) {
-      throw ArgumentError('A Gemini API key is required to preview voices.');
+    if (grant.isStale) {
+      throw ArgumentError(
+        'This preview token expired before connecting. Mint a fresh one.',
+      );
     }
 
     // Cancel whatever is running and start a fresh session.
@@ -223,9 +226,9 @@ class VoicePreviewService {
 
     _set(VoicePreviewState.loading(voiceName));
 
-    // Key travels in the query string because the BidiGenerateContent endpoint
-    // requires `?key=` — see the security note at the top of this file.
-    final uri = Uri.parse('$_wsBase?key=${Uri.encodeQueryComponent(apiKey)}');
+    // The token rides in an `access_token` query parameter, and the endpoint
+    // comes from the grant — see the security note at the top of this file.
+    final uri = grant.socketUri;
 
     try {
       final channel = WebSocketChannel.connect(uri);
@@ -248,7 +251,7 @@ class VoicePreviewService {
       // stalled sample never hangs the UI spinner.
       _watchdog = Timer(timeout, () => _onTimeout(session));
 
-      _sendSetup(voiceName: voiceName);
+      _sendSetup(model: grant.model);
     } catch (e) {
       _fail(session, 'Could not start the voice preview: $e');
     }
@@ -296,33 +299,20 @@ class VoicePreviewService {
   // WebSocket protocol (output-only subset of BidiGenerateContent)
   // =========================================================================
 
-  /// First frame after the socket opens. Output-only: AUDIO response modality +
-  /// the chosen prebuilt voice + a terse "read this once" system instruction.
+  /// First frame after the socket opens — required to get `setupComplete`, but
+  /// its contents are IGNORED.
   ///
-  /// Deliberately OMITTED vs. the interview setup: input/output transcription
-  /// and realtimeInputConfig/VAD. We are not listening, so none of that applies.
-  void _sendSetup({required String voiceName}) {
+  /// The preview token carries the whole setup (AUDIO modality, the chosen
+  /// prebuilt voice, and the "read this line once" instruction), and Google takes
+  /// the effective setup entirely from the token. The voice and the line are
+  /// therefore fixed at mint time; sending them here would have no effect.
+  ///
+  /// To change what a preview says, edit `build_preview_setup` in
+  /// `backend/app/voice.py`.
+  void _sendSetup({required String model}) {
     _sendJson({
       'setup': {
         'model': model.startsWith('models/') ? model : 'models/$model',
-        'generationConfig': {
-          'responseModalities': ['AUDIO'],
-          'speechConfig': {
-            'voiceConfig': {
-              'prebuiltVoiceConfig': {'voiceName': voiceName},
-            },
-          },
-        },
-        'systemInstruction': {
-          'parts': [
-            {
-              // Mirrors the website's sample systemInstruction intent.
-              'text':
-                  'Say exactly this once, warmly and naturally, then stop. '
-                      'Say nothing else, do not add commentary: "$_sampleLine"',
-            },
-          ],
-        },
       },
     });
   }
@@ -564,6 +554,14 @@ class VoicePreviewService {
       await _channel?.sink.close();
     } catch (_) {}
     _channel = null;
+  }
+
+  /// Surfaces a failure that happened BEFORE the socket was opened — e.g. the
+  /// backend refusing to mint a token. Without this the picker would have to
+  /// invent its own error channel alongside [state].
+  void reportError(String message) {
+    if (_disposed) return;
+    _set(VoicePreviewState.error(_voiceName, message));
   }
 
   void _set(VoicePreviewState next) {

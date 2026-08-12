@@ -1,20 +1,22 @@
-"""CRUD for recruiter-owned email templates + the built-in default.
+"""Two endpoints:
 
-Lets a recruiter customise an email template and save it for future use.
+    GET  /api/templates   — every template that can be picked (built-in + custom)
+    POST /api/templates   — save a custom template in Firestore
+
+Custom templates live in the mobile app's Firebase project. The built-ins are in
+code, so listing works even with no Firebase credentials.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlmodel import Session, select
-
-from app.db import get_session
-from app.models import EmailTemplate
-from app.schemas import TemplateCreate, TemplateRead, TemplateUpdate
+from app import templates_store
+from app.config import Settings
+from app.firebase import FirestoreUnavailable
+from app.schemas import TemplateCreate, TemplateList, TemplateRead
 from app.security import require_api_key
-from app.templating import DEFAULT_BODY, DEFAULT_SUBJECT, SUPPORTED_VARIABLES
+from app.templating import DEFAULT_TEMPLATE_ID, SUPPORTED_VARIABLES
 
 router = APIRouter(
     prefix="/api/templates",
@@ -23,85 +25,33 @@ router = APIRouter(
 )
 
 
-def _clear_other_defaults(session: Session, recruiter_id: str, keep_id: int | None) -> None:
-    """Enforce a single default template per recruiter."""
-    rows = session.exec(
-        select(EmailTemplate).where(
-            EmailTemplate.recruiter_id == recruiter_id,
-            EmailTemplate.is_default == True,  # noqa: E712
-        )
-    ).all()
-    for row in rows:
-        if row.id != keep_id:
-            row.is_default = False
-            session.add(row)
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings
 
 
-@router.get("/defaults", response_model=dict)
-async def get_builtin_default() -> dict:
-    """Starter subject/body + the variables the editor can offer. Not persisted."""
-    return {
-        "subject": DEFAULT_SUBJECT,
-        "body": DEFAULT_BODY,
-        "variables": SUPPORTED_VARIABLES,
-    }
-
-
-@router.get("", response_model=list[TemplateRead])
+@router.get("", response_model=TemplateList)
 async def list_templates(
-    recruiter_id: str = Query(min_length=1),
-    session: Session = Depends(get_session),
-) -> list[EmailTemplate]:
-    return session.exec(
-        select(EmailTemplate)
-        .where(EmailTemplate.recruiter_id == recruiter_id)
-        .order_by(EmailTemplate.is_default.desc(), EmailTemplate.updated_at.desc())
-    ).all()
+    request: Request,
+    owner_email: str | None = Query(
+        default=None,
+        description="The recruiter's email. Returns the built-ins plus only their own templates.",
+    ),
+) -> TemplateList:
+    """All templates to choose from. Pass an `id` from here to /api/emails/send."""
+    templates, warning = templates_store.list_all(_settings(request), owner_email)
+    return TemplateList(
+        templates=[TemplateRead(**t) for t in templates],
+        default_template_id=DEFAULT_TEMPLATE_ID,
+        variables=SUPPORTED_VARIABLES,
+        warning=warning,
+    )
 
 
 @router.post("", response_model=TemplateRead, status_code=status.HTTP_201_CREATED)
-async def create_template(
-    payload: TemplateCreate,
-    session: Session = Depends(get_session),
-) -> EmailTemplate:
-    template = EmailTemplate(**payload.model_dump())
-    if template.is_default:
-        _clear_other_defaults(session, template.recruiter_id, keep_id=None)
-    session.add(template)
-    session.commit()
-    session.refresh(template)
-    return template
-
-
-@router.put("/{template_id}", response_model=TemplateRead)
-async def update_template(
-    template_id: int,
-    payload: TemplateUpdate,
-    session: Session = Depends(get_session),
-) -> EmailTemplate:
-    template = session.get(EmailTemplate, template_id)
-    if template is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(template, field, value)
-    template.updated_at = datetime.now(timezone.utc)
-    if template.is_default:
-        _clear_other_defaults(session, template.recruiter_id, keep_id=template.id)
-    session.add(template)
-    session.commit()
-    session.refresh(template)
-    return template
-
-
-@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_template(
-    template_id: int,
-    session: Session = Depends(get_session),
-) -> Response:
-    template = session.get(EmailTemplate, template_id)
-    if template is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found.")
-    session.delete(template)
-    session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+async def create_template(payload: TemplateCreate, request: Request) -> TemplateRead:
+    """Save a custom template; the returned `id` is what /send accepts."""
+    try:
+        created = templates_store.create(_settings(request), payload.model_dump())
+    except FirestoreUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    return TemplateRead(**created)

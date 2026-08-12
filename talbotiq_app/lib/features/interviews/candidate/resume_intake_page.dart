@@ -1,10 +1,22 @@
 // lib/features/interviews/candidate/resume_intake_page.dart
 //
 // Reusable candidate résumé intake. Lets a candidate attach a résumé (PDF →
-// text via Gemini, or pasted text) before an interview so the AI interviewer is
-// grounded in their background. Used by the video launch flow when the recruiter
-// enabled "collect résumé". (The adaptive chat track has its own equivalent step
-// inside the conversation runner, so it does not use this screen.)
+// text on the backend, or pasted text) and hands the text to its caller.
+//
+// Two callers, one screen, because the picking and reviewing is identical and
+// only the final action differs:
+//
+//   * the VIDEO launch flow, when the recruiter enabled "collect résumé" — the
+//     text grounds the AI interviewer and is never stored;
+//   * a RÉSUMÉ ROUND, where the text is the submission and [onSubmit] posts it
+//     for scoring.
+//
+// (The adaptive chat track has its own equivalent step inside the conversation
+// runner, so it does not use this screen.)
+//
+// [onSubmit] is async and this page STAYS MOUNTED until it completes: a résumé
+// round's submit is a network call that can fail, and a candidate who has just
+// pasted 4 KB of text must not lose it to a dismissed screen.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -14,11 +26,16 @@ import 'package:flutter/material.dart';
 
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
-import 'package:talbotiq/features/recruiter/services/recruiter_gemini_service.dart';
+import 'package:talbotiq/features/interviews/services/resume_service.dart';
+
+/// Minimum résumé length. Matches the backend's own floor on `resumeText`, so a
+/// too-short paste is caught here instead of coming back as a 422.
+const int kMinResumeChars = 30;
 
 class ResumeIntakePage extends StatefulWidget {
-  /// Called with the résumé text (min a few lines) when the candidate continues.
-  final ValueChanged<String> onReady;
+  /// Called with the résumé text when the candidate continues. Awaited, with the
+  /// button showing a spinner; throwing shows the message and keeps the text.
+  final Future<void> Function(String text) onSubmit;
 
   /// Optional skip action; when null the résumé is mandatory (no Skip button).
   final VoidCallback? onSkip;
@@ -26,13 +43,18 @@ class ResumeIntakePage extends StatefulWidget {
   final String title;
   final String subtitle;
 
+  /// The action's label. "Continue" reads right before an interview; a résumé
+  /// round wants "Submit résumé", because that press is the whole round.
+  final String submitLabel;
+
   const ResumeIntakePage({
     super.key,
-    required this.onReady,
+    required this.onSubmit,
     this.onSkip,
     this.title = 'Your résumé',
     this.subtitle =
         'The interviewer tailors its questions to your background. Upload a PDF résumé or paste the text below.',
+    this.submitLabel = 'Continue',
   });
 
   @override
@@ -43,7 +65,13 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
   final _textCtrl = TextEditingController();
   String? _fileName;
   bool _extracting = false;
+  bool _submitting = false;
+  bool _truncated = false;
   String? _error;
+
+  /// Either network call in flight. Both buttons are disabled together — picking
+  /// a new PDF mid-submit would score one résumé and display another.
+  bool get _busy => _extracting || _submitting;
 
   @override
   void dispose() {
@@ -52,9 +80,9 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
   }
 
   Future<void> _pickPdf() async {
-    if (!recruiterGeminiService.enabled) {
+    if (!resumeService.enabled) {
       setState(() => _error =
-          'PDF extraction needs the recruiter\'s Gemini key. You can paste your résumé text below instead.');
+          'PDF reading is unavailable right now. You can paste your résumé text below instead.');
       return;
     }
     final res = await FilePicker.pickFiles(
@@ -70,6 +98,8 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
       setState(() => _error = 'Could not read the selected file.');
       return;
     }
+    // Checked again on the server; this one just saves the candidate a slow
+    // upload that was always going to be refused.
     if (bytes.lengthInBytes > 10 * 1024 * 1024) {
       setState(() => _error = 'PDF is larger than 10 MB.');
       return;
@@ -77,15 +107,19 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
     setState(() {
       _extracting = true;
       _error = null;
+      _truncated = false;
       _fileName = f.name;
     });
     try {
-      final text = await recruiterGeminiService.extractResumeText(
-          pdfBase64: base64Encode(bytes));
+      final extraction = await resumeService.extractText(
+        pdfBase64: base64Encode(bytes),
+        fileName: f.name,
+      );
       if (!mounted) return;
       setState(() {
         _extracting = false;
-        _textCtrl.text = text;
+        _textCtrl.text = extraction.text;
+        _truncated = extraction.truncated;
       });
     } catch (e) {
       if (!mounted) return;
@@ -96,14 +130,30 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
     }
   }
 
-  void _continue() {
+  Future<void> _continue() async {
+    if (_submitting) return;
     final text = _textCtrl.text.trim();
-    if (text.length < 30) {
+    if (text.length < kMinResumeChars) {
       setState(() =>
           _error = 'Add at least a few lines of résumé text to continue.');
       return;
     }
-    widget.onReady(text);
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await widget.onSubmit(text);
+      // Deliberately no setState on success: the callback usually navigates away,
+      // and clearing the spinner on a screen that is being popped is both
+      // pointless and a "setState after dispose" waiting to happen.
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = e.toString().replaceAll('Exception: ', '');
+      });
+    }
   }
 
   @override
@@ -114,7 +164,10 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
-          if (widget.onSkip != null)
+          // Hidden mid-submit: skipping after the résumé has already been sent
+          // would leave the candidate thinking they had backed out of something
+          // that in fact went through.
+          if (widget.onSkip != null && !_submitting)
             TextButton(onPressed: widget.onSkip, child: const Text('Skip')),
         ],
       ),
@@ -135,7 +188,7 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
                 variant: ButtonVariant.outline,
                 isLoading: _extracting,
                 icon: const Icon(Icons.upload_file, size: 18),
-                onPressed: _extracting ? () {} : _pickPdf,
+                onPressed: _busy ? () {} : _pickPdf,
               ),
               const SizedBox(height: 16),
               CustomInputField(
@@ -144,15 +197,37 @@ class _ResumeIntakePageState extends State<ResumeIntakePage> {
                 controller: _textCtrl,
                 maxLines: 10,
               ),
+              if (_truncated) ...[
+                const SizedBox(height: 12),
+                // The server stores and scores a bounded amount of text. Saying
+                // so beats letting the candidate believe a 40-page CV was read
+                // in full.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 15, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Your résumé was long, so only the first part was read. '
+                        'Trim it above if the most relevant experience is missing.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
               ],
               const SizedBox(height: 20),
               CustomButton(
-                text: 'Continue',
-                isLoading: false,
-                onPressed: _extracting ? () {} : _continue,
+                text: widget.submitLabel,
+                isLoading: _submitting,
+                onPressed: _busy ? () {} : _continue,
               ),
             ],
           ),

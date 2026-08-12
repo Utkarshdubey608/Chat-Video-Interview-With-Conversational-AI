@@ -7,7 +7,7 @@ import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 /// Communication and sentiment analysis (speaking pace, filler words,
 /// confidence, engagement, emotional tone) are NOT computed live during the
 /// call — they are produced by the post-interview pipeline (Deepgram
-/// transcription + Hume/ATS analysis) on the results page. This tab therefore
+/// transcription + ATS analysis) on the results page. This tab therefore
 /// shows an honest "analyzed after your interview" panel rather than any
 /// live-looking numbers. It also hosts the optional operator context-override
 /// control when the session enables it.

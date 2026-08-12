@@ -1,22 +1,30 @@
 // lib/features/auth/auth_gate.dart
 //
 // The root router. Reacts to FirebaseAuth state:
-//   - signed out            → LoginPage
-//   - signed in + recruiter → RecruiterHome
-//   - signed in + candidate → CandidateHome
+//   - signed out                    → LoginPage
+//   - signed in + recruiter         → RecruiterShell
+//   - signed in + candidate (app)   → CandidateShell
+//   - signed in + candidate (desktop) → DesktopAccessDeniedPage
 // Role comes from the users/{uid} doc (live stream, so a freshly-created doc
 // re-routes without a restart).
+//
+// Talbotiq Desktop (Windows/macOS/Linux) is recruiter-only. A candidate
+// account authenticates successfully like anywhere else — Firebase Auth has
+// no notion of desktop scoping — so the restriction is enforced here, at the
+// same single point that already decides RecruiterShell vs CandidateShell,
+// rather than duplicating role/platform checks elsewhere. Candidate code
+// itself is untouched and still fully reachable on mobile/web.
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:talbotiq/features/app_config/app_config_service.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_shell.dart';
 import 'package:talbotiq/features/interviews/recruiter/recruiter_shell.dart';
-import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
+import 'package:talbotiq/features/auth/desktop_access_denied_page.dart';
 import 'package:talbotiq/features/auth/login_page.dart';
 
 class AuthGate extends StatefulWidget {
@@ -27,42 +35,6 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
-  // Guards the cloud credentials pull below to fire once per signed-in
-  // session (reset on sign-out) rather than on every rebuild — both
-  // `authStateChanges()` and `roleStream()` can re-emit for the same user
-  // (e.g. a Firestore doc update), which would otherwise re-trigger it.
-  String? _pulledForUid;
-
-  /// Auto-retrieves this account's cloud-synced API keys into local storage.
-  /// Runs here — not just in LoginPage's submit handler — because AuthGate is
-  /// the ONE place that sees every way a user ends up authenticated,
-  /// including an app relaunch that resumes an already-signed-in Firebase
-  /// session (authStateChanges() fires immediately with the existing user,
-  /// never touching the login form/its submit handler at all). Previously,
-  /// that meant credentials were only auto-pulled right after typing a
-  /// password — reopening the app while already logged in never did, so it
-  /// looked like "Retrieve from Cloud" always had to be clicked manually.
-  void _maybePullCredentials(String uid, AppRole role) {
-    if (_pulledForUid == uid) return;
-    _pulledForUid = uid;
-    // Deferred to after this build completes — the pull ends in
-    // AppStore.notifyListeners(), which must not fire mid-build.
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      final store = context.read<AppStore>();
-      final appConfig = context.read<AppConfigService>();
-      try {
-        if (role == AppRole.recruiter) {
-          await appConfig.pullForRecruiter(uid, store);
-        } else {
-          await appConfig.pullForCandidate(uid, store);
-        }
-      } catch (e) {
-        debugPrint('Could not auto-pull API keys from Firestore: $e');
-      }
-    });
-  }
-
   // Both streams are cached rather than created inline in build().
   //
   // StreamBuilder keys off stream IDENTITY: handing it a new Stream instance
@@ -104,10 +76,8 @@ class _AuthGateState extends State<AuthGate> {
         }
         final user = authSnap.data;
         if (user == null) {
-          // Allow a fresh pull the next time someone signs in on this device,
-          // and drop the cached role/stream so the next account never inherits
-          // the previous one's.
-          _pulledForUid = null;
+          // Drop the cached role/stream so the next account never inherits the
+          // previous one's.
           _lastRole = null;
           _roleUid = null;
           _roleStream = null;
@@ -124,9 +94,11 @@ class _AuthGateState extends State<AuthGate> {
             final role = roleSnap.data ?? _lastRole;
             if (role == null) return const _Loading();
             _lastRole = role;
-            _maybePullCredentials(user.uid, role);
-            return role == AppRole.recruiter
-                ? const RecruiterShell()
+            if (role == AppRole.recruiter) return const RecruiterShell();
+            // Never route a candidate into recruiter functionality, and never
+            // fall back to the candidate UI on desktop — there is none here.
+            return isDesktopPlatform
+                ? const DesktopAccessDeniedPage()
                 : const CandidateShell();
           },
         );
