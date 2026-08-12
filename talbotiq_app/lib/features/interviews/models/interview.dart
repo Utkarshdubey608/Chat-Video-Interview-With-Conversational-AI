@@ -53,7 +53,7 @@ extension InterviewTypeX on InterviewType {
 /// declared here rather than beside [InterviewRound] because the `interviews`
 /// document itself carries it — putting it in the round file would make these
 /// two models import each other.
-enum RoundKind { resume, chat, video, voice }
+enum RoundKind { resume, chat, video, voice, twoWay }
 
 extension RoundKindX on RoundKind {
   String get wire {
@@ -66,6 +66,8 @@ extension RoundKindX on RoundKind {
         return 'video';
       case RoundKind.voice:
         return 'voice';
+      case RoundKind.twoWay:
+        return 'two_way';
     }
   }
 
@@ -79,14 +81,34 @@ extension RoundKindX on RoundKind {
         return 'Video Interview';
       case RoundKind.voice:
         return 'Voice Interview';
+      case RoundKind.twoWay:
+        return 'Live Interview';
     }
   }
 
-  /// True when the round runs a live interview session (so it has a transcript,
-  /// attempts and a runner). A résumé round has none of those.
+  /// True when the round runs a live session the candidate joins. A résumé round
+  /// is a submission and has none of that.
   bool get isInterview => this != RoundKind.resume;
 
-  /// The interview track to launch, or null for a résumé round.
+  /// True when an AI conducts the interview, so the round needs a script —
+  /// questions, a prompt, an avatar or a voice.
+  ///
+  /// FALSE for a two-way round: a human asks the questions, so there is nothing
+  /// to configure and nothing for the model to score afterwards. Kept separate
+  /// from [isInterview] because a two-way round IS a live session — it just is
+  /// not an AI one, and conflating the two would make the round editor demand
+  /// questions nobody will read.
+  bool get usesAiInterviewer =>
+      this != RoundKind.resume && this != RoundKind.twoWay;
+
+  /// True when the recruiter scores this round by hand.
+  ///
+  /// Only two-way: they were in the room, and with no recording there is no
+  /// transcript for a model to read.
+  bool get isRecruiterScored => this == RoundKind.twoWay;
+
+  /// The AI interview track to launch, or null when there is no AI interviewer
+  /// (a résumé submission, or a live call with a human).
   InterviewType? get interviewType {
     switch (this) {
       case RoundKind.resume:
@@ -97,6 +119,8 @@ extension RoundKindX on RoundKind {
         return InterviewType.video;
       case RoundKind.voice:
         return InterviewType.voice;
+      case RoundKind.twoWay:
+        return null;
     }
   }
 
@@ -108,6 +132,8 @@ extension RoundKindX on RoundKind {
         return RoundKind.video;
       case 'voice':
         return RoundKind.voice;
+      case 'two_way':
+        return RoundKind.twoWay;
       default:
         return RoundKind.chat;
     }
@@ -417,7 +443,26 @@ class Interview {
   /// Scoring failed and said why — the case worth reporting as a FAILURE rather
   /// than as "not scored yet".
   bool get evaluationFailed =>
-      awaitingEvaluation && evaluationError.isNotEmpty;
+      awaitingEvaluation &&
+      evaluationError.isNotEmpty &&
+      !awaitingRecruiterReview;
+
+  /// A two-way round the recruiter has not scored yet.
+  ///
+  /// Distinct from [evaluationFailed]: nothing went wrong, a human simply has
+  /// not filled it in. Without this a two-way round would wear the "Scoring
+  /// failed" badge from the moment the call ended until the recruiter got round
+  /// to it, which is both wrong and alarming.
+  bool get awaitingRecruiterReview =>
+      awaitingEvaluation && result?['awaitingRecruiterReview'] == true;
+
+  /// The recruiter's 0-5 star rating of a live interview, or null.
+  int? get twoWayStars => (result?['twoWayReview'] as Map?)?['stars'] as int?;
+
+  /// The recruiter's private notes on a live interview. Never shown to the
+  /// candidate — `candidateNote` is the field for that.
+  String get twoWayNotes =>
+      ((result?['twoWayReview'] as Map?)?['notes'] as String?)?.trim() ?? '';
 
   /// The candidate's raw answers, kept so a failed evaluation can be retried
   /// without making them sit the interview again.
@@ -430,8 +475,15 @@ class Interview {
   /// Retryable: nothing scored it, and the answers needed to score it survive.
   /// Without responses there is nothing to feed the scorer, so the only route is
   /// a manual evaluation.
+  /// Retryable: an AI scorer could run again, and the answers it needs survive.
+  ///
+  /// A two-way round is never retryable no matter what it stores — no recording
+  /// means no transcript, so there is nothing for a model to read. Its route back
+  /// is the recruiter's own review.
   bool get canRetryEvaluation =>
-      awaitingEvaluation && storedResponses.isNotEmpty;
+      awaitingEvaluation &&
+      storedResponses.isNotEmpty &&
+      !effectiveRoundKind.isRecruiterScored;
 
   // ── What the candidate is told ────────────────────────────────────────────
 

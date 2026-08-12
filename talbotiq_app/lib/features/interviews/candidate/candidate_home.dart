@@ -21,6 +21,7 @@ import 'package:talbotiq/features/interviews/services/interview_repository.dart'
 import 'package:talbotiq/features/interviews/services/resume_service.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_result_page.dart';
 import 'package:talbotiq/features/interviews/candidate/chat_launch_adapter.dart';
+import 'package:talbotiq/features/interviews/candidate/live_interview_page.dart';
 import 'package:talbotiq/features/interviews/candidate/resume_intake_page.dart';
 import 'package:talbotiq/features/interviews/candidate/system_check_page.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
@@ -139,7 +140,22 @@ class _CandidateHomeState extends State<CandidateHome> {
         _launchChat(interview);
       case RoundKind.voice:
         _launchVoice(interview);
+      case RoundKind.twoWay:
+        _joinLiveInterview(interview);
     }
+  }
+
+  /// A two-way round: a live call with a human interviewer.
+  ///
+  /// No system check and no launch sequence — the WebView and Daily's own UI
+  /// handle permissions and devices, and the candidate may well arrive before
+  /// the interviewer, so the waiting is the screen's job rather than a blocker
+  /// here.
+  Future<void> _joinLiveInterview(Interview interview) async {
+    if (!_guardAccess(interview)) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => LiveInterviewPage(interview: interview),
+    ));
   }
 
   /// A résumé round: collect the résumé, post it for scoring, confirm.
@@ -733,6 +749,7 @@ class _AssignedCard extends StatelessWidget {
       RoundKind.video => Icons.videocam_outlined,
       RoundKind.voice => Icons.record_voice_over_outlined,
       RoundKind.chat => Icons.chat_bubble_outline,
+      RoundKind.twoWay => Icons.groups_outlined,
     };
 
     return Card(

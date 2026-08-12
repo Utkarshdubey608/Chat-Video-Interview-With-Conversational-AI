@@ -34,6 +34,7 @@ def readiness(settings: Settings) -> dict[str, bool]:
         "gemini": bool(settings.gemini_api_key.strip()),
         "tavus": bool(settings.tavus_api_key.strip()),
         "deepgram": bool(settings.deepgram_api_key.strip()),
+        "daily": bool(settings.daily_api_key.strip()),
         # Not a provider key, but the app's Service Status screen asks the same
         # question of it: can this feature actually be used right now?
         "email": mailer.config_hint(settings) is None,

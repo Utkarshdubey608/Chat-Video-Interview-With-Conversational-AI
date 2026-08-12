@@ -31,6 +31,8 @@ IconData roundKindIcon(RoundKind kind) {
       return Icons.videocam_outlined;
     case RoundKind.voice:
       return Icons.mic_none_outlined;
+    case RoundKind.twoWay:
+      return Icons.groups_outlined;
   }
 }
 

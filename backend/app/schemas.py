@@ -226,3 +226,20 @@ class EvaluateResponse(BaseModel):
     responses: int
 
     model_config = {"populate_by_name": True}
+
+
+# --- Two-way interview (live recruiter <-> candidate call) ---
+class TwoWayJoinResponse(BaseModel):
+    """Everything the device needs to join the call, and nothing more.
+
+    The Daily API key is never here. A room URL plus a short-lived token is all a
+    participant needs, and both are useless once the room expires.
+    """
+
+    room_url: str = Field(serialization_alias="roomUrl")
+    token: str
+    # True only for the recruiter. Ownership is what allows admitting the person
+    # waiting in the lobby, so the app uses this to decide which controls to show.
+    is_owner: bool = Field(serialization_alias="isOwner")
+
+    model_config = {"populate_by_name": True}

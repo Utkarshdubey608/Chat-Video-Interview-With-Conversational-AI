@@ -360,6 +360,41 @@ class InterviewRepository {
     });
   }
 
+  /// The recruiter's own score for a live (two-way) interview.
+  ///
+  /// This track has no recording, so there is no transcript and no AI score — the
+  /// human who ran the interview is the scorer. [stars] (0-5) is mapped onto the
+  /// same 0-100 `overallScore` every other track writes, so a two-way round ranks
+  /// on the leaderboard, feeds the shortlist and advances candidates without any
+  /// of that machinery learning what a live interview is.
+  ///
+  /// [notes] are the recruiter's PRIVATE working notes. What the candidate sees
+  /// is `result.candidateNote`, written separately when outcomes are published.
+  ///
+  /// Written with dotted paths so the review never clobbers an outcome, a rank
+  /// or a note already recorded on this interview.
+  Future<void> saveTwoWayReview(
+    String id, {
+    required int stars,
+    String notes = '',
+  }) {
+    final clamped = stars.clamp(0, 5);
+    return _col.doc(id).update({
+      'result.overallScore': clamped * 20,
+      'result.evaluatedBy': 'manual',
+      // Clears "awaiting your review" — this IS the review.
+      'result.awaitingRecruiterReview': false,
+      'result.evaluationError': '',
+      'result.twoWayReview': {
+        'stars': clamped,
+        'notes': notes.trim(),
+        'reviewedAt': FieldValue.serverTimestamp(),
+      },
+      'status': InterviewStatus.completed.wire,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   /// Records what the CANDIDATE will be told about this round.
   ///
   /// Written with DOTTED FIELD PATHS (`result.outcome`) rather than by replacing

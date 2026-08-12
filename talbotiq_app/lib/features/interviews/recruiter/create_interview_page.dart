@@ -1016,7 +1016,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       fail('Give the round a name candidates will recognise.');
       return;
     }
-    if (_roundKind.isInterview && _questions.isEmpty && !_isAdaptiveChat) {
+    if (_roundKind.usesAiInterviewer && _questions.isEmpty && !_isAdaptiveChat) {
       fail('Add at least one question — an interview round with none cannot be '
           'taken.');
       return;
@@ -1315,12 +1315,15 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     if (_isRoundConfig) {
       return [
         _buildRoundBasicsCard(theme),
-        // A résumé round has no session to design, no length and no avatar.
-        if (_roundKind.isInterview) ...[
+        // Only an AI-run round has a script to design. A résumé round is a
+        // submission; a two-way round is a human asking the questions.
+        if (_roundKind.usesAiInterviewer) ...[
           _buildInterviewDesignCard(theme),
           _buildAdvancedCard(theme),
-        ] else
-          _buildResumeCriteriaCard(theme),
+        ] else if (_roundKind == RoundKind.resume)
+          _buildResumeCriteriaCard(theme)
+        else
+          _buildTwoWayCard(theme),
         _buildRoundWindowCard(theme),
         _buildAdvanceCard(theme),
       ];
@@ -1448,6 +1451,48 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
               _labelledStepper(theme, 'Minimum score', _minScore!,
                   min: 10, max: 100, step: 5,
                   onChanged: (v) => setState(() => _minScore = v)),
+          ],
+        ),
+      );
+
+  /// A live round needs no configuration — which is worth SAYING, because an
+  /// otherwise empty screen reads as something failing to load.
+  Widget _buildTwoWayCard(ThemeData theme) => _buildFormSection(
+        context: context,
+        title: 'How This Round Runs',
+        icon: Icons.groups_outlined,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'You interview the candidate yourself over a live video call. '
+              'There are no questions to set up here — you ask them.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            for (final line in const [
+              'The candidate opens the round and waits; you start the call when '
+                  'you are ready.',
+              'They wait in a lobby until you admit them.',
+              'The call is not recorded, so you score it yourself afterwards — '
+                  'a 1-5 rating that ranks alongside every other round.',
+            ])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.check, size: 15,
+                        color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(line,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       );
@@ -2009,6 +2054,8 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         seg(RoundKind.video, Icons.videocam_outlined, 'Video'),
         const SizedBox(width: 8),
         seg(RoundKind.voice, Icons.mic_none_outlined, 'Voice'),
+        const SizedBox(width: 8),
+        seg(RoundKind.twoWay, Icons.groups_outlined, 'Live'),
       ],
     );
   }

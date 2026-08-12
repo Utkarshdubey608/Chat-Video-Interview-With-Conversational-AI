@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/utils/date_format.dart';
+import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/models/interview_round.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/recruiter/create_interview_page.dart';
@@ -364,6 +365,21 @@ class _RoundTimelinePageState extends State<RoundTimelinePage> {
     ));
   }
 
+  /// Opens the live call for a two-way round.
+  ///
+  /// A call is per CANDIDATE, not per round, so this shows the round's candidates
+  /// and lets the recruiter pick who they are meeting — the room is keyed on the
+  /// interview id, which is one candidate's assignment.
+  void _openLiveInterview(InterviewRound round) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => TestCandidatesPage(test: widget.test, round: round),
+    ));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Pick the candidate you are interviewing, then "Join live '
+          'interview".'),
+    ));
+  }
+
   void _openLeaderboard(InterviewRound round) {
     Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => RoundLeaderboardPage(test: widget.test, round: round),
@@ -455,6 +471,8 @@ class _RoundTimelinePageState extends State<RoundTimelinePage> {
                   padding: EdgeInsets.zero,
                   onSelected: (v) {
                     switch (v) {
+                      case 'live':
+                        _openLiveInterview(r);
                       case 'configure':
                         _configureRound(r);
                       case 'leaderboard':
@@ -470,6 +488,11 @@ class _RoundTimelinePageState extends State<RoundTimelinePage> {
                     }
                   },
                   itemBuilder: (ctx) => [
+                    // Only a two-way round has a call to open, and only while it
+                    // is not closed.
+                    if (r.kind == RoundKind.twoWay && !closed)
+                      const PopupMenuItem(
+                          value: 'live', child: Text('Join live interview')),
                     const PopupMenuItem(
                         value: 'configure', child: Text('Configure')),
                     const PopupMenuItem(

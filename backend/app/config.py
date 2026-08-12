@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     tavus_api_key: str = ""
     deepgram_api_key: str = ""
+    # Daily — the live recruiter↔candidate call (two-way interview track). Blank
+    # makes that track report 503; every other track is unaffected.
+    daily_api_key: str = ""
+    # Your Daily subdomain, e.g. "talbotiq" for talbotiq.daily.co. Needed only to
+    # build a room URL for the candidate; the recruiter's URL comes back from the
+    # room-creation call itself.
+    daily_domain: str = ""
 
     # Model used for scoring / question generation (REST generateContent).
     gemini_model: str = "gemini-2.5-flash"

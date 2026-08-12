@@ -31,7 +31,9 @@ import 'package:talbotiq/features/interviews/models/test_summary.dart';
 import 'package:talbotiq/features/interviews/services/evaluation_retry_service.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/recruiter/create_interview_page.dart';
+import 'package:talbotiq/features/interviews/candidate/live_interview_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/evaluate_interview_page.dart';
+import 'package:talbotiq/features/interviews/recruiter/widgets/two_way_review_sheet.dart';
 import 'package:talbotiq/features/interviews/recruiter/round_leaderboard_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/round_timeline_page.dart';
 import 'package:talbotiq/features/interviews/recruiter/widgets/recruiter_action_bar.dart';
@@ -767,6 +769,12 @@ class _InterviewCard extends StatelessWidget {
                       theme.colorScheme.error,
                       icon: Icons.error_outline,
                     ),
+                  ] else if (interview.awaitingRecruiterReview) ...[
+                    const SizedBox(height: 6),
+                    // Nothing failed — a human simply has not scored it yet.
+                    _pill(theme, 'Awaiting your score',
+                        theme.colorScheme.secondary,
+                        icon: Icons.star_outline),
                   ] else if (interview.awaitingEvaluation) ...[
                     const SizedBox(height: 6),
                     _pill(theme, 'Not scored', theme.colorScheme.onSurfaceVariant),
@@ -938,7 +946,54 @@ class _InterviewCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  if (completed)
+                  // A two-way round is a live call with this candidate. Before
+                  // it happens, joining is the action; after, scoring it is —
+                  // there is no recording, so the recruiter who was in the room
+                  // is the only scorer.
+                  if (i.effectiveRoundKind == RoundKind.twoWay) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) =>
+                                LiveInterviewPage(interview: i, isHost: true),
+                          ));
+                        },
+                        icon: const Icon(Icons.videocam_outlined, size: 18),
+                        label: Text(completed
+                            ? 'Rejoin live interview'
+                            : 'Join live interview'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(100)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                          _openTwoWayReview(context, i);
+                        },
+                        icon: const Icon(Icons.star_outline, size: 18),
+                        label: Text(i.twoWayStars != null
+                            ? 'Edit your score (${i.twoWayStars}/5)'
+                            : 'Score this interview'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (completed && i.effectiveRoundKind != RoundKind.twoWay)
                     SizedBox(
                       width: double.infinity,
                       height: 48,
@@ -1031,6 +1086,22 @@ class _InterviewCard extends StatelessWidget {
 
   /// Wipes this candidate's answers + AI report and returns them to "assigned"
   /// so they can sit the test again. Keeps the assignment itself.
+  /// Opens the star-and-notes sheet for a live interview the recruiter ran.
+  Future<void> _openTwoWayReview(BuildContext context, Interview i) async {
+    final repo = context.read<InterviewRepository>();
+    final messenger = ScaffoldMessenger.of(context);
+    final review = await showTwoWayReviewSheet(context, i);
+    if (review == null) return;
+    try {
+      await repo.saveTwoWayReview(i.id,
+          stars: review.stars, notes: review.notes);
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Score saved. Publish it from the round when ready.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not save: $e')));
+    }
+  }
+
   Future<void> _confirmClearResult(BuildContext context, Interview i) async {
     final repo = context.read<InterviewRepository>();
     final messenger = ScaffoldMessenger.of(context);
