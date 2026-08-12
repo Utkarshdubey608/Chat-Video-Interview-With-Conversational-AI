@@ -311,4 +311,75 @@ void main() {
       expect(retryable.length, 1);
     });
   });
+
+  group('a single-round test can be a live interview', () {
+    // REGRESSION: single-round mode used an InterviewType toggle, and two-way is
+    // not an InterviewType — so "Live" could not be offered there at all. The
+    // toggle is now kind-based, which only works if the kind is PERSISTED:
+    // without `roundKind` the document carries `type: chat`, effectiveRoundKind
+    // falls back to it, and the candidate is routed into a chat interview with
+    // no questions.
+    Interview singleRound({RoundKind? roundKind}) => Interview(
+          id: 'i-1',
+          testId: 't-1',
+          recruiterId: 'rec-1',
+          recruiterEmail: 'rec@co.com',
+          candidateEmail: 'a@b.com',
+          candidateEmailLower: 'a@b.com',
+          // What the form writes for a live round: the harmless default, because
+          // `type` cannot say "two-way".
+          type: InterviewType.chat,
+          roundKind: roundKind,
+          title: 'Final panel',
+          prompt: '',
+          questions: const [],
+          avatar: const AvatarConfig(replicaId: ''),
+          durationMinutes: 30,
+          status: InterviewStatus.assigned,
+        );
+
+    test('the kind is what routes the candidate, not the type', () {
+      final live = singleRound(roundKind: RoundKind.twoWay);
+      expect(live.effectiveRoundKind, RoundKind.twoWay);
+      // Not chat — which is what it would be if the kind were not written.
+      expect(live.type, InterviewType.chat);
+    });
+
+    test('without the kind it would fall back to a chat interview', () {
+      // The failure mode the write guards against, asserted so it cannot creep
+      // back in silently.
+      expect(singleRound().effectiveRoundKind, RoundKind.chat);
+    });
+
+    test('a live single-round test carries no round id and still works', () {
+      // Single-round tests have no timeline, so `roundId` is empty — the kind has
+      // to stand on its own.
+      final live = singleRound(roundKind: RoundKind.twoWay);
+      expect(live.hasRound, isFalse);
+      expect(live.effectiveRoundKind.isRecruiterScored, isTrue);
+      expect(live.effectiveRoundKind.usesAiInterviewer, isFalse);
+    });
+
+    test('the kind survives a Firestore round trip', () async {
+      final db = FakeFirebaseFirestore();
+      final repo = InterviewRepository(firestore: db);
+      final id = await repo.create(singleRound(roundKind: RoundKind.twoWay));
+
+      final read = Interview.fromDoc(
+          await db.collection('interviews').doc(id).get());
+      expect(read.roundKind, RoundKind.twoWay);
+      expect(read.effectiveRoundKind, RoundKind.twoWay);
+    });
+
+    test('an AI single-round test still writes no kind at all', () async {
+      // Backward compatibility: a chat/video/voice test must keep producing the
+      // same document it always did.
+      final db = FakeFirebaseFirestore();
+      final repo = InterviewRepository(firestore: db);
+      final id = await repo.create(singleRound());
+
+      final raw = (await db.collection('interviews').doc(id).get()).data()!;
+      expect(raw.containsKey('roundKind'), isFalse);
+    });
+  });
 }

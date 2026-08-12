@@ -129,7 +129,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   //
   // The kind is held separately from [_type] because a round can be a résumé
   // screen, which is not an interview track at all.
-  RoundKind _roundKind = RoundKind.chat;
+  RoundKind _roundKind = RoundKindX.fromInterviewType(InterviewType.video);
   final _requiredSkillsController = TextEditingController();
   final _niceToHaveController = TextEditingController();
   double? _minYears;
@@ -337,6 +337,9 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
 
   void _hydrateFrom(Interview i) {
     _type = i.type;
+    // `effectiveRoundKind` falls back to `type` for pre-timeline documents, so
+    // this is right for both a live round and a legacy AI one.
+    _roundKind = i.effectiveRoundKind;
     _adaptive = i.adaptive;
     _collectResume = i.collectResume;
     _language = _languages.contains(i.language) ? i.language : 'English';
@@ -615,14 +618,16 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
         }
       }
     } else {
-      if (!_isAdaptiveChat && questions.isEmpty) {
-        fail('Add at least one question.');
-        return;
-      }
-      if (_type == InterviewType.video &&
-          _replicaIdController.text.trim().isEmpty) {
-        fail('Pick or enter an avatar (replica) for video.');
-        return;
+      if (_roundKind.usesAiInterviewer) {
+        if (!_isAdaptiveChat && questions.isEmpty) {
+          fail('Add at least one question.');
+          return;
+        }
+        if (_type == InterviewType.video &&
+            _replicaIdController.text.trim().isEmpty) {
+          fail('Pick or enter an avatar (replica) for video.');
+          return;
+        }
       }
     }
 
@@ -697,6 +702,11 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
             candidateEmailLower: emailLower,
             candidateName: candidateName,
             type: _type,
+            // Written only for a kind `type` CANNOT express — the three
+            // InterviewTypes are the AI tracks. Without this a live round would
+            // carry only `type: chat`, and `effectiveRoundKind` would route the
+            // candidate into a chat interview with no questions.
+            roundKind: _roundKind.usesAiInterviewer ? null : _roundKind,
             title: title,
             prompt: prompt,
             questions: _isAdaptiveChat ? const [] : questions,
@@ -1352,8 +1362,12 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
       // this lists its rounds to configure and offers no way to add one.
       if (_isEdit) _buildExistingRoundsCard(theme),
       _buildCandidatesCard(theme),
-      _buildInterviewDesignCard(theme),
-      _buildAdvancedCard(theme),
+      // A live round has no questions, prompt or avatar — a human asks them.
+      if (_roundKind.usesAiInterviewer) ...[
+        _buildInterviewDesignCard(theme),
+        _buildAdvancedCard(theme),
+      ] else
+        _buildTwoWayCard(theme),
       _buildTimingAccessCard(theme),
     ];
   }
@@ -1974,7 +1988,12 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
           // In multi-round mode each round picks its own kind, so a single
           // test-wide type would be a lie.
           if (!_multiRound) ...[
-            _buildTypeToggle(theme),
+            // The KIND toggle, not the old InterviewType one: a two-way
+            // interview is not one of the three AI tracks, so an InterviewType
+            // toggle could not offer it at all — which is why "Live" was missing
+            // from single-round mode. Résumé is excluded here because that kind
+            // needs the scoring-criteria card, which only round config has.
+            _buildKindToggle(theme, includeResume: false),
             const SizedBox(height: 20),
           ],
           CustomInputField(
@@ -1995,7 +2014,7 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
   /// Selecting a kind switches which of this form's existing sections apply, so
   /// the recruiter sees the same Chat/Video/Voice configuration they would when
   /// creating a standalone interview of that type.
-  Widget _buildKindToggle(ThemeData theme) {
+  Widget _buildKindToggle(ThemeData theme, {bool includeResume = true}) {
     final cs = theme.colorScheme;
 
     Widget seg(RoundKind kind, IconData icon, String label) {
@@ -2047,8 +2066,10 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
 
     return Row(
       children: [
-        seg(RoundKind.resume, Icons.description_outlined, 'Résumé'),
-        const SizedBox(width: 8),
+        if (includeResume) ...[
+          seg(RoundKind.resume, Icons.description_outlined, 'Résumé'),
+          const SizedBox(width: 8),
+        ],
         seg(RoundKind.chat, Icons.chat_bubble_outline, 'Chat'),
         const SizedBox(width: 8),
         seg(RoundKind.video, Icons.videocam_outlined, 'Video'),
@@ -2142,78 +2163,6 @@ class _CreateInterviewPageState extends State<CreateInterviewPage> {
     );
   }
 
-  Widget _buildTypeToggle(ThemeData theme) {
-    final cs = theme.colorScheme;
-    Widget seg(InterviewType t, IconData icon, String label, String desc) {
-      final selected = _type == t;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _type = t),
-          behavior: HitTestBehavior.opaque,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
-            decoration: BoxDecoration(
-              color: selected ? cs.primary.withOpacity(0.12) : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: selected ? cs.primary : cs.outline.withOpacity(0.12),
-                width: 1.5,
-              ),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 22,
-                  color: selected ? cs.primary : cs.onSurfaceVariant,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.bold : FontWeight.w600,
-                    color: selected ? cs.primary : cs.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  desc,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: selected ? cs.primary.withOpacity(0.8) : cs.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: theme.colorScheme.outline.withOpacity(0.12),
-        ),
-      ),
-      child: Row(
-        children: [
-          seg(InterviewType.video, Icons.videocam_outlined, 'Video', 'AI Video Avatar'),
-          const SizedBox(width: 4),
-          seg(InterviewType.chat, Icons.chat_bubble_outline, 'Chat', 'AI Chat Screen'),
-          const SizedBox(width: 4),
-          seg(InterviewType.voice, Icons.record_voice_over_outlined, 'Voice', 'AI Voice Call'),
-        ],
-      ),
-    );
-  }
 
   Widget _buildCandidatesCard(ThemeData theme) {
     return _buildFormSection(
