@@ -124,7 +124,7 @@ Superseded by a usage audit of the app rather than by running the spike. Deepgra
 | `setDeepgramConnected` / `deepgramConnected` | no callers — dead AppStore state |
 
 The single real call site is
-[results_page.dart:256](../../talbotiq_app/lib/features/interviews/candidate/results/results_page.dart#L256)
+[results_page.dart:256](../../mobile_desktop_app_version/lib/features/interviews/candidate/results/results_page.dart#L256)
 `transcribeFromFile`, which the code itself labels *"Fallback path (native only)"*:
 post-interview transcription of a local `.wav`, skipped entirely when no key is set.
 Primary transcripts come from Tavus (`?verbose=true`) and Gemini Live.

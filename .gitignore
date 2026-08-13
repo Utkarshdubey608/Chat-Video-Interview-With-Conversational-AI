@@ -1,4 +1,4 @@
 .DS_Store
 **/.DS_Store
 *.env
-talbotiq_app/firebase.json
+mobile_desktop_app_version/firebase.json

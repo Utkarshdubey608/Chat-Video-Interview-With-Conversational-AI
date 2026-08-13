@@ -1,0 +1,13 @@
+node_modules
+dist
+.vite
+server/data
+*.log
+.env
+.env.local
+.git
+docs
+src
+public
+android
+ios

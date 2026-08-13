@@ -1,0 +1,94 @@
+# Render Blueprint — import this repo in Render ("New → Blueprint") and it
+# provisions the API service below. Values marked `sync: false` are NOT stored
+# in git; Render prompts for them at deploy time.
+#
+# Requires a paid instance type: the free tier has no Persistent Disks and idles
+# out after 15 minutes, producing ~50s cold starts mid-interview.
+services:
+  - type: web
+    name: talbotiq-api
+    runtime: docker
+    plan: starter
+    region: oregon
+    rootDir: talbotiq-platform
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeploy: false
+
+    # The JSON store lives here so it survives deploys and restarts.
+    # NOTE: a disk pins this service to a single instance — do not scale it out.
+    disk:
+      name: talbotiq-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      # ─── Deployment wiring ───────────────────────────────────────────────
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      # Comma-separated list of allowed browser origins — set this to the
+      # Vercel URL once it exists. Blank means "allow every origin".
+      - key: CORS_ORIGINS
+        sync: false
+
+      # ─── Firebase Admin: verifies ID tokens + reads users/{uid}.role ──────
+      # Without these, every auth-guarded endpoint returns 503.
+      # FIREBASE_PRIVATE_KEY must be ONE line with newlines escaped as \n.
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+
+      # ─── Gemini: question generation, scoring, Mimic Guide ────────────────
+      # Blank falls back to heuristics (no AI), which still boots.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-3.1-flash-live-preview
+
+      # ─── Live speech + avatar interviews ──────────────────────────────────
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: HUME_API_KEY
+        sync: false
+      - key: TAVUS_API_KEY
+        sync: false
+
+      # ─── Two-way interview (Daily) — 503 when blank ───────────────────────
+      - key: DAILY_API_KEY
+        sync: false
+      - key: DAILY_SUBDOMAIN
+        sync: false
+
+      # ─── AWS Rekognition (facial analysis) ────────────────────────────────
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+
+      # ─── Invite email (Brevo SMTP) — dry-runs when incomplete ─────────────
+      - key: SMTP_HOST
+        value: smtp-relay.brevo.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_WEBHOOK_SECRET
+        sync: false
