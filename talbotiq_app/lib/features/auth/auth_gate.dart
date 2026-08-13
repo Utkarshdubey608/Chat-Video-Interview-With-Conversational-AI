@@ -1,30 +1,26 @@
 // lib/features/auth/auth_gate.dart
 //
 // The root router. Reacts to FirebaseAuth state:
-//   - signed out                    → LoginPage
-//   - signed in + recruiter         → RecruiterShell
-//   - signed in + candidate (app)   → CandidateShell
-//   - signed in + candidate (desktop) → DesktopAccessDeniedPage
+//   - signed out            → LoginPage
+//   - signed in + recruiter → RecruiterShell
+//   - signed in + candidate → CandidateShell
 // Role comes from the users/{uid} doc (live stream, so a freshly-created doc
 // re-routes without a restart).
 //
-// Talbotiq Desktop (Windows/macOS/Linux) is recruiter-only. A candidate
-// account authenticates successfully like anywhere else — Firebase Auth has
-// no notion of desktop scoping — so the restriction is enforced here, at the
-// same single point that already decides RecruiterShell vs CandidateShell,
-// rather than duplicating role/platform checks elsewhere. Candidate code
-// itself is untouched and still fully reachable on mobile/web.
+// CandidateShell itself decides mobile vs. desktop presentation (mirroring
+// RecruiterShell) — candidates used to be hard-blocked on desktop via
+// DesktopAccessDeniedPage; that restriction is gone, so every candidate
+// account reaches the same CandidateShell on every platform. Recruiter
+// routing is unchanged.
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/features/interviews/candidate/candidate_shell.dart';
 import 'package:talbotiq/features/interviews/recruiter/recruiter_shell.dart';
 import 'package:talbotiq/features/auth/app_role.dart';
 import 'package:talbotiq/features/auth/auth_service.dart';
-import 'package:talbotiq/features/auth/desktop_access_denied_page.dart';
 import 'package:talbotiq/features/auth/login_page.dart';
 
 class AuthGate extends StatefulWidget {
@@ -95,11 +91,12 @@ class _AuthGateState extends State<AuthGate> {
             if (role == null) return const _Loading();
             _lastRole = role;
             if (role == AppRole.recruiter) return const RecruiterShell();
-            // Never route a candidate into recruiter functionality, and never
-            // fall back to the candidate UI on desktop — there is none here.
-            return isDesktopPlatform
-                ? const DesktopAccessDeniedPage()
-                : const CandidateShell();
+            // Never route a candidate into recruiter functionality. Desktop
+            // used to dead-end candidates at DesktopAccessDeniedPage — the
+            // desktop app now has a full candidate experience of its own
+            // (CandidateShell itself decides mobile vs. desktop presentation),
+            // so every candidate account lands here on every platform.
+            return const CandidateShell();
           },
         );
       },

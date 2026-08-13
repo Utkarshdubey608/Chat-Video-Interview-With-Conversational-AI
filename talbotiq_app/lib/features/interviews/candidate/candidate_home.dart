@@ -12,10 +12,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:talbotiq/core/deep_link/deep_link_service.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
 import 'package:talbotiq/features/recruiter/store/recruiter_store.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/services/interview_repository.dart';
 import 'package:talbotiq/features/interviews/services/resume_service.dart';
@@ -417,6 +420,7 @@ class _CandidateHomeState extends State<CandidateHome> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final repo = context.read<InterviewRepository>();
+    if (isDesktopPlatform) return _buildDesktop(theme, repo);
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -427,96 +431,121 @@ class _CandidateHomeState extends State<CandidateHome> {
           SizedBox(width: 4),
         ],
       ),
-      body: Stack(
+      body: _body(theme, repo, padding: const EdgeInsets.fromLTRB(16, 16, 16, 32)),
+    );
+  }
+
+  /// Same StreamBuilder/grouping/launch-overlay as mobile — only the chrome
+  /// around it changes: a page header instead of an AppBar, matching the
+  /// desktop shell's top-nav pattern (which already owns Logout via the
+  /// profile menu, so this doesn't repeat it).
+  Widget _buildDesktop(ThemeData theme, InterviewRepository repo) {
+    return DesktopPageContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          StreamBuilder<List<Interview>>(
-            stream: repo.watchForCandidate(_email),
-            builder: (context, snap) {
-              if (snap.hasError) {
-                // Never surface the raw error to the candidate — it can leak
-                // Firestore internals and composite-index URLs. Log it for
-                // developers and show a friendly message instead.
-                debugPrint('CandidateHome interviews stream error: ${snap.error}');
-                return const AppMessageState(
-                  icon: Icons.error_outline,
-                  title: 'Could not load your interviews',
-                  subtitle: 'Please check your connection and try again.',
-                );
-              }
-              if (!snap.hasData) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final all = snap.data!;
-              if (all.isEmpty) {
-                return AppMessageState(
-                  icon: Icons.inbox_outlined,
-                  title: 'No interviews assigned',
-                  subtitle:
-                      'Interviews assigned to $_email will appear here.',
-                );
-              }
-              // Grouped by the JOB, with each round in running order beneath it.
-              //
-              // This used to group by interview kind, which meant a candidate
-              // partway through a pipeline saw "Résumé Submissions" and "Chat
-              // Interviews" as two unrelated sections with nothing saying one
-              // followed the other — and no indication they had advanced. A
-              // person applies to a job, not to a chat interview.
-              final byTest = groupByTest(all);
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                children: [
-                  for (final group in byTest) ...[
-                    _Header(
-                        label: group.title,
-                        icon: Icons.work_outline),
-                    for (var idx = 0; idx < group.rounds.length; idx++)
-                      _AssignedCard(
-                        interview: group.rounds[idx],
-                        // Position within THIS candidate's own sequence. Not the
-                        // test's total round count: they can only see rounds they
-                        // have reached, and "Round 2 of 4" would be telling them
-                        // about stages that may never be theirs.
-                        step: group.rounds.length > 1 ? idx + 1 : null,
-                        onLaunch: () => _open(group.rounds[idx]),
-                      ),
-                    const SizedBox(height: 16),
-                  ],
-                ],
-              );
-            },
+          const SectionHeader(
+            title: 'My Interviews',
+            subtitle: 'Interviews assigned to you appear here, grouped by job.',
+            isPageTitle: true,
           ),
-          if (_launching)
-            ColoredBox(
-              color: const Color(0xCC000000),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 20),
-                    // The launch sequence can abort at several points that all
-                    // look identical (spinner, then back to this list). Naming
-                    // the current step on screen means the last step shown IS
-                    // the one that failed — no log capture required.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Text(
-                        _launchStage.isEmpty ? 'Starting…' : _launchStage,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          const SizedBox(height: 24),
+          Expanded(child: _body(theme, repo, padding: const EdgeInsets.only(bottom: 32))),
         ],
       ),
+    );
+  }
+
+  Widget _body(ThemeData theme, InterviewRepository repo, {required EdgeInsets padding}) {
+    return Stack(
+      children: [
+        StreamBuilder<List<Interview>>(
+          stream: repo.watchForCandidate(_email),
+          builder: (context, snap) {
+            if (snap.hasError) {
+              // Never surface the raw error to the candidate — it can leak
+              // Firestore internals and composite-index URLs. Log it for
+              // developers and show a friendly message instead.
+              debugPrint('CandidateHome interviews stream error: ${snap.error}');
+              return const AppMessageState(
+                icon: Icons.error_outline,
+                title: 'Could not load your interviews',
+                subtitle: 'Please check your connection and try again.',
+              );
+            }
+            if (!snap.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final all = snap.data!;
+            if (all.isEmpty) {
+              return AppMessageState(
+                icon: Icons.inbox_outlined,
+                title: 'No interviews assigned',
+                subtitle:
+                    'Interviews assigned to $_email will appear here.',
+              );
+            }
+            // Grouped by the JOB, with each round in running order beneath it.
+            //
+            // This used to group by interview kind, which meant a candidate
+            // partway through a pipeline saw "Résumé Submissions" and "Chat
+            // Interviews" as two unrelated sections with nothing saying one
+            // followed the other — and no indication they had advanced. A
+            // person applies to a job, not to a chat interview.
+            final byTest = groupByTest(all);
+            return ListView(
+              padding: padding,
+              children: [
+                for (final group in byTest) ...[
+                  _Header(
+                      label: group.title,
+                      icon: Icons.work_outline),
+                  for (var idx = 0; idx < group.rounds.length; idx++)
+                    _AssignedCard(
+                      interview: group.rounds[idx],
+                      // Position within THIS candidate's own sequence. Not the
+                      // test's total round count: they can only see rounds they
+                      // have reached, and "Round 2 of 4" would be telling them
+                      // about stages that may never be theirs.
+                      step: group.rounds.length > 1 ? idx + 1 : null,
+                      onLaunch: () => _open(group.rounds[idx]),
+                    ),
+                  const SizedBox(height: 16),
+                ],
+              ],
+            );
+          },
+        ),
+        if (_launching)
+          ColoredBox(
+            color: const Color(0xCC000000),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 20),
+                  // The launch sequence can abort at several points that all
+                  // look identical (spinner, then back to this list). Naming
+                  // the current step on screen means the last step shown IS
+                  // the one that failed — no log capture required.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      _launchStage.isEmpty ? 'Starting…' : _launchStage,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

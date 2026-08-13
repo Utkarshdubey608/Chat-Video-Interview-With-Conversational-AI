@@ -180,6 +180,16 @@ class _MyAppState extends State<MyApp> {
     // tree doesn't rebuild on unrelated AppStore notifications (keys, session
     // config, integrity counters, etc.).
     final themeMode = context.select<AppStore, ThemeMode>((s) => s.themeMode);
+    // Desktop-only text scale (Settings → Preferences → Font Size). Applied
+    // once here via MediaQuery.textScaler rather than in every individual
+    // widget, so it's a single source of truth that automatically reaches
+    // every screen, dialog and dynamically created page — including ones
+    // built long after this widget. Gated to desktop only: this preference
+    // doesn't exist on mobile/web, so their text scale must stay whatever
+    // the OS/browser already provides (e.g. an iOS accessibility setting),
+    // never overridden by a desktop-only recruiter preference.
+    final desktopFontScale =
+        context.select<AppStore, double>((s) => s.desktopFontScale);
     return MaterialApp(
       title: 'TalbotIQ AI Screenings',
       debugShowCheckedModeBanner: false,
@@ -187,6 +197,14 @@ class _MyAppState extends State<MyApp> {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: themeMode,
+      builder: (context, child) {
+        if (!isDesktopPlatform || child == null) return child ?? const SizedBox.shrink();
+        return MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(desktopFontScale)),
+          child: child,
+        );
+      },
       home: const SplashPage(),
     );
   }

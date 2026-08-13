@@ -38,6 +38,13 @@ class AppStore extends ChangeNotifier {
   // Theme Mode
   ThemeMode _themeMode = ThemeMode.dark;
 
+  // Global desktop text scale (Settings → Preferences → Font Size). Applied
+  // once, at the MaterialApp root (see main.dart), via MediaQuery's
+  // textScaler — never read directly by individual widgets — so every
+  // screen, dialog and dynamically created page inherits it automatically
+  // instead of each one needing its own "if (fontSize == ...)" branch.
+  double _desktopFontScale = 1.0;
+
 
   // Defaults
   String _defaultReplicaId = '';
@@ -129,6 +136,7 @@ class AppStore extends ChangeNotifier {
 
   // Getters
   ThemeMode get themeMode => _themeMode;
+  double get desktopFontScale => _desktopFontScale;
 
   String get defaultReplicaId => _defaultReplicaId;
   String get defaultPersonaId => _defaultPersonaId;
@@ -183,6 +191,14 @@ class AppStore extends ChangeNotifier {
   void setThemeMode(ThemeMode mode) {
     if (_themeMode != mode) {
       _themeMode = mode;
+      _saveToPrefs();
+      notifyListeners();
+    }
+  }
+
+  void setDesktopFontScale(double scale) {
+    if (_desktopFontScale != scale) {
+      _desktopFontScale = scale;
       _saveToPrefs();
       notifyListeners();
     }
@@ -441,6 +457,11 @@ class AppStore extends ChangeNotifier {
 
       _storeLocalRecordings = data['storeLocalRecordings'] ?? false;
 
+      final rawScale = data['desktopFontScale'];
+      if (rawScale is num && rawScale > 0) {
+        _desktopFontScale = rawScale.toDouble();
+      }
+
       _defaultReplicaId = data['defaultReplicaId'] ?? '';
       _defaultPersonaId = data['defaultPersonaId'] ?? '';
 
@@ -499,6 +520,7 @@ class AppStore extends ChangeNotifier {
         'defaultPersonaId': _defaultPersonaId,
         'sessionConfig': _sessionConfig.toJson(),
         'storeLocalRecordings': _storeLocalRecordings,
+        'desktopFontScale': _desktopFontScale,
         'questions': _questions,
         'drafts': _drafts.map((d) => d.toJson()).toList(),
         'recordings': _recordings.map((r) => r.toJson()).toList(),
@@ -516,6 +538,7 @@ class AppStore extends ChangeNotifier {
     await prefs.remove(_kStoreKey);
     reset();
     _themeMode = ThemeMode.dark;
+    _desktopFontScale = 1.0;
     _defaultReplicaId = '';
     _defaultPersonaId = '';
     _sessionConfig = DraftForm.defaults();

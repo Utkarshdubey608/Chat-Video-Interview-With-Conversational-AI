@@ -28,6 +28,7 @@ import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/widgets/app_message_state.dart';
 import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/responsive_grid.dart';
 import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/interviews/models/interview.dart';
 import 'package:talbotiq/features/interviews/models/test_summary.dart';
@@ -358,25 +359,54 @@ class _RecruiterHomeState extends State<RecruiterHome> {
             : 'Try a different name.',
       );
     }
-    final desktop = isDesktopPlatform;
+    if (isDesktopPlatform) return _desktopGrid(theme, items);
     return RefreshIndicator(
       onRefresh: () => _refresh(allowBackfill: false),
       child: ListView.builder(
         controller: _scroll,
-        padding: desktop
-            ? const EdgeInsets.only(bottom: 40)
-            : const EdgeInsets.fromLTRB(16, 8, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
         itemCount: items.length + 1,
         itemBuilder: (context, index) {
           if (index == items.length) return _pagerRow(theme);
           final test = items[index];
           return Padding(
-            padding: EdgeInsets.only(bottom: desktop ? 12 : 10),
-            child: desktop
-                ? _DesktopTestRow(test: test, onTap: () => _open(test))
-                : _TestRow(test: test, onTap: () => _open(test)),
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _TestRow(test: test, onTap: () => _open(test)),
           );
         },
+      ),
+    );
+  }
+
+  /// Desktop: the same test list, as a responsive card grid instead of
+  /// full-width rows — [ResponsiveGrid] (already used by the Library page)
+  /// picks the column count from the available width, so 1280px-class
+  /// windows land at ~3 columns and ultrawide ones at the 4-column cap
+  /// without any hardcoded breakpoints. Same [_scroll] controller as before,
+  /// so the existing near-bottom pagination trigger in [_onScroll] is
+  /// unaffected by the ListView → Column swap.
+  Widget _desktopGrid(ThemeData theme, List<TestSummary> items) {
+    return RefreshIndicator(
+      onRefresh: () => _refresh(allowBackfill: false),
+      child: SingleChildScrollView(
+        controller: _scroll,
+        padding: const EdgeInsets.only(bottom: 40),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ResponsiveGrid(
+              tileMinWidth: 300,
+              spacing: 16,
+              minPerRow: 1,
+              maxPerRow: 4,
+              children: [
+                for (final test in items)
+                  _DesktopInterviewCard(test: test, onTap: () => _open(test)),
+              ],
+            ),
+            _pagerRow(theme),
+          ],
+        ),
       ),
     );
   }
@@ -523,21 +553,22 @@ class _TestRow extends StatelessWidget {
   }
 }
 
-/// One test row (desktop): a premium-SaaS row with a hover state instead of
-/// the mobile row's Material ripple, and a clearer title/secondary/tertiary
-/// weight split (title strongest, candidate/completion counts secondary,
-/// date tertiary) per the desktop redesign brief. Same [_TestCounts]
-/// data-loading, same [onTap] destination as mobile.
-class _DesktopTestRow extends StatefulWidget {
+/// One interview card (desktop): premium-SaaS card for the responsive grid —
+/// icon top-left, chevron top-right, name as the strongest text, then
+/// candidate/completion counts (secondary) and date (muted/tertiary) below,
+/// with the same hover polish the old desktop row had. Same [_TestCounts]
+/// data-loading, same [onTap] destination as mobile — only the layout
+/// (row → card) changed.
+class _DesktopInterviewCard extends StatefulWidget {
   final TestSummary test;
   final VoidCallback onTap;
-  const _DesktopTestRow({required this.test, required this.onTap});
+  const _DesktopInterviewCard({required this.test, required this.onTap});
 
   @override
-  State<_DesktopTestRow> createState() => _DesktopTestRowState();
+  State<_DesktopInterviewCard> createState() => _DesktopInterviewCardState();
 }
 
-class _DesktopTestRowState extends State<_DesktopTestRow> {
+class _DesktopInterviewCardState extends State<_DesktopInterviewCard> {
   bool _hovering = false;
 
   @override
@@ -561,7 +592,7 @@ class _DesktopTestRowState extends State<_DesktopTestRow> {
             behavior: HitTestBehavior.opaque,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: _hovering
                     ? scheme.surfaceContainerHighest.withValues(alpha: 0.4)
@@ -573,52 +604,48 @@ class _DesktopTestRowState extends State<_DesktopTestRow> {
                       : scheme.outlineVariant.withValues(alpha: 0.3),
                 ),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withValues(alpha: 0.12),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(_testTypeIcon(widget.test.type),
-                        size: 20, color: scheme.primary),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: scheme.primary.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(_testTypeIcon(widget.test.type),
+                            size: 20, color: scheme.primary),
+                      ),
+                      const Spacer(),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        child: Icon(
+                          Icons.chevron_right_rounded,
+                          color: _hovering ? scheme.primary : scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.test.title,
-                            style: theme.textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 5),
-                        Text(counts,
-                            style: theme.textTheme.bodySmall
-                                ?.copyWith(color: scheme.onSurfaceVariant)),
-                        if (widget.test.createdAt != null) ...[
-                          const SizedBox(height: 2),
-                          Text(formatDateTime(widget.test.createdAt!),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.onSurfaceVariant
-                                      .withValues(alpha: 0.75),
-                                  fontSize: 11.5)),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    child: Icon(
-                      Icons.chevron_right_rounded,
-                      color: _hovering
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
-                    ),
-                  ),
+                  const SizedBox(height: 16),
+                  Text(widget.test.title,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  Text(counts,
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant)),
+                  if (widget.test.createdAt != null) ...[
+                    const SizedBox(height: 4),
+                    Text(formatDateTime(widget.test.createdAt!),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant.withValues(alpha: 0.75),
+                            fontSize: 11.5)),
+                  ],
                 ],
               ),
             ),

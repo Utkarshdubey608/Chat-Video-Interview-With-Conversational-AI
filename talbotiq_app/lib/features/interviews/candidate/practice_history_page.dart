@@ -24,9 +24,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/shared/providers/app_store.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/recruiter_ui.dart';
 import 'package:talbotiq/features/interviews/candidate/practice/practice_formatters.dart';
 import 'package:talbotiq/features/interviews/candidate/practice/practice_report_page.dart';
@@ -44,39 +47,64 @@ class PracticeHistoryPage extends StatelessWidget {
         .where((r) => r.isPractice)
         .toList();
 
+    if (isDesktopPlatform) return _buildDesktop(context, results);
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Practice History'),
         actions: const [LogoutButton(), SizedBox(width: 4)],
       ),
-      body: results.isEmpty
-          ? const RecruiterEmptyState(
-              icon: Icons.history_rounded,
-              title: 'No practice attempts yet',
-              description:
-                  'Finish a practice interview from the Practice tab and it '
-                  'will appear here with its score and full AI report.',
-            )
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-              children: [
-                const RecruiterSectionTitle('At a glance'),
-                const SizedBox(height: 12),
-                _summaryStats(context, results),
-                const SizedBox(height: 28),
-                RecruiterSectionTitle('All attempts (${results.length})'),
-                const SizedBox(height: 12),
-                for (final r in results) ...[
-                  _AttemptTile(
-                    result: r,
-                    onDelete: () => _confirmDelete(context, r),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ],
-            ),
+      body: _body(context, results),
     );
+  }
+
+  /// Same content/logic as mobile — only the chrome around it changes: a
+  /// page header instead of an AppBar, matching the desktop shell's top-nav
+  /// pattern (which already owns Logout via the profile menu).
+  Widget _buildDesktop(BuildContext context, List<InterviewResult> results) {
+    return DesktopPageContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SectionHeader(
+            title: 'Practice History',
+            subtitle: 'Your own practice attempts and their AI reports.',
+            isPageTitle: true,
+          ),
+          const SizedBox(height: 24),
+          Expanded(child: _body(context, results)),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, List<InterviewResult> results) {
+    return results.isEmpty
+        ? const RecruiterEmptyState(
+            icon: Icons.history_rounded,
+            title: 'No practice attempts yet',
+            description:
+                'Finish a practice interview from the Practice tab and it '
+                'will appear here with its score and full AI report.',
+          )
+        : ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            children: [
+              const RecruiterSectionTitle('At a glance'),
+              const SizedBox(height: 12),
+              _summaryStats(context, results),
+              const SizedBox(height: 28),
+              RecruiterSectionTitle('All attempts (${results.length})'),
+              const SizedBox(height: 12),
+              for (final r in results) ...[
+                _AttemptTile(
+                  result: r,
+                  onDelete: () => _confirmDelete(context, r),
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+          );
   }
 
   /// Deletes one stored attempt after confirming. History is local-only, so

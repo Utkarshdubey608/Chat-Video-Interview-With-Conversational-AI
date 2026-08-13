@@ -14,10 +14,13 @@ import 'package:talbotiq/shared/models/app_models.dart';
 import 'package:talbotiq/core/constants/colors.dart';
 import 'package:talbotiq/core/services/avatar_catalog.dart';
 import 'package:talbotiq/core/services/tavus_service.dart';
+import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/features/interviews/shared/avatar_picker.dart';
 import 'package:talbotiq/shared/widgets/custom_buttons.dart';
 import 'package:talbotiq/shared/widgets/custom_inputs.dart';
+import 'package:talbotiq/shared/widgets/desktop_page_container.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
+import 'package:talbotiq/shared/widgets/section_header.dart';
 import 'package:talbotiq/features/recruiter/views/widgets/question_templates_bar.dart';
 import 'package:talbotiq/features/interviews/candidate/video_launch.dart';
 
@@ -155,94 +158,119 @@ class _PracticePageState extends State<PracticePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (isDesktopPlatform) return _buildDesktop(theme);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Practice with AI'),
         actions: const [LogoutButton(), SizedBox(width: 4)],
         elevation: 0,
       ),
-      body: Stack(
+      body: _body(theme, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16)),
+    );
+  }
+
+  /// Same form/launch logic as mobile — only the chrome around it changes:
+  /// a page header instead of an AppBar, matching the desktop shell's
+  /// top-nav pattern (which already owns Logout via the profile menu).
+  Widget _buildDesktop(ThemeData theme) {
+    return DesktopPageContainer(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 640),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildSessionSetupCard(theme),
-                      _buildQuestionsCard(theme),
-                      _buildAvatarCard(theme),
-                      if (_error != null) ...[
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: theme.colorScheme.error,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+          const SectionHeader(
+            title: 'Practice with AI',
+            subtitle: 'Configure your own prompt, questions and avatar, then run a self-serve practice session.',
+            isPageTitle: true,
+          ),
+          const SizedBox(height: 24),
+          Expanded(child: _body(theme, padding: EdgeInsets.zero)),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(ThemeData theme, {required EdgeInsets padding}) {
+    return Stack(
+      children: [
+        SafeArea(
+          child: SingleChildScrollView(
+          padding: padding,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildSessionSetupCard(theme),
+                  _buildQuestionsCard(theme),
+                  _buildAvatarCard(theme),
+                  if (_error != null) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: theme.colorScheme.error,
+                          fontWeight: FontWeight.bold,
                         ),
-                      ],
-                      const SizedBox(height: 16),
-                      CustomButton(
-                        text: 'Start Practice Session',
-                        isLoading: _launching,
-                        width: double.infinity,
-                        onPressed: _launching ? () {} : _launch,
                       ),
-                      const SizedBox(height: 24),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  CustomButton(
+                    text: 'Start Practice Session',
+                    isLoading: _launching,
+                    width: double.infinity,
+                    onPressed: _launching ? () {} : _launch,
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+          ),
+        ),
+        if (_launching)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Colors.black.withValues(alpha: 0.5),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                  margin: const EdgeInsets.symmetric(horizontal: 32),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: theme.colorScheme.outline.withValues(alpha: 0.12),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Starting Practice Session...',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Setting up AI avatar call...',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
             ),
           ),
-          if (_launching)
-            Positioned.fill(
-              child: ColoredBox(
-                color: Colors.black.withOpacity(0.5),
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                    margin: const EdgeInsets.symmetric(horizontal: 32),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: theme.colorScheme.outline.withOpacity(0.12),
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Starting Practice Session...',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Setting up AI avatar call...',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 

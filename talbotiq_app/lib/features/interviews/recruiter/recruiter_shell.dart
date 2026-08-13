@@ -17,12 +17,11 @@
 // body/state/logic; only the "do I show my own AppBar" decision is
 // isDesktopPlatform-gated inside each of those files.
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'package:talbotiq/core/theme/desktop_tokens.dart';
 import 'package:talbotiq/core/utils/desktop_platform.dart';
 import 'package:talbotiq/shared/widgets/adaptive_nav_scaffold.dart';
+import 'package:talbotiq/shared/widgets/desktop_profile_menu.dart';
 import 'package:talbotiq/shared/widgets/desktop_top_nav.dart';
 import 'package:talbotiq/shared/widgets/floating_nav_bar.dart';
 import 'package:talbotiq/shared/widgets/logout_button.dart';
@@ -73,18 +72,18 @@ class _RecruiterShellState extends State<RecruiterShell> {
         icon: Icons.analytics_outlined,
         activeIcon: Icons.analytics_rounded,
         label: 'Analytics'),
-    DesktopTopNavItem(
-        icon: Icons.settings_outlined,
-        activeIcon: Icons.settings_rounded,
-        label: 'Settings'),
   ];
 
   static const _desktopPages = [
     RecruiterHome(),
     RecruiterLibraryPage(),
     AnalyticsPage(),
-    _RecruiterSettingsTab(),
   ];
+
+  // Settings is no longer one of the top-nav tabs (moved into the profile
+  // menu) so it isn't part of the IndexedStack above — it's a separate
+  // overlay flag instead, shown in place of whichever tab was active.
+  bool _settingsOpen = false;
 
   @override
   Widget build(BuildContext context) {
@@ -103,116 +102,26 @@ class _RecruiterShellState extends State<RecruiterShell> {
       body: Column(
         children: [
           DesktopTopNav(
-            currentIndex: _index,
-            onSelect: (i) => setState(() => _index = i),
+            // No tab is "active" while Settings is showing — Settings isn't
+            // one of these tabs anymore, so leaving Home/Library/Analytics
+            // highlighted while its content is on screen would mislabel it.
+            // -1 simply matches none of them.
+            currentIndex: _settingsOpen ? -1 : _index,
+            onSelect: (i) => setState(() {
+              _index = i;
+              _settingsOpen = false;
+            }),
             items: _desktopNavItems,
-            trailing: _RecruiterProfileMenu(
-              onOpenSettings: () => setState(() => _index = 3),
+            trailing: DesktopProfileMenu(
+              roleLabel: 'Recruiter',
+              onOpenSettings: () => setState(() => _settingsOpen = true),
             ),
           ),
-          Expanded(child: IndexedStack(index: _index, children: _desktopPages)),
-        ],
-      ),
-    );
-  }
-}
-
-/// Avatar + email + role + dropdown (Settings, Sign out) for the top-right of
-/// the desktop nav. Shows the account's email address — never the Firebase
-/// `displayName` field, which recruiter accounts don't reliably set (e.g. a
-/// Google-linked account may carry the provider name "Google" there instead
-/// of anything the recruiter recognizes) — so the email is the one value
-/// that's always correct and always theirs.
-class _RecruiterProfileMenu extends StatelessWidget {
-  final VoidCallback onOpenSettings;
-  const _RecruiterProfileMenu({required this.onOpenSettings});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final user = FirebaseAuth.instance.currentUser;
-    final email = (user?.email ?? '').trim();
-    final label = email.isNotEmpty ? email : 'Recruiter';
-    final initial = label.isNotEmpty ? label[0].toUpperCase() : 'R';
-
-    return PopupMenuButton<String>(
-      tooltip: 'Account',
-      offset: const Offset(0, DesktopTokens.topNavHeight - 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(DesktopTokens.cardRadius),
-      ),
-      onSelected: (value) {
-        switch (value) {
-          case 'settings':
-            onOpenSettings();
-            break;
-          case 'signout':
-            LogoutButton.signOut(context);
-            break;
-        }
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          enabled: false,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(label,
-                  style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-              Text('Recruiter',
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: scheme.onSurfaceVariant)),
-            ],
+          Expanded(
+            child: _settingsOpen
+                ? const _RecruiterSettingsTab()
+                : IndexedStack(index: _index, children: _desktopPages),
           ),
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'settings',
-          child: Row(children: [
-            Icon(Icons.settings_outlined, size: 18),
-            SizedBox(width: 10),
-            Text('Settings'),
-          ]),
-        ),
-        PopupMenuItem(
-          value: 'signout',
-          child: Row(children: [
-            Icon(Icons.logout, size: 18, color: scheme.error),
-            const SizedBox(width: 10),
-            Text('Sign out', style: TextStyle(color: scheme.error)),
-          ]),
-        ),
-      ],
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircleAvatar(
-            radius: 16,
-            backgroundColor: scheme.primary.withValues(alpha: 0.15),
-            child: Text(initial,
-                style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w700)),
-          ),
-          const SizedBox(width: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 200),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                Text('Recruiter',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 4),
-          Icon(Icons.expand_more, size: 18, color: scheme.onSurfaceVariant),
         ],
       ),
     );
