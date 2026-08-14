@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import mailer, providers
+from app import mailer, providers, web
 from app.config import get_settings
 from app.providers.base import ProviderNotConfigured, UpstreamError, aclose
 from app.routers import ai, emails, evaluations, realtime, resume, templates, twoway
@@ -95,6 +95,11 @@ def create_app() -> FastAPI:
     app.include_router(evaluations.router)
     app.include_router(twoway.router)
     app.include_router(ai.router)
+
+    # The web surface, mounted at /api/web/*. One call by design: everything it
+    # adds is registered inside the package, so removing it is deleting
+    # `app/web/` and this line. See app/web/README.md.
+    web.install(app)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict:

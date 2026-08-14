@@ -1,0 +1,534 @@
+{
+  "_readme": "Golden contract for invite-email rendering. Generated from backend/app/web/shared/invite_email.py; asserted by BOTH backend/tests/web/test_web_invite_email.py and web_version/talbotiq-platform/shared/inviteEmail.parity.test.ts. Regenerate with REGENERATE_INVITE_FIXTURES=1 and update both sides in the same commit.",
+  "inputs": [
+    {
+      "name": "invite/basic",
+      "why": "The ordinary path: body places the link itself, so no fallback CTA.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/body-without-link",
+      "why": "The body omits {{interview_link}}, so the shell must append a CTA. An invite with no link is the one failure the candidate cannot work around.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}}, please interview.</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/html-injection-in-vars",
+      "why": "Merge values are candidate- and recruiter-supplied. A name containing a script tag must arrive escaped, not executed in a mail client.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "<script>alert(\"x\")</script>",
+        "role": "Backend Engineer",
+        "recruiter_name": "O'Brien",
+        "company": "Acme \" & <Co>",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/link-with-query-and-entities",
+      "why": "The link is escaped in both the CTA href and the paste-this-link line.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc?a=1&b=2",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/bad-accent-and-cta-colour",
+      "why": "Colours are interpolated into style attributes. A non-hex value must fall back rather than close the attribute and inject markup.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Go",
+          "color": "red;\"><script>x</script>"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "not-a-colour",
+          "footer": "F"
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/logo-branding",
+      "why": "A logo replaces the wordmark; its URL and the alt text are both escaped.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme & Sons",
+          "accentColor": "#6B2BE0",
+          "footer": "Sent via Acme.",
+          "logoUrl": "https://cdn.test/logo.png?v=2&x=1"
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/spaced-and-unknown-tokens",
+      "why": "`{{ role }}` is the same token as `{{role}}`; an unknown token stays literal so a typo is visible in the preview instead of vanishing.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Role: {{ role }}",
+        "bodyHtml": "<p>{{ candidate_name }} / {{typo_token}} / {{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "invite/empty-branding-defaults",
+      "why": "A template with no branding still renders with the product defaults.",
+      "call": "invite",
+      "kind": null,
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Hi {{candidate_name}},</p><p>{{recruiter_name}} invited you.</p><p>{{interview_link}}</p>",
+        "cta": {},
+        "branding": {},
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "deadline": "Friday"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "advance/basic",
+      "why": "Advance carries the link and the exact-email note, like an invite.",
+      "call": "transition",
+      "kind": "advance",
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "You've advanced — {{role}} ({{round_name}})",
+        "bodyHtml": "<p>Hi {{candidate_name}}, next: {{round_name}}.</p><p>{{interview_link}}</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "kind": "advance"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "round_name": "Technical",
+        "previous_round_name": "Screening",
+        "score": "82"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    },
+    {
+      "name": "selected/no-link",
+      "why": "Terminal email: no link and no note. A link here would send the candidate back into an interview they have finished.",
+      "call": "transition",
+      "kind": "selected",
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "You've been selected — {{role}}",
+        "bodyHtml": "<p>Congratulations {{candidate_name}} — score {{score}}.</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "kind": "selected"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "score": "91"
+      },
+      "link": null,
+      "email": null
+    },
+    {
+      "name": "rejection/no-link",
+      "why": "Terminal email, and the CTA text is empty in the default rejection.",
+      "call": "transition",
+      "kind": "rejection",
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Update on your {{role}} application",
+        "bodyHtml": "<p>Hi {{candidate_name}}, thank you for your time.</p>",
+        "cta": {
+          "text": "",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "kind": "rejection"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme"
+      },
+      "link": null,
+      "email": null
+    },
+    {
+      "name": "advance/link-omitted-from-body",
+      "why": "The fallback CTA applies to advance emails too.",
+      "call": "transition",
+      "kind": "advance",
+      "template": {
+        "id": "tpl-1",
+        "recruiterId": "uid-1",
+        "name": "Default invite",
+        "isDefault": true,
+        "sender": {
+          "verifiedSenderEmail": "talent@acme.test",
+          "fromName": "Acme Talent",
+          "replyTo": ""
+        },
+        "subject": "Interview invitation — {{role}}",
+        "bodyHtml": "<p>Next round: {{round_name}}.</p>",
+        "cta": {
+          "text": "Start your interview",
+          "color": "#6B2BE0"
+        },
+        "branding": {
+          "companyName": "Acme",
+          "accentColor": "#123456",
+          "footer": "Sent via Acme."
+        },
+        "deadlineText": "",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "kind": "advance"
+      },
+      "vars": {
+        "candidate_name": "Ada",
+        "role": "Backend Engineer",
+        "recruiter_name": "Grace",
+        "company": "Acme",
+        "round_name": "Final"
+      },
+      "link": "https://app.test/take/abc123",
+      "email": "ada@example.com"
+    }
+  ],
+  "cases": {
+    "invite/basic": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada,</p><p>Grace invited you.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/body-without-link": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada, please interview.</p>\n        <p style=\"margin:16px 0\"><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/html-injection-in-vars": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;,</p><p>O&#39;Brien invited you.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/link-with-query-and-entities": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada,</p><p>Grace invited you.</p><p><a href=\"https://app.test/take/abc?a=1&amp;b=2\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc?a=1&amp;b=2</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/bad-accent-and-cta-colour": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #6B2BE0;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#6B2BE0;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada,</p><p>Grace invited you.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Go</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">F</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/logo-branding": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #6B2BE0;padding:20px 28px 8px\"><img src=\"https://cdn.test/logo.png?v=2&amp;x=1\" alt=\"Acme &amp; Sons\" style=\"max-height:40px;margin-bottom:8px\" /></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada,</p><p>Grace invited you.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/spaced-and-unknown-tokens": {
+      "subject": "Role: Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Ada / {{typo_token}} / <a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "invite/empty-branding-defaults": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #6B2BE0;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#6B2BE0;font-size:18px\">TalbotIQ</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada,</p><p>Grace invited you.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via TalbotIQ.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "advance/basic": {
+      "subject": "You've advanced — Backend Engineer (Technical)",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada, next: Technical.</p><p><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        \n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "selected/no-link": {
+      "subject": "You've been selected — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Congratulations Ada — score 91.</p>\n        \n        \n        \n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "rejection/no-link": {
+      "subject": "Update on your Backend Engineer application",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Hi Ada, thank you for your time.</p>\n        \n        \n        \n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    },
+    "advance/link-omitted-from-body": {
+      "subject": "Interview invitation — Backend Engineer",
+      "html": "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F7F5FB;padding:24px 0;font-family:Figtree,Roboto,'Segoe UI',Arial,sans-serif\">\n  <tr><td align=\"center\">\n    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;background:#ffffff;border:1px solid #E7E2F2;border-radius:16px;overflow:hidden\">\n      <tr><td style=\"border-top:4px solid #123456;padding:20px 28px 8px\"><div style=\"font-weight:700;color:#123456;font-size:18px\">Acme</div></td></tr>\n      <tr><td style=\"padding:8px 28px;color:#1B0B3B;font-size:15px;line-height:1.6\">\n        <p>Next round: Final.</p>\n        <p style=\"margin:16px 0\"><a href=\"https://app.test/take/abc123\" style=\"display:inline-block;background:#6B2BE0;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-family:Inter,Arial,sans-serif\">Start your interview</a></p>\n        <p style=\"background:#F5F0FE;border:1px solid #E0D4FB;border-radius:8px;padding:10px 14px;color:#4A1BA8;font-size:13px;font-family:Inter,Arial,sans-serif\">\n    <strong>Important:</strong> this invitation is linked to <strong>ada@example.com</strong>.\n    Sign in — or create your candidate account — using this exact email address to open it.\n  </p>\n        <p style=\"color:#645C7B;font-size:13px\">Or paste this link into your browser:<br>https://app.test/take/abc123</p>\n      </td></tr>\n      <tr><td style=\"padding:14px 28px 22px;color:#645C7B;font-size:12px;border-top:1px solid #E7E2F2\">Sent via Acme.</td></tr>\n    </table>\n  </td></tr>\n</table>"
+    }
+  }
+}

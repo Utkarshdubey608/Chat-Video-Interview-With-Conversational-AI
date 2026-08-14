@@ -1,0 +1,348 @@
+"""The bridge between a Firestore invite and the local session engine.
+
+Ports `server/services/inviteBridge.ts`.
+
+Two data models meet here. Invites live in `interviews/{id}` — the collection shared
+with the Flutter app, whose field names are frozen. The candidate interview ENGINE is
+entirely template-driven and lives in `web_sessions` / `web_templates`. Rather than
+rebuild every track against the interviews schema, an invite is **materialised** into a
+session plus a synthesised template the first time the assigned candidate opens their
+link, and the existing engine runs unchanged.
+
+The session id IS the interview id. That is what makes the whole thing idempotent: a
+candidate who reloads, loses connection, or opens the link on their phone lands on the
+same session rather than starting a second one.
+
+On completion `sync_result` writes the score back to the interview document, so the
+recruiter and the Flutter app both see it — unpublished, because releasing a result to
+the candidate stays a recruiter action.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import HTTPException, status
+
+from app.config import Settings
+from app.security import AuthedUser
+from app.web.services import interview_invite
+from app.web.store import defaults, get_store
+
+logger = logging.getLogger("web.invite_bridge")
+
+# The web's six tracks. The interview document stores the precise one in `mode`; `type`
+# is only Flutter's two-way bucket.
+WEB_TRACKS = ("chatbot", "voice", "video_avatar", "chat", "video", "two_way")
+
+# An adaptive screen without a configured count. Bounded at the top by the same ceiling
+# the question generator uses.
+DEFAULT_QUESTION_COUNT = 5
+MAX_QUESTION_COUNT = 25
+
+
+def template_id_for(interview_id: str) -> str:
+    """The synthesised template's id.
+
+    Namespaced by the interview so it cannot collide with a recruiter's real template,
+    and so it is obvious in the store that this one was generated rather than authored.
+    """
+    return f"invite:{interview_id}"
+
+
+def track_for(data: dict) -> str:
+    """The track an invite runs on.
+
+    `mode` is the web's own field and is authoritative. The fallback reads Flutter's
+    `type`, which only distinguishes video from chat — an invite created by the mobile
+    app has no `mode`, and mapping its `video` onto `video_avatar` is the closest the
+    two models come.
+    """
+    mode = data.get("mode")
+    if mode in WEB_TRACKS:
+        return mode
+    return "video_avatar" if data.get("type") == "video" else "chat"
+
+
+def _as_int(value: object, fallback: int) -> int:
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback
+
+
+def synthesise_template(interview_id: str, data: dict, now: str) -> dict:
+    """A valid template built from the invite's screening config. Pure.
+
+    The question source is the part worth reading twice:
+
+    * A **two-way** interview is a live recruiter-led call with no scripted questions.
+      The invite carries no `screening.source` for it, which would fall through to
+      `adaptive` and gate the candidate behind a résumé upload before they could reach
+      the live room. Forced to `fixed` with an empty question list.
+    * `screening.source == "set"` means the recruiter chose a saved question set, and its
+      questions are already embedded in the document — so the template is `fixed`.
+    * Anything else is `adaptive`: the questions are generated per candidate from their
+      résumé after they upload it.
+    """
+    role = data.get("role") or "this role"
+    track = track_for(data)
+    screening = data.get("screening") if isinstance(data.get("screening"), dict) else {}
+
+    if track == "two_way":
+        source = "fixed"
+    elif screening.get("source") == "set":
+        source = "fixed"
+    else:
+        source = "adaptive"
+
+    technical = _as_int(screening.get("techCount"), 3)
+    non_technical = _as_int(screening.get("nonTechCount"), 2)
+    embedded = [q for q in (data.get("questions") or []) if isinstance(q, str) and q.strip()]
+
+    if source == "fixed":
+        # At least one, even with nothing embedded: a template claiming zero questions
+        # would make the progress display divide by nothing.
+        count = max(1, len(embedded))
+    else:
+        count = max(1, min(MAX_QUESTION_COUNT, technical + non_technical or DEFAULT_QUESTION_COUNT))
+
+    template: dict = {
+        "id": template_id_for(interview_id),
+        "name": f"{role} — invite",
+        "role": role,
+        "track": track,
+        "questionSource": source,
+        "timing": {**defaults.DEFAULT_TIMING, "numberOfQuestions": count},
+        "rubric": defaults.default_rubric(),
+        "integrity": dict(defaults.DEFAULT_INTEGRITY),
+        "branding": dict(defaults.DEFAULT_BRANDING),
+        "mode": "conversational",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+
+    if source == "adaptive":
+        template["adaptive"] = {
+            "role": role,
+            "difficulty": screening.get("difficulty") or "mixed",
+            "style": screening.get("style") or "mix",
+            "numberOfQuestions": count,
+            "technicalCount": technical,
+            "nonTechnicalCount": non_technical,
+            "focusTopics": screening["domains"]
+            if isinstance(screening.get("domains"), list)
+            else [],
+            # Off: `numberOfQuestions` is the real total, and follow-ups would silently
+            # lengthen an interview the candidate was told the length of.
+            "allowFollowUps": False,
+            "maxFollowUpsPerQuestion": 1,
+            "interviewerTone": "friendly and professional",
+            "language": "English",
+        }
+
+    if track == "voice":
+        template["voice"] = defaults.default_voice_config()
+
+    return template
+
+
+def build_session(
+    interview_id: str, data: dict, template: dict, *, candidate_email: str, now: str
+) -> dict:
+    """The local session for an invite. Pure.
+
+    The id is the INTERVIEW id, not a new one — that is what makes materialising
+    idempotent across reloads and devices.
+    """
+    embedded = [q for q in (data.get("questions") or []) if isinstance(q, str) and q.strip()]
+    questions = (
+        [
+            {"id": str(uuid.uuid4()), "text": text, "autoSubmitted": False}
+            for text in embedded
+        ]
+        if template["questionSource"] == "fixed"
+        else []
+    )
+
+    return {
+        "id": interview_id,
+        "templateId": template["id"],
+        "recruiterId": data.get("recruiterId") or None,
+        "track": template["track"],
+        "candidate": {
+            "name": data.get("candidateName") or candidate_email,
+            "email": candidate_email,
+        },
+        "status": "created",
+        "questions": questions,
+        "currentIndex": 0,
+        "createdAt": now,
+        "integrityEvents": [],
+        "tabSwitchCount": 0,
+        # Marks this session as invite-backed, which is what makes `sync_result` write
+        # the score back to Firestore instead of keeping it local.
+        "viaInvite": True,
+    }
+
+
+async def materialise(
+    settings: Settings, interview_id: str, user: AuthedUser
+) -> tuple[dict, dict]:
+    """Resolve an invite into a session and template. Idempotent.
+
+    Raises 404 when the invite does not exist, 403 when it is assigned to someone else,
+    and 409 when it is already completed.
+    """
+    import asyncio
+
+    store = get_store(settings)
+
+    existing = await store.sessions.get(interview_id)
+    if existing:
+        template = await store.templates.get(existing.get("templateId") or "")
+        if not template:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "Template for session not found"
+            )
+        return existing, template
+
+    reference = interview_invite.interviews(settings).document(interview_id)
+    snapshot = await asyncio.to_thread(reference.get)
+    if not snapshot.exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    data = snapshot.to_dict() or {}
+    assigned = str(data.get("candidateEmailLower") or "").strip().lower()
+    caller = (user.email or "").strip().lower()
+
+    if not assigned:
+        # An invite with no assignee cannot be claimed by anyone — a 404 rather than
+        # letting the first caller take it.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    if assigned != caller:
+        # 403 naming the signed-in address, deliberately, where the rest of this surface
+        # answers 404 to avoid confirming a record exists. The trade is made once, here:
+        # interview ids are unguessable random strings delivered by email, so confirming
+        # existence to a signed-in non-assignee costs little — and the alternative
+        # dead-ends every candidate who happens to be signed in with a second account,
+        # with no way to work out why.
+        logger.warning(
+            "invite claim mismatch for %s: signed-in %s is not the assigned candidate",
+            interview_id,
+            caller or "(no email)",
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This invitation was sent to a different email address. You are signed in as "
+            f"{caller or 'an account without an email'} — sign out, then sign in (or "
+            "create your candidate account) with the email address that received the "
+            "invitation.",
+        )
+
+    if data.get("status") == "completed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "This interview has already been completed"
+        )
+
+    now = datetime.now(timezone.utc).isoformat()
+    template = synthesise_template(interview_id, data, now)
+    session = build_session(
+        interview_id, data, template, candidate_email=assigned, now=now
+    )
+
+    await store.templates.put(template)
+    await store.sessions.put(session)
+
+    await _mark_launched(settings, reference, interview_id)
+    return session, template
+
+
+async def _mark_launched(settings: Settings, reference, interview_id: str) -> None:
+    """Record the launch on the interview document. Best-effort.
+
+    Never raises: the candidate is standing at the start of their interview, and failing
+    to write a status field is not a reason to stop them. `attemptsUsed` increments
+    server-side so a client cannot reset its own attempt count.
+    """
+    import asyncio
+
+    from firebase_admin import firestore as admin_firestore
+
+    def _write() -> None:
+        reference.update(
+            {
+                "status": "in_progress",
+                "attemptsUsed": admin_firestore.Increment(1),
+                "updatedAt": admin_firestore.SERVER_TIMESTAMP,
+            }
+        )
+
+    try:
+        await asyncio.to_thread(_write)
+    except Exception as exc:  # noqa: BLE001 - never block the candidate
+        logger.error("could not mark %s in_progress: %s", interview_id, exc)
+
+
+def build_result(report: dict) -> dict:
+    """The `result` block written onto an interview document.
+
+    Shaped for the Flutter app's reader: the flat fields it displays at the top level,
+    and the web's richer per-question and KPI detail nested under `detail` where the Dart
+    model ignores it. One document serves both readers without either seeing a shape it
+    does not understand.
+    """
+    return {
+        "overallScore": report.get("overallScore", 0),
+        "summary": report.get("summary") or "",
+        # Defaulted rather than omitted: the mobile model reads this field directly, and
+        # a missing recommendation renders as an empty badge.
+        "recommendation": report.get("recommendation") or "maybe",
+        "strengths": report.get("strengths") or [],
+        "improvements": report.get("improvements") or [],
+        "evaluatedBy": "ai",
+        "detail": {
+            "perQuestion": report.get("perQuestion") or [],
+            "kpiAverages": report.get("kpiAverages") or {},
+            "generatedAt": report.get("generatedAt"),
+        },
+    }
+
+
+async def sync_result(settings: Settings, session: dict, report: dict) -> None:
+    """Push a completed session's score back to its interview document.
+
+    A no-op for sessions the recruiter created directly — those have no interview
+    document to write to.
+
+    Best-effort and never raises: the report is already stored locally, so a failure here
+    delays the recruiter seeing it rather than losing it.
+
+    `resultPublished` is deliberately NOT set. Releasing a result to the candidate stays a
+    recruiter action, and writing it here would publish every score automatically.
+    """
+    import asyncio
+
+    if not session.get("viaInvite"):
+        return
+
+    from firebase_admin import firestore as admin_firestore
+
+    def _write() -> None:
+        interview_invite.interviews(settings).document(session["id"]).update(
+            {
+                "status": "completed",
+                "completedAt": admin_firestore.SERVER_TIMESTAMP,
+                "result": build_result(report),
+                "resultPublished": False,
+                "updatedAt": admin_firestore.SERVER_TIMESTAMP,
+            }
+        )
+
+    try:
+        await asyncio.to_thread(_write)
+    except Exception as exc:  # noqa: BLE001 - the report is safe locally either way
+        logger.error("could not sync result for %s: %s", session.get("id"), exc)

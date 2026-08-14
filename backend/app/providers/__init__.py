@@ -29,12 +29,19 @@ def readiness(settings: Settings) -> dict[str, bool]:
     reported by the server, never derived from a key the client holds.
     """
     from app import mailer
+    from app.providers import rekognition
 
     return {
         "gemini": bool(settings.gemini_api_key.strip()),
         "tavus": bool(settings.tavus_api_key.strip()),
         "deepgram": bool(settings.deepgram_api_key.strip()),
         "daily": bool(settings.daily_api_key.strip()),
+        # Web-surface providers. Added rather than renamed: the Flutter app maps
+        # every entry of this dict to a bool generically
+        # (`backend_client.dart:providerReadiness`), so new keys are safe while a
+        # rename or removal would silently disable a feature on mobile.
+        "hume": bool(settings.hume_api_key.strip()),
+        "rekognition": rekognition.is_configured(settings),
         # Not a provider key, but the app's Service Status screen asks the same
         # question of it: can this feature actually be used right now?
         "email": mailer.config_hint(settings) is None,

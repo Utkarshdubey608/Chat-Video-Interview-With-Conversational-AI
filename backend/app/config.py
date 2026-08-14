@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
 
+    # Generic SMTP — required for any relay where the LOGIN differs from the SENDER.
+    # Brevo is the case that forces this: you authenticate as
+    # "…@smtp-brevo.com" but must send From your own verified domain, which Gmail's
+    # one-address model cannot express.
+    #
+    # All three fall back to the Gmail values above when blank, so an existing
+    # EMAIL_USER + EMAIL_APP_PASSWORD deployment keeps working with no change:
+    #   smtp_user -> email_user
+    #   smtp_pass -> email_app_password
+    #   mail_from -> "<from_name> <email_user>"
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    # A VERIFIED sender, e.g. "TalbotIQ <talent@yourco.com>". With a relay that is not
+    # your own domain's, an unverified From is silently dropped or spam-foldered.
+    mail_from: str = ""
+
     # Mode B: Gmail API with an OAuth refresh token — used when all three are
     # set. Handy where outbound SMTP is blocked (some PaaS hosts).
     gmail_client_id: str = ""
@@ -63,6 +79,18 @@ class Settings(BaseSettings):
     # Daily — the live recruiter↔candidate call (two-way interview track). Blank
     # makes that track report 503; every other track is unaffected.
     daily_api_key: str = ""
+
+    # Hume AI — voice prosody for the web AI-Avatar-Screening track. Hume has
+    # discontinued its batch Expression-Measurement API, so this is tried first and
+    # a Gemini audio analysis stands in when it fails; blank simply skips straight
+    # to the fallback. Web surface only.
+    hume_api_key: str = ""
+
+    # AWS Rekognition — facial analysis for the web screening track. Web surface
+    # only. Blank makes that one feature report 503; nothing else is affected.
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "us-east-2"
     # Your Daily subdomain, e.g. "talbotiq" for talbotiq.daily.co. Needed only to
     # build a room URL for the candidate; the recruiter's URL comes back from the
     # room-creation call itself.
@@ -88,6 +116,10 @@ class Settings(BaseSettings):
     # A voice preview is one short spoken line — it needs no interview-length
     # session, and a tight cap limits what a misused preview token can cost.
     gemini_preview_session_minutes: int = 2
+    # Reading one Mimic Guide answer aloud (web surface). Generation runs at roughly
+    # real time and a max-length answer measures around two minutes, so this leaves
+    # headroom without letting a misused token fund an open-ended session.
+    gemini_speech_session_minutes: int = 4
 
     # --- Tavus conversation defaults ---
     # Org infrastructure, applied when the backend creates a conversation. These
@@ -115,6 +147,51 @@ class Settings(BaseSettings):
     rate_limit_generate: int = 30
     # Audio uploads: transcription, and starting an avatar conversation.
     rate_limit_media: int = 20
+    # Facial-analysis frames (web surface). The browser captures one every 8
+    # seconds, so ~7.5/min per candidate — this is 8x that, high enough never to
+    # interrupt an interview and low enough to stop a hot loop.
+    rate_limit_face: int = 60
+    # Mimic Guide chat + its text-to-speech (web surface). A person typing cannot
+    # approach this; a retry loop can.
+    rate_limit_chat: int = 30
+    # NOTE: the three limits above `rate_limit_face` are still counted in-process
+    # (see app/ratelimit.py), so N workers allow roughly N x the number shown.
+    # When `_LIMITER` is replaced with a shared store the counts become exact —
+    # raise live_token/generate/media to 20/90/60 in the SAME change, or callers
+    # that pass today will start being throttled.
+
+    # --- Brevo (web surface invite flow) ---
+    # REST key, used ONLY to list verified senders for the recruiter's sender picker.
+    # Sending itself goes over SMTP (see SMTP_USER/SMTP_PASS above) — this is a
+    # different credential from the SMTP key. Blank leaves the picker on manual entry.
+    brevo_api_key: str = ""
+    # Shared secret guarding the PUBLIC delivery webhook. Brevo sends no bearer token,
+    # so this is the only thing authenticating it: configure the same value in
+    # Brevo → Transactional → Settings → Webhook, pointing at
+    #   https://<host>/api/web/invites/brevo-webhook?token=<this-secret>
+    # Blank means the webhook REJECTS everything — it fails closed, because an open
+    # endpoint would let anyone rewrite an invite's delivery status.
+    brevo_webhook_secret: str = ""
+    # Bucket for invite-email logo uploads. Blank falls back to the project's default
+    # bucket ("<project>.firebasestorage.app").
+    firebase_storage_bucket: str = ""
+
+    # --- Replica-preview cache (web surface) ---
+    # Cached previews live in Firebase Storage under "web_face_cache/", never on the
+    # server's filesystem — a container's disk is ephemeral and per-worker, so a disk
+    # cache would be lost on every deploy and duplicated across workers.
+    #
+    # EXTRA hostnames the cache may fetch from, on top of the built-in Tavus/CDN
+    # list. Comma- or space-separated. This is a security boundary — without the
+    # allowlist the endpoint would be an open proxy for any authenticated caller.
+    face_cache_hosts: str = ""
+
+    # --- Admin overlay (web surface) ---
+    # OPTIONAL, server-only, and NEVER taken from a client: a recruiter whose
+    # verified email is listed here is reported as an admin by /api/web/auth/me.
+    # Comma- or space-separated. Blank disables it. This is not a role and does
+    # not promote a candidate — see app/web/services/users.py.
+    admin_emails: str = ""
 
     # --- Firebase (saved templates only — same project as the mobile app) ---
     firebase_project_id: str = "talbotiq-9cc4e"

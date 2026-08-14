@@ -1,0 +1,410 @@
+"""Bulk invites — ports `server/routes/invites.ts`.
+
+Six routes covering the invite wizard: parse a candidate list, list the senders Brevo
+will accept, host a logo where mail clients can load it, send one test to yourself,
+create the batch, and retry a single failure.
+
+`POST ""` is the one that writes: one `interviews/{id}` document per candidate, each
+stamped with the caller's uid, then an email per document. The documents are created
+even when sending is off, because the recruiter may distribute links another way.
+
+A failed send never fails the batch — it is recorded on that recipient's document, and
+`POST /{id}/retry` acts on exactly that state. Fifty invites where one address is
+mistyped should send forty-nine.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+
+from app.providers.base import UpstreamError
+from app.providers.brevo import BrevoClient
+from app.security import AuthedUser
+from app.web.deps import RateLimitMediaWeb, WebUser, settings_of
+from app.web.services import interview_invite, invite_extract, storage, users
+from app.web.shared import invite_email
+from app.web.store import get_store
+
+logger = logging.getLogger("web.invites")
+
+router = APIRouter(prefix="/invites", tags=["web:invites"])
+
+# A candidate list, not a database export.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_LOGO_BYTES = 2 * 1024 * 1024
+
+# One wizard run. Beyond this the recruiter should be splitting the batch anyway, and
+# the loop below is sequential.
+MAX_CANDIDATES = 500
+
+
+@router.post("/extract", summary="Parse candidates from an uploaded file")
+async def extract(
+    request: Request,
+    file: UploadFile = File(...),
+    role: str = Form(default=""),
+    user: AuthedUser = WebUser,
+) -> dict:
+    """Rows for the recruiter to review. Creates nothing and sends nothing."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No file uploaded")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "That file is too large."
+        )
+
+    return await invite_extract.extract_candidates(
+        data,
+        content_type=file.content_type or "",
+        filename=file.filename or "",
+        fallback_role=role.strip(),
+    )
+
+
+@router.get("/senders", summary="Brevo verified senders")
+async def senders(request: Request, user: AuthedUser = WebUser) -> dict:
+    """Which addresses Brevo will accept as a sender.
+
+    An empty list with `brevoReady: false` when no key is configured — the picker then
+    offers manual entry, which works. A real API failure is a 502, because that is a
+    misconfiguration the recruiter should see rather than an empty list they cannot
+    explain.
+    """
+    settings = settings_of(request)
+    client = BrevoClient(settings)
+
+    if not client.is_configured:
+        return {"senders": [], "brevoReady": False}
+
+    try:
+        return {"senders": await client.list_senders(), "brevoReady": True}
+    except UpstreamError as exc:
+        logger.error("Brevo senders lookup failed: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"Brevo senders lookup failed: {exc.detail[:200]}"
+        ) from exc
+
+
+@router.post("/logo", summary="Host an invite-email logo", dependencies=[RateLimitMediaWeb])
+async def upload_logo(
+    request: Request, file: UploadFile = File(...), user: AuthedUser = WebUser
+) -> dict:
+    """Store a logo and return a URL a mail client can load.
+
+    Hosted rather than hotlinked because an arbitrary URL usually does not work in
+    email — a private or localhost address renders as a broken image for every
+    recipient. The Admin SDK write bypasses Storage rules, and the tokenised
+    `firebasestorage` URL it returns is publicly fetchable without exposing the bucket.
+    """
+    settings = settings_of(request)
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No image uploaded")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Logo must be an image (PNG, JPG, SVG, …)"
+        )
+    if len(data) > MAX_LOGO_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Logo must be under 2 MB")
+
+    return {"url": await _store_logo(settings, user.uid, data, file)}
+
+
+async def _store_logo(settings, uid: str, data: bytes, file: UploadFile) -> str:
+    """Put the logo in the bucket and return a URL a mail client can load."""
+    # The extension is rebuilt from scratch rather than taken from the filename: the
+    # object path goes into a URL, and a name containing a slash or "%" would land the
+    # object somewhere unintended.
+    raw_ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    extension = "".join(ch for ch in raw_ext if ch.isalnum())[:8] or "png"
+    token = str(uuid.uuid4())
+
+    return await storage.upload(
+        settings,
+        f"web_invite_email_logos/{uid}/{uuid.uuid4()}.{extension}",
+        data,
+        content_type=file.content_type or "image/png",
+        token=token,
+    )
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, summary="Create a batch of invites")
+async def create_invites(
+    request: Request, body: dict = Body(...), user: AuthedUser = WebUser
+) -> dict:
+    """One interview document per candidate, then one email each."""
+    import asyncio
+
+    from firebase_admin import firestore as admin_firestore
+
+    settings = settings_of(request)
+    store = get_store(settings)
+
+    mode = body.get("mode")
+    role = str(body.get("role") or "").strip()
+    source = body.get("source")
+
+    if not interview_invite.is_known_mode(mode):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A valid interview mode is required")
+    if not role:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A candidate role is required")
+    # A two-way interview is a live recruiter-led call: there is no scripted question
+    # source to choose, so it is the one mode that may omit `source`.
+    if mode != "two_way" and source not in ("tailor", "set"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'source must be "tailor" or "set"')
+
+    candidates = clean_candidates(body.get("candidates"), role)
+    if not candidates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No valid candidate emails to invite")
+    if len(candidates) > MAX_CANDIDATES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"That is more than {MAX_CANDIDATES} candidates — split the batch.",
+        )
+
+    # Question source → the `questions` array on each document. `tailor` leaves it
+    # empty; those are generated per candidate after they upload a résumé.
+    questions: list[str] = []
+    question_set_id = body.get("questionSetId")
+    if source == "set":
+        if not question_set_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "A question set must be selected")
+        question_set = await store.question_sets.get(str(question_set_id))
+        if not question_set:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Question set not found")
+        questions = [
+            q["text"] for q in question_set.get("questions") or [] if q.get("text")
+        ]
+
+    stored_template = None
+    if body.get("emailTemplateId"):
+        found = await store.invite_email_templates.get(str(body["emailTemplateId"]))
+        # Owner-checked: a template id from another recruiter must not be usable to
+        # send under their verified sender address.
+        if found and str(found.get("recruiterId") or "") == user.uid:
+            stored_template = found
+
+    template = resolve_template(body, user.uid, stored_template)
+
+    # The locked link token is enforced server-side. A template without it produces an
+    # email the candidate cannot act on, and the assigned-email auth model means every
+    # candidate needs their own unique link.
+    validation = invite_email.validate_locked_tokens(
+        template.get("subject", ""), template.get("bodyHtml", "")
+    )
+    if not validation["ok"]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Invite email is missing required token(s): {', '.join(validation['missing'])}",
+        )
+
+    recruiter_name = await users.get_display_name(settings, user.uid)
+    from_name = recruiter_name or user.email or "A recruiter"
+    company = (template.get("branding") or {}).get("companyName") or "TalbotIQ"
+    deadline = template.get("deadlineText") or ""
+
+    origin = str(body.get("origin") or "").strip()
+    send_emails = body.get("sendEmails") is not False
+    test_id = str(uuid.uuid4())
+    collection = interview_invite.interviews(settings)
+
+    created: list[dict] = []
+    emailed = 0
+    any_dry_run = False
+
+    for candidate in candidates:
+        document = interview_invite.build_document(
+            test_id=test_id,
+            recruiter_id=user.uid,
+            recruiter_email=user.email or "",
+            recruiter_name=recruiter_name,
+            candidate_email=candidate["email"],
+            role=candidate["role"],
+            mode=mode,
+            questions=questions,
+            source=source if isinstance(source, str) else None,
+            config=body.get("config") if isinstance(body.get("config"), dict) else None,
+            question_set_id=str(question_set_id) if question_set_id else None,
+            server_timestamp=admin_firestore.SERVER_TIMESTAMP,
+        )
+
+        reference = (await asyncio.to_thread(collection.add, document))[1]
+        link = interview_invite.interview_link(origin, reference.id)
+        row: dict = {"id": reference.id, "email": candidate["email"], "link": link}
+
+        if send_emails:
+            invite = await interview_invite.send_invite_email(
+                settings,
+                template=template,
+                to_email=candidate["email"],
+                link=link,
+                interview_id=reference.id,
+                variables=interview_invite.render_vars(
+                    candidate_email=candidate["email"],
+                    role=candidate["role"],
+                    recruiter_name=from_name,
+                    company=company,
+                    deadline=deadline,
+                ),
+            )
+            row["sent"] = invite["status"] == "accepted"
+            row["status"] = invite["status"]
+            if invite.get("error"):
+                row["error"] = invite["error"]
+            if row["sent"]:
+                emailed += 1
+            any_dry_run = any_dry_run or "dry-run" in (invite.get("error") or "")
+
+            await asyncio.to_thread(reference.update, {"invite": invite})
+
+        created.append(row)
+
+    from app import mailer
+
+    dry_run = (
+        (emailed == 0 and any_dry_run)
+        if send_emails
+        else mailer.config_hint(settings) is not None
+    )
+    logger.info(
+        "invite batch %s: %d created, %d emailed by %s", test_id, len(created), emailed, user.uid
+    )
+    return {"testId": test_id, "created": created, "emailed": emailed, "dryRun": dry_run}
+
+
+@router.post("/test", summary="Send one test invite to yourself")
+async def test_invite(
+    request: Request, body: dict = Body(default={}), user: AuthedUser = WebUser
+) -> dict:
+    """The real rendered email, with sample values, to the recruiter's own address.
+
+    Deliberately never creates an interview document — this is a preview, and a batch
+    of orphaned interviews from repeated previews would pollute the recruiter's list.
+    The link therefore points nowhere real, which is why it says so.
+    """
+    settings = settings_of(request)
+    store = get_store(settings)
+
+    if not user.email:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Your account has no email address to send a test to",
+        )
+
+    stored_template = None
+    if body.get("emailTemplateId"):
+        found = await store.invite_email_templates.get(str(body["emailTemplateId"]))
+        if found and str(found.get("recruiterId") or "") == user.uid:
+            stored_template = found
+
+    template = resolve_template(body, user.uid, stored_template)
+    company = (template.get("branding") or {}).get("companyName") or "TalbotIQ"
+    origin = str(body.get("origin") or "").strip()
+
+    invite = await interview_invite.send_invite_email(
+        settings,
+        template=template,
+        to_email=user.email,
+        link=interview_invite.interview_link(origin, "sample-interview-id"),
+        interview_id="test",
+        variables=interview_invite.render_vars(
+            candidate_email=user.email,
+            role=str(body.get("role") or "Sample Role"),
+            recruiter_name=await users.get_display_name(settings, user.uid) or user.email,
+            company=company,
+            deadline=template.get("deadlineText") or "",
+        ),
+    )
+
+    return {
+        "sent": invite["status"] == "accepted",
+        "to": user.email,
+        **({"error": invite["error"]} if invite.get("error") else {}),
+    }
+
+
+@router.post("/{interview_id}/retry", summary="Retry one failed invite email")
+async def retry_invite(
+    interview_id: str,
+    request: Request,
+    body: dict = Body(default={}),
+    user: AuthedUser = WebUser,
+) -> dict:
+    """Re-send one recipient's invite, incrementing its attempt count.
+
+    Ownership is checked against the interview's own `recruiterId`, not a stored
+    template: this re-sends to a real candidate, so only the recruiter who invited them
+    may trigger it.
+    """
+    import asyncio
+
+    settings = settings_of(request)
+    store = get_store(settings)
+    collection = interview_invite.interviews(settings)
+
+    reference = collection.document(interview_id)
+    snapshot = await asyncio.to_thread(reference.get)
+    if not snapshot.exists:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    interview = snapshot.to_dict() or {}
+    if str(interview.get("recruiterId") or "") != user.uid:
+        # 404, not 403 — a 403 confirms the interview exists.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    candidate_email = interview.get("candidateEmail") or interview.get("candidateEmailLower")
+    if not candidate_email:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "That interview has no candidate email"
+        )
+
+    stored_template = None
+    if body.get("emailTemplateId"):
+        found = await store.invite_email_templates.get(str(body["emailTemplateId"]))
+        if found and str(found.get("recruiterId") or "") == user.uid:
+            stored_template = found
+
+    template = resolve_template(body, user.uid, stored_template)
+    company = (template.get("branding") or {}).get("companyName") or "TalbotIQ"
+    origin = str(body.get("origin") or "").strip()
+    previous_attempts = int((interview.get("invite") or {}).get("attempts") or 0)
+
+    invite = await interview_invite.send_invite_email(
+        settings,
+        template=template,
+        to_email=candidate_email,
+        link=interview_invite.interview_link(origin, interview_id),
+        interview_id=interview_id,
+        variables=interview_invite.render_vars(
+            candidate_email=candidate_email,
+            role=str(interview.get("role") or ""),
+            recruiter_name=await users.get_display_name(settings, user.uid) or user.email or "",
+            company=company,
+            deadline=template.get("deadlineText") or "",
+        ),
+    )
+    invite["attempts"] = previous_attempts + 1
+
+    await asyncio.to_thread(reference.update, {"invite": invite})
+
+    return {
+        "id": interview_id,
+        "email": candidate_email,
+        "sent": invite["status"] == "accepted",
+        "status": invite["status"],
+        **({"error": invite["error"]} if invite.get("error") else {}),
+    }

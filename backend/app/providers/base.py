@@ -154,10 +154,18 @@ class ProviderClient:
         json: Any | None = None,
         params: dict[str, Any] | None = None,
         content: bytes | None = None,
+        files: Any | None = None,
+        data: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         expect_json: bool = True,
     ) -> Any:
-        """Call the vendor with auth applied. Raises on any error status."""
+        """Call the vendor with auth applied. Raises on any error status.
+
+        `files`/`data` build a multipart body, which one vendor requires (Hume's
+        batch submit takes the audio and its job config as two form parts). They
+        are mutually exclusive with `json`/`content`; httpx raises if both are
+        given, which is the right outcome — it is a programming error.
+        """
         self.require_configured()
 
         response = await http_client().request(
@@ -166,6 +174,8 @@ class ProviderClient:
             json=json,
             params=params,
             content=content,
+            files=files,
+            data=data,
             headers={**self.auth_headers(), **(headers or {})},
         )
 
